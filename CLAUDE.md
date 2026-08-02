@@ -71,6 +71,17 @@ Docker Compose.
     `--sql` offline mode will not catch this — it only proves the migration
     *code* runs, not that Postgres accepts the DDL. Always apply a migration to
     a real Postgres before trusting it.
+14. **Alembic needs a sync driver.** It cannot use asyncpg. A bare
+    `postgresql://` URL makes SQLAlchemy reach for psycopg2, which is not a
+    dependency — `alembic upgrade head` then dies with
+    `ModuleNotFoundError: psycopg2`. `sync_database_url` uses
+    `postgresql+psycopg://` and psycopg3 is pinned in pyproject.
+15. **Never `tar` this repo from macOS without `COPYFILE_DISABLE=1`.** macOS
+    packs extended attributes as `._*` AppleDouble sidecars. They are binary,
+    and alembic globs `alembic/versions/*.py` — so it tries to import
+    `._0001_initial_schema.py` and dies with
+    `SyntaxError: source code string cannot contain null bytes`. `.dockerignore`
+    excludes `._*` as a second line of defence.
 
 ## Layout
 
@@ -118,8 +129,27 @@ docker compose logs worker -f     # watch for asyncio loop errors
 - Phase 2 (ingestion), 3 (algorithms), 4 (agents/API), 5 (dashboard),
   6 (deploy) — not started.
 
-## Deployment note
+## Deployment — actual infrastructure
 
-The build spec names an LXC at `192.168.1.200`, but this homelab runs on
-`10.51.24.0/22` (Proxmox host `10.51.24.34`). The container does not exist yet
-and the address needs reconciling before Phase 6.
+The build spec's `192.168.1.200` does not exist. Reality:
+
+| | |
+|---|---|
+| Proxmox host | `10.51.24.34` (`reekserver`), PVE 9.2.0 |
+| Host hardware | **Intel N95, 4 cores, 7,720 MB RAM** — *not* the 16GB the spec assumes |
+| Fantasy Edge | **CT 100 `fantasy-edge`, `10.51.24.80`**, 3 cores / 4096 MB / 40GB, Ubuntu 24.04 |
+| Access | no direct SSH — `ssh root@10.51.24.34 "pct exec 100 -- ..."` |
+| Code lives at | `/opt/fantasy-edge` |
+
+The host has only 7.5GB physical, so the spec's 6GB allocation was not
+possible. CT 110 (docker-core) had been allocated 12GB on that 7.5GB box; it
+was right-sized to 3GB (actual usage ~1.7GB) to make room. Combined limits are
+now ~7GB against 7.5GB physical rather than 15GB.
+
+`net0` uses `ip6=auto`, never `ip6=dhcp`: with no DHCPv6 server on this LAN,
+`ifup` blocks on Solicit, `networking.service` times out, and the container
+comes up with **no IPv4 either**. That took the whole docker-core stack offline
+for 35 hours once.
+
+Compose `mem_limit`s currently sum to ~4.7GB against the container's 4GB, which
+is fine while services idle but needs trimming before all seven run under load.

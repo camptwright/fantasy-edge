@@ -1,0 +1,16 @@
+.venv/
+.git/
+__pycache__/
+*.py[cod]
+.env
+.pytest_cache/
+.ruff_cache/
+logs/
+node_modules/
+.next/
+# macOS AppleDouble sidecars. tar on macOS emits these for extended
+# attributes; they are binary, and alembic will try to import
+# ._0001_*.py as a migration and die on "source code string cannot
+# contain null bytes".
+._*
+.DS_Store

@@ -13,6 +13,10 @@ dependencies = [
   # db
   "sqlalchemy[asyncio]>=2.0.36",
   "asyncpg>=0.30",
+  # Alembic runs synchronously and cannot use the asyncpg driver. Without a
+  # sync driver installed, `alembic upgrade head` dies with
+  # ModuleNotFoundError: psycopg2 (SQLAlchemy's default for bare postgresql://).
+  "psycopg[binary]>=3.2",
   "alembic>=1.14",
   "greenlet>=3.1",
   # queue

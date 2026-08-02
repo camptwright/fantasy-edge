@@ -62,9 +62,13 @@ class Settings(BaseSettings):
 
     @property
     def sync_database_url(self) -> str:
-        """Alembic runs synchronously, so it needs the psycopg-style DSN."""
+        """Alembic runs synchronously, so it needs a sync driver.
+
+        The +psycopg suffix is required: a bare postgresql:// URL makes
+        SQLAlchemy reach for psycopg2, which is not installed (psycopg3 is).
+        """
         return (
-            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
