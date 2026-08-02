@@ -1,0 +1,91 @@
+# Fantasy Edge stack.
+#
+# CONSTRAINT #11: there is deliberately NO nginx service here. Nginx runs on the
+# LXC host as an apt package. A containerised nginx fights the host for port 80
+# and one of them loses non-deterministically on boot.
+
+name: fantasy-edge
+
+networks:
+  fantasy:
+
+volumes:
+  pgdata:
+  redisdata:
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  networks: [fantasy]
+  env_file: [.env]
+  logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [fantasy]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fantasy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-fantasy_edge}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    ports: ["5433:5432"]   # 5433 on the host to avoid colliding with a local pg
+    mem_limit: 1024m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fantasy}"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [fantasy]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes: [redisdata:/data]
+    mem_limit: 384m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
+
+  api:
+    <<: *app
+    command: ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports: ["8000:8000"]
+    mem_limit: 768m
+
+  worker:
+    <<: *app
+    # Concurrency 2 on a 4-core box leaves headroom for the API and Postgres.
+    command: ["celery", "-A", "src.scheduler.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    mem_limit: 1536m
+
+  beat:
+    <<: *app
+    command: ["celery", "-A", "src.scheduler.celery_app", "beat", "--loglevel=info"]
+    mem_limit: 256m
+
+  flower:
+    <<: *app
+    command: ["celery", "-A", "src.scheduler.celery_app", "flower", "--port=5555"]
+    ports: ["5555:5555"]
+    mem_limit: 256m
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks: [fantasy]
+    # CONSTRAINT #10: host 3000 -> container 3000, matching the nginx upstream.
+    ports: ["3000:3000"]
+    environment:
+      NODE_ENV: production
+    mem_limit: 512m

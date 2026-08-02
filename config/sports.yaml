@@ -1,0 +1,107 @@
+# Sport configuration. Everything sport-specific lives here so adding
+# eSports / soccer / F1 later is a config change, not a code change.
+#
+# season_months drives the polling scheduler (constraint #4): a sport is only
+# polled at the in-season interval when the current UTC month appears here.
+# Getting these wrong burns the 500 req/month Odds API budget on sports that
+# are not playing.
+#
+# elo:
+#   k              - rating volatility; higher = faster adaptation. Low-game-count
+#                    sports (NFL) need a bigger K than 82/162-game seasons.
+#   home_advantage - rating points added to the home side.
+#   mov_multiplier - margin-of-victory scaling; 0 disables MOV weighting.
+#   season_regression - fraction pulled back to the mean between seasons.
+# blend: model weights used by ValueAgent. Must sum to 1.0 per sport.
+#   poisson is only meaningful for scoring-rate sports; for basketball the
+#   weight is deliberately low because possessions are near-continuous.
+
+defaults:
+  ev_threshold_pct: 2.0
+  markets: [h2h, spreads, totals]
+  min_book_count: 2
+
+sports:
+  nfl:
+    display_name: NFL
+    odds_api_key: americanfootball_nfl
+    espn_path: football/nfl
+    season_months: [8, 9, 10, 11, 12, 1, 2]
+    elo: {k: 20.0, home_advantage: 55.0, mov_multiplier: 1.0, season_regression: 0.33}
+    blend: {elo: 0.35, poisson: 0.25, ensemble: 0.40}
+    ev_threshold_pct: 2.0
+    markets: [h2h, spreads, totals]
+
+  ncaaf:
+    display_name: NCAA Football
+    odds_api_key: americanfootball_ncaaf
+    espn_path: football/college-football
+    season_months: [8, 9, 10, 11, 12, 1]
+    # Huge talent spread and 130+ teams, so ratings move faster and regress harder.
+    elo: {k: 28.0, home_advantage: 65.0, mov_multiplier: 1.0, season_regression: 0.45}
+    blend: {elo: 0.45, poisson: 0.20, ensemble: 0.35}
+    ev_threshold_pct: 3.0
+    markets: [h2h, spreads, totals]
+
+  nba:
+    display_name: NBA
+    odds_api_key: basketball_nba
+    espn_path: basketball/nba
+    season_months: [10, 11, 12, 1, 2, 3, 4, 5, 6]
+    elo: {k: 14.0, home_advantage: 40.0, mov_multiplier: 1.0, season_regression: 0.25}
+    blend: {elo: 0.30, poisson: 0.10, ensemble: 0.60}
+    ev_threshold_pct: 2.0
+    markets: [h2h, spreads, totals]
+
+  wnba:
+    display_name: WNBA
+    odds_api_key: basketball_wnba
+    espn_path: basketball/wnba
+    season_months: [5, 6, 7, 8, 9, 10]
+    elo: {k: 18.0, home_advantage: 38.0, mov_multiplier: 1.0, season_regression: 0.30}
+    blend: {elo: 0.35, poisson: 0.10, ensemble: 0.55}
+    ev_threshold_pct: 2.5
+    markets: [h2h, spreads, totals]
+
+  ncaam:
+    display_name: NCAA Men's Basketball
+    odds_api_key: basketball_ncaab
+    espn_path: basketball/mens-college-basketball
+    season_months: [11, 12, 1, 2, 3, 4]
+    elo: {k: 24.0, home_advantage: 70.0, mov_multiplier: 1.0, season_regression: 0.45}
+    blend: {elo: 0.45, poisson: 0.10, ensemble: 0.45}
+    ev_threshold_pct: 3.0
+    markets: [h2h, spreads, totals]
+
+  nhl:
+    display_name: NHL
+    odds_api_key: icehockey_nhl
+    espn_path: hockey/nhl
+    season_months: [10, 11, 12, 1, 2, 3, 4, 5, 6]
+    # Low-scoring and high-variance: Poisson carries real weight here.
+    elo: {k: 12.0, home_advantage: 32.0, mov_multiplier: 0.7, season_regression: 0.25}
+    blend: {elo: 0.30, poisson: 0.35, ensemble: 0.35}
+    ev_threshold_pct: 2.5
+    markets: [h2h, spreads, totals]
+
+  mlb:
+    display_name: MLB
+    odds_api_key: baseball_mlb
+    espn_path: baseball/mlb
+    season_months: [3, 4, 5, 6, 7, 8, 9, 10]
+    # Starting pitcher dominates any single game, so team ELO moves slowly and
+    # the ensemble (which can see pitcher features) is weighted highest.
+    elo: {k: 8.0, home_advantage: 24.0, mov_multiplier: 0.5, season_regression: 0.30}
+    blend: {elo: 0.20, poisson: 0.30, ensemble: 0.50}
+    ev_threshold_pct: 2.0
+    markets: [h2h, spreads, totals]
+
+  ncaabaseball:
+    display_name: College Baseball
+    odds_api_key: baseball_ncaa
+    espn_path: baseball/college-baseball
+    season_months: [2, 3, 4, 5, 6]
+    elo: {k: 16.0, home_advantage: 40.0, mov_multiplier: 0.5, season_regression: 0.50}
+    blend: {elo: 0.50, poisson: 0.25, ensemble: 0.25}
+    ev_threshold_pct: 4.0
+    markets: [h2h, totals]

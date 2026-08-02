@@ -1,0 +1,29 @@
+# Host bind-mounts for the Proxmox LXC. Keeping state on /mnt/data means the
+# nightly tar backup (scripts/proxmox_bootstrap.sh) has one directory to grab
+# and a container rebuild never touches the data.
+#
+# Create the tree before first `up`:
+#   sudo mkdir -p /mnt/data/fantasy-edge/{postgres,redis,models,logs}
+
+services:
+  postgres:
+    volumes:
+      - /mnt/data/fantasy-edge/postgres:/var/lib/postgresql/data
+
+  redis:
+    volumes:
+      - /mnt/data/fantasy-edge/redis:/data
+
+  api:
+    volumes:
+      - /mnt/data/fantasy-edge/models:/mnt/data/fantasy-edge/models
+      - /mnt/data/fantasy-edge/logs:/app/logs
+
+  worker:
+    volumes:
+      - /mnt/data/fantasy-edge/models:/mnt/data/fantasy-edge/models
+      - /mnt/data/fantasy-edge/logs:/app/logs
+
+  beat:
+    volumes:
+      - /mnt/data/fantasy-edge/logs:/app/logs

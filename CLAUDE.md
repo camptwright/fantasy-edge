@@ -1,0 +1,125 @@
+# CLAUDE.md — Fantasy Edge
+
+## What this is
+
+A self-hosted live sports betting value engine and fantasy optimizer.
+
+1. **Best bets** — surface positive-EV wagers by comparing model win
+   probabilities (ELO + Dixon-Coles Poisson + XGBoost/LightGBM ensemble)
+   against vig-removed sportsbook implied probabilities. Rank by EV%, size with
+   quarter-Kelly, track closing line value (CLV) as the honest model scoreboard.
+2. **Fantasy value** — DFS lineup optimization (PuLP linear program against
+   DraftKings/FanDuel salary caps), player-prop edges from cross-source line
+   discrepancies, and season-long start/sit + waiver tools driven by value over
+   replacement.
+
+Sports: NFL, NCAAF, NBA, WNBA, NCAAM, NHL, MLB, College Baseball. All
+sport-specific behaviour lives in `config/sports.yaml`, so adding eSports /
+soccer / F1 later is a config change rather than a code change.
+
+## Stack
+
+Python 3.12 · FastAPI · PostgreSQL 16 · Redis 7 · Celery · Next.js 14
+(standalone output) · **system Nginx on the LXC host, never containerized** ·
+Docker Compose.
+
+## Hard-won constraints — violating these caused production bugs
+
+1. **Celery DB access.** Every task opens its own `get_worker_db()` NullPool
+   session created *inside* the task. Never share a pooled asyncpg engine
+   across forked processes — the child inherits live sockets the parent still
+   thinks it owns. All tasks use `asyncio.run()`, never a manually managed
+   loop. See `src/data/cache/db_client.py`.
+2. **Nullable columns in filters.** Any `WHERE` on a nullable column
+   (`games.game_time`) must be `or_(col.is_(None), ...)` or those rows silently
+   vanish. This once made an entire endpoint return one source only.
+3. **Class names must match imports exactly.** The props agent is `PropsAgent`,
+   imported as `from src.agents.props_agent import PropsAgent`. Smoke-test every
+   agent import with `python -c` before committing.
+4. **Odds API free tier is 500 requests/month.** Three defences, all from day
+   one: (a) season-aware polling driven by `season_months`; (b) 300s in-season
+   / 21600s off-season intervals; (c) quota guard reading
+   `x-requests-remaining` — below 50, set Redis `odds_api:quota_exhausted`
+   (TTL 24h) and skip all polls while set.
+5. **Player props are not on the Odds API free tier — do not call them.**
+   PrizePicks sits behind PerimeterX; do not scrape it. Underdog Fantasy's
+   public API is the primary props source.
+6. **Props dedup lives in Postgres**, as `INSERT ... WHERE NOT EXISTS` on
+   (player_name, stat_type, source, line, date) plus the `uq_prop_daily` unique
+   index as a backstop. Never dedup with Redis marker keys — they never expired
+   and froze the pipeline.
+7. **Props list endpoints must use `DISTINCT ON (player_name, stat_type,
+   source) ORDER BY captured_at DESC`** or the UI shows hundreds of duplicates.
+8. **Normalize `stat_type` at ingest time** (`pts`→`points`, `reb`→`rebounds`,
+   `"1h points"`→`1h_points`) so cross-source joins line up.
+9. **Games API defaults**: `status=scheduled`, `game_date >= NOW()` strictly
+   future, 7-day forward window. Never default to dumping history.
+10. **Dashboard Dockerfile**: `output:'standalone'` in next.config.js; create
+    `dashboard/public/` even if empty; `COPY` with the `/app/public*` wildcard;
+    `npm ci --legacy-peer-deps`; compose maps `3000:3000`.
+11. **Nginx runs on the LXC host via apt, not in compose.** A containerized
+    nginx fights the host for port 80 and one loses non-deterministically.
+12. **Parlay generation** uses OpenAI (`gpt-4o`) and must work from prop edges
+    alone — never require `bet_signals` to be non-empty, since signals only
+    exist after odds polling has succeeded.
+
+### Added while building
+
+13. **`date(timestamptz)` is STABLE, not IMMUTABLE**, so Postgres refuses it in
+    an index expression and the whole migration rolls back. The `uq_prop_daily`
+    index pins the zone: `((captured_at AT TIME ZONE 'UTC')::date)`. Alembic's
+    `--sql` offline mode will not catch this — it only proves the migration
+    *code* runs, not that Postgres accepts the DDL. Always apply a migration to
+    a real Postgres before trusting it.
+
+## Layout
+
+```
+config/settings.py     pydantic-settings from .env; sports.yaml loader helpers
+config/sports.yaml     8 sports: season_months, ELO params, blend weights,
+                       markets, ev_threshold_pct
+src/data/cache/        db_client.py — the two-engine rule (constraint #1)
+src/models/orm.py      11 tables, UUID PKs, UTC timestamps
+src/data/providers/    theodds_api.py (games only), espn_api.py (free backbone)
+src/agents/            props_agent, odds_monitor, game_sync_agent, value_agent,
+                       alert_agent, clv_tracker
+src/algorithms/        elo, poisson, ensemble, kelly, ev_calculator,
+                       dfs_optimizer, projections, value_over_replacement
+src/scheduler/         celery_app.py (season-aware beat), tasks.py
+src/api/routers/       games, odds, signals, props, parlays, fantasy, rankings
+alembic/versions/      migrations
+```
+
+## Data model notes
+
+- `odds_snapshots` is **immutable and append-only**. Line-movement detection
+  and CLV both depend on an accurate history; updating a row destroys the only
+  record of what the market did.
+- `games.game_time` is nullable on purpose — providers publish fixtures before
+  a kickoff time exists. See constraint #2.
+- `power_rankings.as_of` lets backtests read ratings at a point in time, which
+  is what keeps `scripts/backtest.py` free of lookahead bias.
+
+## Dev commands
+
+```bash
+docker compose up -d postgres redis
+alembic upgrade head
+docker compose up -d              # full stack
+docker compose logs worker -f     # watch for asyncio loop errors
+```
+
+## Status
+
+- **Phase 1 (foundation) — done.** Scaffold, settings, sports config, compose
+  stack, ORM, initial migration. Migration verified against real Postgres 16:
+  12 tables, 76 indexes, and the props dedup index empirically rejects a
+  duplicate insert.
+- Phase 2 (ingestion), 3 (algorithms), 4 (agents/API), 5 (dashboard),
+  6 (deploy) — not started.
+
+## Deployment note
+
+The build spec names an LXC at `192.168.1.200`, but this homelab runs on
+`10.51.24.0/22` (Proxmox host `10.51.24.34`). The container does not exist yet
+and the address needs reconciling before Phase 6.
