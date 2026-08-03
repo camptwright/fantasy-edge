@@ -1,5 +1,25 @@
 # CLAUDE.md — Fantasy Edge
 
+## Planned — not started
+
+- **Team-identity reconciliation (resolves constraint #24).** Filed for a
+  future session, not started:
+  1. Static per-sport alias crosswalk (e.g. `config/team_aliases/nfl.yaml`)
+     mapping each historical loader's team identifier to ESPN's canonical
+     full name + `espn_id` - a finite, known lookup table (32 NFL teams),
+     not an algorithm to invent.
+  2. Route `seed_historical.py`'s `_get_or_create_team` and
+     `GameSyncAgent._resolve_team_id` through one shared `resolve_team(sport,
+     raw_name, espn_id=None)` helper so whichever path runs first creates
+     the canonical row and the second attaches to it instead of duplicating.
+  3. One-time backfill migration to re-point `Game`/`PlayerPropLine`/
+     `PowerRanking` foreign keys from existing duplicate Team rows onto the
+     canonical ones, then delete the orphans - live data already has the
+     split.
+  Scope check first: NBA/NHL loaders likely already emit ESPN-compatible
+  full names (verify against real data before assuming they need a
+  crosswalk too); MLB and CFB probably do, same as NFL.
+
 ## What this is
 
 A self-hosted live sports betting value engine and fantasy optimizer.
