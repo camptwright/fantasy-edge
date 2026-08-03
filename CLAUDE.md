@@ -117,6 +117,17 @@ Docker Compose.
     `docker compose build` and healthy containers give no hint of this until
     something actually writes. `scripts/proxmox_bootstrap.sh` (Phase 6) must
     `chown -R 1001:1001` after creating these directories, not just `mkdir`.
+19. **FastAPI only auto-combines multiple body parameters into one JSON
+    object when each parameter is a scalar/single model keyed by name.** A
+    route with two bare `list[...]`/`dict[...]` parameters
+    (`start_sit(roster: list[X], starters_by_position: dict)`) expects a
+    request body shaped `{"roster": [...], "starters_by_position": {...}}`,
+    NOT a raw JSON array for "the roster" - sending a bare array 422s with
+    `"roster": "Field required"` even though a body was clearly sent, because
+    FastAPI can't tell which bare-list body maps to which parameter. Fix:
+    one `BaseModel` wrapping every field, one body parameter. Hit this on
+    both `/fantasy/start-sit` and `/fantasy/waivers`; both took a single
+    `StartSitRequest`/`WaiversRequest` model instead.
 
 ## Layout
 
@@ -195,7 +206,40 @@ docker compose logs worker -f     # watch for asyncio loop errors
   rate/Brier for all 120 games and ROI/CLV for only the 20 games with
   synthetic `odds_snapshots` - proving the "no market odds available"
   coverage-counting logic works, not just the happy path.
-- Phase 4 (agents/API), 5 (dashboard), 6 (deploy) — not started.
+- **Phase 4 (agents, scheduler, API) — done.** `value_agent.py` (full
+  pipeline: persisted-ELO state advanced incrementally rather than replayed
+  from scratch every run, on-the-fly Poisson attack/defense from recent
+  scoring, ensemble loaded if trained/gracefully skipped with proportional
+  blend-weight redistribution if not, best-price-per-side EV eval, signal
+  persistence, publish+alert), `alert_agent.py` (tiered Discord embeds,
+  Redis `SET NX` cooldown keyed on signal identity not row id),
+  `clv_tracker.py` (backfills CLV once a signal's game goes final),
+  `celery_app.py` + `tasks.py` (constraint #1 NullPool-per-task; season-
+  aware Odds API polling done as a fixed-interval tick that self-gates per
+  sport rather than a dynamic beat schedule). FastAPI routers: games
+  (constraint #9 default window, constraint #2 NULL-safe game_time), odds
+  (latest + best-price), signals (EV-sorted with game context), props
+  (constraint #7 DISTINCT ON dedup, /best cross-source spread, /compare),
+  parlays (constraint #12: reads only `player_prop_lines`, never
+  `bet_signals`), fantasy (DFS optimize, lightweight projections from live
+  Underdog lines, start-sit/waivers - all three accept their player
+  pool/roster in the request body since no salary-feed or season-long-
+  roster provider exists in this system), rankings, health.
+
+  Smoke-tested on CT 100: every read endpoint curls clean against real
+  data (`/games` returns the live NFL fixture from Phase 2,
+  `/props` returns live WNBA lines, `/props/best` correctly returns `[]`
+  since Underdog is our only source so no pair has 2+ sources to diff -
+  not a bug); `/parlays/generate` returns a clean 503 on the missing
+  `OPENAI_API_KEY` rather than a 500, and `_candidate_props` was verified
+  directly to find 20 real WNBA props while never touching `bet_signals`
+  (0 rows in that table at the time); `/fantasy/dfs/optimize` solved a
+  synthetic 8-player NBA pool correctly. The core smoke test - seed a
+  synthetic scheduled game with generous h2h odds, run
+  `ValueAgent.evaluate_game` for real - produced 2 persisted `bet_signals`
+  rows with sane blended probabilities (0.554/0.446) derived from 3 real
+  ESPN-synced WNBA games already in the DB.
+- Phase 5 (dashboard), 6 (deploy) — not started.
 
 ## Known gaps
 
