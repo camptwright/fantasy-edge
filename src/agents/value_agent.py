@@ -38,7 +38,7 @@ from src.algorithms import elo, poisson
 from src.algorithms.ensemble import GameOutcomeEnsemble
 from src.algorithms.ev_calculator import EVResult, evaluate
 from src.algorithms.kelly import fractional_kelly_stake
-from src.data.cache.redis_client import CHANNEL_LINE_MOVEMENT, get_redis
+from src.data.cache.redis_client import CHANNEL_LINE_MOVEMENT, get_worker_redis
 from src.models.orm import BetSignal, Game, ModelOutput, OddsSnapshot, PowerRanking
 from src.utils.logging import get_logger
 
@@ -240,11 +240,15 @@ class ValueAgent:
         return latest
 
     async def _publish_and_alert(self, signal: BetSignal) -> None:
-        redis = get_redis()
-        await redis.publish(
-            CHANNEL_LINE_MOVEMENT,
-            f'{{"type":"bet_signal","signal_id":"{signal.id}","ev_percent":{signal.ev_percent}}}',
-        )
+        # Fresh client, not the API's shared get_redis() - ValueAgent only
+        # ever runs inside a Celery task's own asyncio.run() loop (via
+        # run_value_agent_for_game / value_agent_tick, or the odds_monitor
+        # trigger). See redis_client.py's module docstring.
+        async with get_worker_redis() as redis:
+            await redis.publish(
+                CHANNEL_LINE_MOVEMENT,
+                f'{{"type":"bet_signal","signal_id":"{signal.id}","ev_percent":{signal.ev_percent}}}',
+            )
         try:
             from src.scheduler.tasks import send_alert_for_signal
         except ImportError:

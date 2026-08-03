@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import get_settings
-from src.data.cache.redis_client import KEY_ALERT_COOLDOWN, get_redis
+from src.data.cache.redis_client import KEY_ALERT_COOLDOWN, get_worker_redis
 from src.models.orm import BetSignal, Game
 from src.utils.logging import get_logger
 
@@ -88,9 +88,12 @@ class AlertAgent:
             log.info("alert_agent.no_webhook_configured", signal_id=str(signal.id))
             return False
 
-        redis = get_redis()
+        # Fresh client, not the API's shared get_redis() - this method only
+        # ever runs inside a Celery task's own asyncio.run() loop. See
+        # redis_client.py's module docstring.
         key = await self._cooldown_key(signal)
-        acquired = await redis.set(key, "1", nx=True, ex=ALERT_COOLDOWN_SECONDS)
+        async with get_worker_redis() as redis:
+            acquired = await redis.set(key, "1", nx=True, ex=ALERT_COOLDOWN_SECONDS)
         if not acquired:
             log.info("alert_agent.cooldown_suppressed", signal_id=str(signal.id))
             return False

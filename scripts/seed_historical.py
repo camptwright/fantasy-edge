@@ -110,7 +110,7 @@ async def run(sport: str, seasons: list[str]) -> None:
     elif sport == "ncaaf":
         from src.data.historical.cfb_loader import load_games
 
-        games = load_games([int(s) for s in seasons])
+        games = await load_games([int(s) for s in seasons])
     elif sport == "mlb" or sport == "ncaabaseball":
         from src.data.historical.mlb_loader import load_games
 

@@ -1,48 +1,70 @@
-"""Historical NCAAF results via the `cfbd` (College Football Data) package.
+"""Historical NCAAF results via the CFBD (College Football Data) REST API,
+called directly with httpx rather than the `cfbd` SDK package.
+
+The `cfbd` package pins `pydantic<2` on every published release through at
+least 5.21.0 (checked directly against the wheel metadata, not assumed) - a
+permanent, unfixable conflict with this project's `pydantic>=2.9`
+(FastAPI, pydantic-settings both need v2). No version pin resolves this;
+`pip install .[historical]` fails `ResolutionImpossible` the moment `cfbd`
+is in the same dependency set as the rest of the app. Calling the REST API
+directly - the same pattern every other provider in this codebase already
+uses (theodds_api.py, espn_api.py, underdog_api.py) - sidesteps the SDK
+entirely and needs no extra dependency at all.
 
 Requires `cfbd_api_key` (free tier, sign up at collegefootballdata.com).
-Deferred import for the same reason as nfl_loader: optional-dependency,
-offline-script-only.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from config.settings import get_settings
+from src.data.providers.base import fetch_json
+
+BASE_URL = "https://api.collegefootballdata.com"
 
 
-def load_games(seasons: list[int]) -> list[dict[str, Any]]:
-    import cfbd  # deferred: optional dependency
-
+async def load_games(seasons: list[int]) -> list[dict[str, Any]]:
     settings = get_settings()
     if not settings.cfbd_api_key:
         raise RuntimeError("CFBD_API_KEY is not configured")
 
-    configuration = cfbd.Configuration(access_token=settings.cfbd_api_key)
+    headers = {"Authorization": f"Bearer {settings.cfbd_api_key}"}
     rows: list[dict[str, Any]] = []
 
-    with cfbd.ApiClient(configuration) as client:
-        games_api = cfbd.GamesApi(client)
-        for season in seasons:
-            games = games_api.get_games(year=season)
-            for g in games:
-                if g.home_points is None or g.away_points is None:
-                    continue
-                game_date = None
-                if g.start_date:
-                    game_date = g.start_date.date() if hasattr(g.start_date, "date") else None
-                rows.append(
-                    {
-                        "sport": "ncaaf",
-                        "season": season,
-                        "week": g.week,
-                        "game_date": game_date,
-                        "home_team_name": g.home_team,
-                        "away_team_name": g.away_team,
-                        "home_score": g.home_points,
-                        "away_score": g.away_points,
-                    }
-                )
+    for season in seasons:
+        games = await fetch_json(
+            f"{BASE_URL}/games",
+            params={"year": season, "seasonType": "regular"},
+            headers=headers,
+        )
+        for g in games:
+            home_points = g.get("homePoints")
+            away_points = g.get("awayPoints")
+            if home_points is None or away_points is None:
+                continue
+
+            game_date: date | None = None
+            start_date = g.get("startDate")
+            if start_date:
+                try:
+                    game_date = datetime.fromisoformat(
+                        start_date.replace("Z", "+00:00")
+                    ).date()
+                except ValueError:
+                    game_date = None
+
+            rows.append(
+                {
+                    "sport": "ncaaf",
+                    "season": season,
+                    "week": g.get("week"),
+                    "game_date": game_date,
+                    "home_team_name": g.get("homeTeam"),
+                    "away_team_name": g.get("awayTeam"),
+                    "home_score": home_points,
+                    "away_score": away_points,
+                }
+            )
     return rows

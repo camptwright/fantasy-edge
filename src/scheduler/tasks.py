@@ -1,6 +1,11 @@
 """Celery task bodies. CONSTRAINT #1: every task opens its own
 `get_worker_db()` NullPool session created INSIDE the task and runs via
 `asyncio.run()` - never a module-level engine, never a reused event loop.
+
+The same rule applies to Redis, not just Postgres - `get_worker_redis()`,
+never the API-only `get_redis()`. See redis_client.py's module docstring:
+a cached asyncio Redis client is bound to whichever event loop first used
+it, and every task here gets a brand new loop from `asyncio.run()`.
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ from src.agents.odds_monitor import OddsMonitor
 from src.agents.props_agent import PropsAgent
 from src.agents.value_agent import ValueAgent
 from src.data.cache.db_client import get_worker_db
-from src.data.cache.redis_client import get_redis
+from src.data.cache.redis_client import get_worker_redis
 from src.models.orm import Game
 from src.scheduler.celery_app import celery_app
 from src.utils.logging import get_logger
@@ -55,32 +60,39 @@ def odds_tick() -> None:
 
     async def _run() -> None:
         settings = get_settings()
-        redis = get_redis()
         now = time.time()
 
-        for sport in all_sports():
-            cfg = get_sport_config(sport)
-            if not cfg.get("odds_api_key"):
-                continue
+        # One client for the whole tick, not one per sport - a single
+        # get_worker_redis() context lives inside this one asyncio.run()
+        # loop the entire time, which is exactly what makes it safe. Note
+        # OddsMonitor.poll_sport() below opens its OWN get_worker_redis()
+        # internally too (it needs pub/sub + last-seen-price keys); that's
+        # fine, it's still inside the same outer loop, just a second
+        # short-lived connection alongside this one.
+        async with get_worker_redis() as redis:
+            for sport in all_sports():
+                cfg = get_sport_config(sport)
+                if not cfg.get("odds_api_key"):
+                    continue
 
-            in_season = is_in_season(sport, time.gmtime(now).tm_mon)
-            interval = (
-                settings.poll_interval_in_season
-                if in_season
-                else settings.poll_interval_off_season
-            )
+                in_season = is_in_season(sport, time.gmtime(now).tm_mon)
+                interval = (
+                    settings.poll_interval_in_season
+                    if in_season
+                    else settings.poll_interval_off_season
+                )
 
-            key = ODDS_LAST_POLL_KEY.format(sport=sport)
-            last_raw = await redis.get(key)
-            if last_raw is not None and now - float(last_raw) < interval:
-                continue
+                key = ODDS_LAST_POLL_KEY.format(sport=sport)
+                last_raw = await redis.get(key)
+                if last_raw is not None and now - float(last_raw) < interval:
+                    continue
 
-            async with get_worker_db() as db:
-                try:
-                    await OddsMonitor().poll_sport(db, sport)
-                except Exception:
-                    log.exception("odds_tick.poll_failed", sport=sport)
-            await redis.set(key, str(now))
+                async with get_worker_db() as db:
+                    try:
+                        await OddsMonitor().poll_sport(db, sport)
+                    except Exception:
+                        log.exception("odds_tick.poll_failed", sport=sport)
+                await redis.set(key, str(now))
 
     asyncio.run(_run())
 

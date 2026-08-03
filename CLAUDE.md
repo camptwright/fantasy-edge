@@ -156,6 +156,69 @@ Docker Compose.
     app's Next 14 pin for no runtime benefit on a LAN-only host with no
     external exposure. Bumped to the latest 14.x patch (14.2.35) for
     whatever it does cover; did not force the major upgrade.
+22. **CONSTRAINT #1 GENERALISES TO REDIS, NOT JUST THE DB ENGINE - and this
+    one only breaks the SECOND time a task runs, not the first.** A
+    `redis.asyncio.Redis` client's connections are bound to whichever
+    asyncio event loop was active when it first connected. `get_redis()`'s
+    module-level cache is safe for the API process (uvicorn keeps one loop
+    for its whole life) but every Celery task's `asyncio.run()` creates a
+    fresh loop and destroys it on completion; reusing `get_redis()`'s
+    cached client across two different `asyncio.run()` calls hands the
+    second one a client still holding sockets from the FIRST (now-closed)
+    loop. First symptom: `RuntimeError: Task ... got Future ... attached to
+    a different loop`; that failure's own cleanup path then raises
+    `RuntimeError: Event loop is closed` trying to close the stale
+    connection. Caught empirically on CT 100 running the REAL worker +
+    beat containers, not a `docker compose run` one-off: `odds_tick`
+    succeeded on its first scheduled execution and threw exactly that
+    traceback on its second - a bug that direct-agent smoke tests (Phase
+    2-4's `docker compose run --rm api python -`, which only ever
+    exercises ONE `asyncio.run()` per invocation) structurally cannot
+    catch, because it takes a second, later invocation reusing the same
+    process to surface at all. Fixed with `get_worker_redis()` (an async
+    context manager, same NullPool-per-task shape as `get_worker_db()`)
+    in `redis_client.py`, and rewired every call site that runs inside a
+    Celery task - `odds_monitor.py`, `alert_agent.py`, `value_agent.py`
+    (`_publish_and_alert`), `tasks.py`'s `odds_tick` - off the shared
+    `get_redis()`. The quota-guard functions (`is_quota_exhausted`,
+    `set_quota_exhausted`, `clear_quota_exhausted`) now take an explicit
+    `redis` client parameter instead of reaching for the global, so the
+    same functions work correctly from both contexts. Re-verified by
+    queuing `odds_tick` twice in a row (the exact failure sequence) after
+    the fix - both succeeded cleanly - and confirmed the real beat
+    scheduler firing ticks autonomously with zero errors afterward.
+    `get_redis()` itself is still correct and still used - by
+    `api/routers/health.py` and `api/main.py`'s lifespan shutdown - because
+    the API process's one persistent event loop is exactly the case it was
+    designed for.
+23. **`cfbd` (the College Football Data SDK) pins `pydantic<2` on every
+    published release through at least 5.21.0** (checked directly against
+    the wheel's `METADATA`, not assumed from the version pin) - a
+    permanent conflict with this project's `pydantic>=2.9`
+    (FastAPI/pydantic-settings). No version bound fixes this; `pip install
+    .[historical]` throws `ResolutionImpossible` the moment `cfbd` is in
+    the dependency set at all. Fixed by dropping the SDK entirely -
+    `cfb_loader.py` now calls the CFBD REST API directly with `httpx`,
+    the same pattern every other provider in this codebase already uses.
+24. **Historical seed data and live-synced data don't share Team
+    identity, and nothing currently reconciles them.**
+    `scripts/seed_historical.py`'s NFL loader creates `Team` rows from
+    `nfl_data_py`'s abbreviations (`"KC"`, `"DET"`, ...) with no
+    `espn_id`; `GameSyncAgent` resolves teams for live ESPN-synced games
+    by `espn_id` first, then exact `Team.name` match against ESPN's full
+    display names (`"Kansas City Chiefs"`). Neither path matches the
+    other, so a live game's `home_team_id`/`away_team_id` stay `NULL`
+    even after historical seeding - which means `ValueAgent.evaluate_
+    game` skips it entirely (`if game.home_team_id is None: return []`),
+    and `/rankings/{sport}` stays empty despite real games and a real
+    trained model both existing. Verified directly: seeded NFL Team rows
+    are `['KC', 'DET', 'ATL', ...]`, not full names. Not fixed here -
+    needs a team-alias/crosswalk table (abbreviation + full name + espn_id
+    all pointing at one canonical `Team` row) before ELO ratings can
+    actually flow from historical training into live signal generation
+    for any sport whose historical loader doesn't already emit ESPN team
+    IDs. Flagging this precisely so a future session doesn't have to
+    re-derive it from the symptom.
 
 ## Layout
 
@@ -173,6 +236,9 @@ src/algorithms/        elo, poisson, ensemble, kelly, ev_calculator,
 src/scheduler/         celery_app.py (season-aware beat), tasks.py
 src/api/routers/       games, odds, signals, props, parlays, fantasy, rankings
 alembic/versions/      migrations
+scripts/                seed_historical.py, train_models.py, backtest.py,
+                       proxmox_bootstrap.sh
+dashboard/             Next.js 14 App Router (constraint #10)
 ```
 
 ## Data model notes
@@ -292,7 +358,64 @@ docker compose logs worker -f     # watch for asyncio loop errors
   fixed with a `next.config.js` `redirects()` entry, then re-verified
   `curl -I` shows `location: /signals` and `curl -L` reaches a real 200
   with `<title>Fantasy Edge</title>`.
-- Phase 6 (deploy) — not started.
+- **Phase 6 (homelab deploy + verify) — done.** `scripts/proxmox_bootstrap.sh`
+  (idempotent: Docker, Node 22, nginx site config with Flower basic auth,
+  systemd unit for boot-time `compose up`, daily `pg_dump` backup cron with
+  7-day retention) and `PROXMOX.md`.
+
+  Full 7-container stack (postgres, redis, api, worker, beat, flower,
+  dashboard) brought up for real on CT 100 and is the deployed end state -
+  not scaled back after testing, unlike Phases 2-5. Actual steady-state RAM:
+  **871MB used / 4GB total** (3.1GB available) - the ~4.7GB of configured
+  `mem_limit`s is a ceiling, not what's actually consumed.
+
+  Verified end-to-end against real infrastructure, not shortcuts:
+  - `docker compose up -d`: all 7 containers healthy, zero port conflicts.
+  - `alembic upgrade head`: idempotent, already at head.
+  - Real historical NFL data seeded via `nfl_data_py` (560 games, 2023-2024)
+    and a real model trained on it (58.9% OOF accuracy, Brier 0.238) and
+    backtested (61.6% win rate, Brier 0.230, correctly reporting `0/560`
+    games with market odds and `n/a` ROI/CLV - these are pre-launch
+    historical games with no recorded `odds_snapshots`, not a bug).
+  - `nginx` gateway on port 80: `/` (dashboard), `/api/health`,
+    `/api/games`, `/api/props`, `/api/rankings/nfl` all curl clean;
+    `/flower/` correctly 401s without basic-auth credentials.
+  - Signal -> alert chain run through the REAL Celery pipeline (not a
+    direct method call): `run_value_agent_for_game` -> `ValueAgent`
+    (advanced ELO from 4 real ESPN-synced WNBA games) -> 2 `bet_signals`
+    persisted -> 2 `send_alert_for_signal` tasks dispatched and completed,
+    each correctly logging `alert_agent.no_webhook_configured` rather than
+    crashing - the expected behavior given the "Known gaps" below, verified
+    to be graceful rather than assumed.
+  - Quota guard: manually set the Redis `odds_api:quota_exhausted` flag,
+    confirmed `OddsMonitor.poll_sport` blocks BEFORE any HTTP call
+    (`theodds.quota_guard_blocked` logged, zero requests sent), cleared
+    the flag, confirmed normal operation resumes.
+
+  **Found and fixed three real bugs this phase, none of them guessable
+  from reading the code - all three needed the real worker/beat containers
+  actually running, which is exactly why this phase exists:**
+  1. `proxmox_bootstrap.sh`'s cron-install line aborted the entire script
+     silently on a fresh host (`set -e` + `grep -v` on an absent crontab
+     exits 1) - the "Bootstrap complete" message never printed and the
+     cron job was never installed. Fixed with `|| true`; re-ran and
+     confirmed `crontab -l` shows the entry.
+  2. **Constraint #22** - the Redis client cached across Celery's per-task
+     `asyncio.run()` calls (same class of bug constraint #1 warns about
+     for the DB engine, but I'd only applied that fix to Postgres). Only
+     surfaced on a task's SECOND execution, which is why every earlier
+     phase's `docker compose run --rm api python -` smoke tests (each one
+     `asyncio.run()`-ing exactly once) could never have caught it - it took
+     the real beat scheduler firing `odds_tick` twice in a row.
+  3. **Constraint #23** - `cfbd`'s permanent `pydantic<2` conflict, which
+     made the literal documented `pip install .[historical]` command fail
+     for every user who ever runs it, not a hypothetical edge case.
+
+  Also discovered and documented (not fixed - real scope, flagged for a
+  future session): **constraint #24**, historical and live-synced Team
+  rows don't share identity, so `/rankings/{sport}` stays empty and
+  `ValueAgent` skips ESPN-synced games entirely despite both real games
+  and a real trained model existing.
 
 ## Known gaps
 
@@ -304,6 +427,15 @@ docker compose logs worker -f     # watch for asyncio loop errors
   OpenAI; Discord alerts cannot fire; the CFBD historical loader cannot run.
   `PropsAgent` (Underdog) and `GameSyncAgent` (ESPN) need no key and are
   unaffected.
+- **Historical and live-synced Team identity don't reconcile** - see
+  constraint #24. `/rankings/{sport}` stays empty and `ValueAgent` skips
+  ESPN-synced games with unresolved `home_team_id`/`away_team_id` even
+  after historical seeding, until a team-alias/crosswalk table exists.
+- **Flower's basic-auth password was generated once by
+  `proxmox_bootstrap.sh` and is not re-printed on subsequent runs** (the
+  script checks for an existing `/etc/nginx/.htpasswd-flower` and leaves it
+  alone). If it's lost, delete that file and re-run the bootstrap script to
+  generate a new one.
 
 ## Deployment — actual infrastructure
 
@@ -327,5 +459,8 @@ now ~7GB against 7.5GB physical rather than 15GB.
 comes up with **no IPv4 either**. That took the whole docker-core stack offline
 for 35 hours once.
 
-Compose `mem_limit`s currently sum to ~4.7GB against the container's 4GB, which
-is fine while services idle but needs trimming before all seven run under load.
+Compose `mem_limit`s sum to ~4.7GB against the container's 4GB - still just a
+ceiling, not actual usage: all 7 containers measured at **871MB used / 4GB
+total** (3.1GB available) with the full stack running for real. Fine for now;
+revisit if `docker stats` ever shows sustained pressure once live polling
+(once `ODDS_API_KEY` is set) and real user traffic are both happening at once.
