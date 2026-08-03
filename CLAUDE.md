@@ -82,6 +82,29 @@ Docker Compose.
     `._0001_initial_schema.py` and dies with
     `SyntaxError: source code string cannot contain null bytes`. `.dockerignore`
     excludes `._*` as a second line of defence.
+16. **`ON CONFLICT ON CONSTRAINT` needs a real Postgres constraint, not just a
+    unique index.** `uq_prop_daily` has to be a plain `Index(unique=True)`
+    rather than a `UniqueConstraint` because one of its keys is an expression
+    (`((captured_at AT TIME ZONE 'UTC')::date)` — see #13) and Postgres does
+    not support expression-based `UNIQUE` table constraints. But
+    `ON CONFLICT ON CONSTRAINT uq_prop_daily` only resolves names against
+    `pg_constraint`, so it fails with
+    `UndefinedObjectError: constraint "uq_prop_daily" ... does not exist`
+    even though the unique index by that name genuinely exists. Fix: target
+    the same columns/expression with `on_conflict_do_nothing(index_elements=[...])`
+    instead of `constraint=`. Plain `UniqueConstraint`-backed dedup (Team,
+    Game) can keep using `constraint=` — this only bites expression indexes.
+17. **Underdog Fantasy's `/beta/v6/over_under_lines` response is not
+    self-contained per line.** It's one document with five sibling arrays -
+    `over_under_lines`, `appearances`, `players`, `games`, `solo_games`. A
+    line names its player only via
+    `line.over_under.appearance_stat.appearance_id` → `appearances[].player_id`
+    → `players[].id`; there is no top-level `player_id` on the line or its
+    `appearance_stat`, and no `teams` array at all, so a player's team name
+    is not resolvable from this endpoint. `player.sport_id` uses Underdog's
+    own codes, not ours — notably `CFB` for college football, not `NCAAF`.
+    Verified 2026-08-02 against the live endpoint (3841 lines, 0 unresolvable
+    appearance_ids in-sample).
 
 ## Layout
 
@@ -126,8 +149,36 @@ docker compose logs worker -f     # watch for asyncio loop errors
   stack, ORM, initial migration. Migration verified against real Postgres 16:
   12 tables, 76 indexes, and the props dedup index empirically rejects a
   duplicate insert.
-- Phase 2 (ingestion), 3 (algorithms), 4 (agents/API), 5 (dashboard),
-  6 (deploy) — not started.
+- **Phase 2 (data ingestion) — done.** `theodds_api.py` (quota-guarded,
+  h2h/spreads/totals only), `espn_api.py` (free backbone, all 8 sports),
+  `underdog_api.py` (props, see constraint #17 for the real payload shape),
+  `PropsAgent`, `OddsMonitor`, `GameSyncAgent`, historical loaders
+  (nfl_data_py, cfbd, NBA Stats API, NHL API v1, pybaseball — all deferred
+  imports, optional-dependency only), `scripts/seed_historical.py`.
+  Smoke-tested against real infrastructure on CT 100:
+  - `PropsAgent` fetched 1975 live Underdog lines, inserted 1974 (1 dup
+    within the same batch), 140 of them WNBA. A second run inserted 0 -
+    the `uq_prop_daily` dedup backstop confirmed working end-to-end.
+  - `GameSyncAgent` synced nfl/wnba/mlb from live ESPN and produced a
+    `status=scheduled` future game (NFL, 2026-08-07).
+  - All three agent classes import cleanly (`PropsAgent`, `OddsMonitor`,
+    `GameSyncAgent`).
+  - `OddsMonitor` was exercised against the real (empty) `ODDS_API_KEY` and
+    correctly raises `ProviderError` rather than silently returning zero -
+    see "Known gaps" below.
+- Phase 3 (algorithms), 4 (agents/API), 5 (dashboard), 6 (deploy) — not
+  started.
+
+## Known gaps
+
+- **`ODDS_API_KEY`, `OPENAI_API_KEY`, `DISCORD_WEBHOOK_URL`, `CFBD_API_KEY`
+  are all empty in `.env` on CT 100.** Mirrors the homelab repo's
+  `ANTHROPIC_API_KEY` gap. Consequences: `OddsMonitor` cannot poll odds
+  (fails loudly with `ProviderError`, by design - not a quota-exhaustion
+  silent skip); Phase 4's parlay generation (constraint #12) cannot call
+  OpenAI; Discord alerts cannot fire; the CFBD historical loader cannot run.
+  `PropsAgent` (Underdog) and `GameSyncAgent` (ESPN) need no key and are
+  unaffected.
 
 ## Deployment — actual infrastructure
 
