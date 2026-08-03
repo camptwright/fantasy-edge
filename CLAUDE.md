@@ -128,6 +128,34 @@ Docker Compose.
     one `BaseModel` wrapping every field, one body parameter. Hit this on
     both `/fantasy/start-sit` and `/fantasy/waivers`; both took a single
     `StartSitRequest`/`WaiversRequest` model instead.
+20. **`next/navigation`'s `redirect()` (the App Router runtime helper) is
+    built for RSC client-side transitions, not a plain HTTP redirect.**
+    Called from `app/page.tsx` to bounce `/` -> `/signals`, it produced a
+    307 response with `Vary: RSC, Next-Router-State-Tree, ...` headers and
+    an HTML body, but **no `Location` header at all** - verified with
+    `curl -I`, not assumed. Only the Next.js client router (interpreting
+    the RSC payload) knows how to follow that; a real browser doing a
+    fresh page load, or curl, gets a 307 that goes nowhere. Fix: a plain
+    `redirects()` entry in `next.config.js` instead (`{ source: "/",
+    destination: "/signals", permanent: false }`), which resolves before
+    the App Router matches a page and emits a normal `Location` header -
+    confirmed with `curl -I` afterward. There is no `app/page.tsx`
+    anymore; the config redirect handles `/` entirely.
+21. **`npm audit` on Next.js 14.2.x reports two "high" findings that
+    don't apply here, verified against the actual advisory text rather
+    than just the severity label.** GHSA-p9j2-gv94-2wf4 (SSRF via
+    `rewrites()`) only fires when a rewrite's destination *hostname* is
+    built from request-controlled input (a `:param` in the host, or a
+    captured `has` query value) - this app's one rewrite
+    (`/api/:path*` -> `${API_INTERNAL_URL}/:path*`) has a fixed hostname
+    from an env var and only templates the path suffix, which the
+    advisory explicitly calls out as the non-vulnerable shape. The other
+    finding is a transitive PostCSS build-tool vuln (XSS/path traversal
+    in *processing CSS source*, not anything served at runtime) with no
+    fix short of a Next 16 major-version jump, which would break this
+    app's Next 14 pin for no runtime benefit on a LAN-only host with no
+    external exposure. Bumped to the latest 14.x patch (14.2.35) for
+    whatever it does cover; did not force the major upgrade.
 
 ## Layout
 
@@ -239,7 +267,32 @@ docker compose logs worker -f     # watch for asyncio loop errors
   `ValueAgent.evaluate_game` for real - produced 2 persisted `bet_signals`
   rows with sane blended probabilities (0.554/0.446) derived from 3 real
   ESPN-synced WNBA games already in the DB.
-- Phase 5 (dashboard), 6 (deploy) — not started.
+- **Phase 5 (Next.js dashboard) — done.** Next.js 14.2.35 (App Router,
+  `output: 'standalone'`, constraint #10), Tailwind dark theme, SWR for
+  data fetching against relative `/api/...` paths. Pages: Signals
+  (EV-sorted cards, sport/min-EV filters, 30s auto-refresh), Games
+  (upcoming only - trusts the backend's constraint #9 default rather than
+  re-filtering), Props (Best Value + All Props tabs, source filter,
+  DISTINCT ON dedup rendered straight from the API), Parlays (generate +
+  list, surfaces the 503 from a missing `OPENAI_API_KEY` as a real error
+  rather than hiding it), Fantasy (DFS builder with an editable player
+  pool + lock/exclude checkboxes since no salary-feed provider exists,
+  Projections from live Underdog lines, Start/Sit and Waivers with
+  manual roster entry against the VOR algorithm), Rankings.
+
+  `docker compose build --no-cache dashboard` succeeds on CT 100; a real
+  container was started and curled, not just built. Found and fixed two
+  bugs via the actual HTTP responses, not by inspection: (1) `npm audit`
+  flagged Next.js SSRF/PostCSS findings - verified against the real
+  advisory text that the SSRF one doesn't apply to this app's rewrite
+  shape (see constraint #21), bumped to the latest safe 14.x patch
+  instead of forcing a breaking major upgrade; (2) the root `/` redirect
+  had no `Location` header at all (`curl -I` proved it, App Router's
+  `redirect()` is for client-side RSC transitions - constraint #20),
+  fixed with a `next.config.js` `redirects()` entry, then re-verified
+  `curl -I` shows `location: /signals` and `curl -L` reaches a real 200
+  with `<title>Fantasy Edge</title>`.
+- Phase 6 (deploy) — not started.
 
 ## Known gaps
 
