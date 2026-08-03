@@ -105,6 +105,18 @@ Docker Compose.
     own codes, not ours — notably `CFB` for college football, not `NCAAF`.
     Verified 2026-08-02 against the live endpoint (3841 lines, 0 unresolvable
     appearance_ids in-sample).
+18. **The `/mnt/data/fantasy-edge/{models,logs}` bind mounts must be
+    `chown 1001:1001` on the host, not just `mkdir`.** The Dockerfile's
+    `chown -R fantasy:fantasy` runs at image-build time and only affects the
+    image's own filesystem layer; a host bind mount over that same path at
+    container start shadows it with the HOST directory's ownership. A plain
+    `sudo mkdir -p /mnt/data/fantasy-edge/{...}` leaves those directories
+    root-owned, and the container (which drops to uid 1001 per the
+    Dockerfile) then gets `PermissionError: [Errno 13] Permission denied`
+    the first time it tries to save a model or write a log - a working
+    `docker compose build` and healthy containers give no hint of this until
+    something actually writes. `scripts/proxmox_bootstrap.sh` (Phase 6) must
+    `chown -R 1001:1001` after creating these directories, not just `mkdir`.
 
 ## Layout
 
@@ -166,8 +178,24 @@ docker compose logs worker -f     # watch for asyncio loop errors
   - `OddsMonitor` was exercised against the real (empty) `ODDS_API_KEY` and
     correctly raises `ProviderError` rather than silently returning zero -
     see "Known gaps" below.
-- Phase 3 (algorithms), 4 (agents/API), 5 (dashboard), 6 (deploy) — not
-  started.
+- **Phase 3 (algorithms) — done.** `elo.py`, `poisson.py` (Dixon-Coles),
+  `ensemble.py` (XGBoost+LightGBM stacked, TimeSeriesSplit, versioned
+  pickle), `kelly.py` (full/fractional/portfolio), `ev_calculator.py`
+  (vig removal, tiers, divergence-based confidence), `clv.py`,
+  `dfs_optimizer.py` (PuLP, DK/FD NBA+NFL roster rules), `projections.py`,
+  `value_over_replacement.py`, `scripts/train_models.py`,
+  `scripts/backtest.py`. Unit-tested locally (elo, poisson, kelly, ev, clv,
+  VOR, projections, DFS optimizer with lock/exclude/team-cap all pass);
+  `ensemble.py` and the DB-backed `train_models.py`/`backtest.py` needed
+  CT 100 (LightGBM needs `libomp`, present in the container via
+  `apt install libgomp1`, absent on this Mac). Full walk-forward demo run
+  against 120 synthetic seeded games on real Postgres: ensemble trained
+  (72% OOF accuracy on a deliberately-baked-in signal), model saved and
+  reloaded byte-identical, `backtest.py` correctly reported win
+  rate/Brier for all 120 games and ROI/CLV for only the 20 games with
+  synthetic `odds_snapshots` - proving the "no market odds available"
+  coverage-counting logic works, not just the happy path.
+- Phase 4 (agents/API), 5 (dashboard), 6 (deploy) — not started.
 
 ## Known gaps
 
