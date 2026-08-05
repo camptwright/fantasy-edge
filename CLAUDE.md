@@ -437,6 +437,26 @@ docker compose logs worker -f     # watch for asyncio loop errors
   `ValueAgent` skips ESPN-synced games entirely despite both real games
   and a real trained model existing.
 
+## Downstream consumers (outside this repo)
+
+Two homelab-repo services read this API read-only over the network
+(`http://10.51.24.80:8000` from CT110, see homelab's `env.example`
+`FANTASY_EDGE_URL`) - nothing in this repo needs to change for them, but
+know they exist before changing response shapes:
+
+- **`homelab-dashboard`'s Fantasy tile** (`/fantasy`) sources its edges
+  table from `/props` (not `/probabilities`, which was assumed early on
+  but never existed) and computes implied probability client-side.
+- **Adjutant's `fantasy` sub-agent** posts a daily recap (`fantasy_recap`
+  schedule, 08:00 `America/Chicago` Mon-Fri) built from `/props`. Its
+  tools were originally pointed at `/props/best`, `/rankings/*`, and
+  `/signals`, which all reliably return empty because this repo has no
+  projection pipeline yet (see constraint #24 above) - that produced a
+  real bug (empty articles, then articles that weren't published at all)
+  fixed on the adjutant side, not here. If a projection pipeline for
+  `/props/best`/`/rankings` ever ships, both consumers should be told -
+  they currently treat those endpoints as legitimately-always-empty.
+
 ## Known gaps
 
 - **`ODDS_API_KEY`, `OPENAI_API_KEY`, `DISCORD_WEBHOOK_URL`, `CFBD_API_KEY`
