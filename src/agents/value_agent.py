@@ -295,7 +295,6 @@ class ValueAgent:
             by_outcome.setdefault(outcome, []).append(snap)
 
         home_name = game.home_team_name or ""
-        away_name = game.away_team_name or ""
         signals: list[BetSignal] = []
 
         for outcome, snaps in by_outcome.items():
