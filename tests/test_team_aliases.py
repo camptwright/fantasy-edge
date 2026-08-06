@@ -26,6 +26,20 @@ class TestTeamAliasFiles:
                 assert alias.get("espn_name"), f"{sport}/{raw_name} missing espn_name"
                 assert alias.get("espn_id"), f"{sport}/{raw_name} missing espn_id"
 
+    def test_every_alias_key_is_a_real_string_not_a_yaml_coerced_type(self):
+        # Regression test for a real bug found live against Postgres: an
+        # unquoted "NO" (New Orleans) key parsed as the Python bool False
+        # under PyYAML's YAML-1.1 safe_load, not the string "NO" - the
+        # classic "Norway problem." A structural dict-shape check alone
+        # doesn't catch this (the dict still has 32 entries with 32 unique
+        # espn_ids); the SQL bind against a varchar column is what
+        # actually rejected it. Guard the whole YAML-1.1 boolean literal
+        # set here so a future team code (e.g. some sport's "ON", "TRUE")
+        # can't reintroduce the same class of bug undetected.
+        for sport in EXPECTED_ALIAS_COUNTS:
+            for key in get_team_aliases(sport):
+                assert isinstance(key, str), f"{sport} alias key {key!r} is {type(key).__name__}, not str"
+
     def test_nfl_has_all_32_current_teams(self):
         aliases = get_team_aliases("nfl")
         espn_ids = {a["espn_id"] for a in aliases.values()}

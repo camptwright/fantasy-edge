@@ -28,7 +28,11 @@ aliases:
   MIA: {espn_name: "Miami Dolphins", espn_id: "15"}
   MIN: {espn_name: "Minnesota Vikings", espn_id: "16"}
   NE: {espn_name: "New England Patriots", espn_id: "17"}
-  NO: {espn_name: "New Orleans Saints", espn_id: "18"}
+  # Unquoted, YAML 1.1's boolean literal set (PyYAML's safe_load) parses
+  # bare "NO" as False, not the string "NO" - found live when the
+  # backfill migration tried to bind a Python bool into a varchar
+  # comparison and Postgres rejected it outright, not silently.
+  "NO": {espn_name: "New Orleans Saints", espn_id: "18"}
   NYG: {espn_name: "New York Giants", espn_id: "19"}
   NYJ: {espn_name: "New York Jets", espn_id: "20"}
   PHI: {espn_name: "Philadelphia Eagles", espn_id: "21"}
