@@ -2,23 +2,33 @@
 
 ## Planned — not started
 
-- **Team-identity reconciliation (resolves constraint #24).** Filed for a
-  future session, not started:
-  1. Static per-sport alias crosswalk (e.g. `config/team_aliases/nfl.yaml`)
-     mapping each historical loader's team identifier to ESPN's canonical
-     full name + `espn_id` - a finite, known lookup table (32 NFL teams),
-     not an algorithm to invent.
-  2. Route `seed_historical.py`'s `_get_or_create_team` and
-     `GameSyncAgent._resolve_team_id` through one shared `resolve_team(sport,
-     raw_name, espn_id=None)` helper so whichever path runs first creates
-     the canonical row and the second attaches to it instead of duplicating.
-  3. One-time backfill migration to re-point `Game`/`PlayerPropLine`/
-     `PowerRanking` foreign keys from existing duplicate Team rows onto the
-     canonical ones, then delete the orphans - live data already has the
-     split.
-  Scope check first: NBA/NHL loaders likely already emit ESPN-compatible
-  full names (verify against real data before assuming they need a
-  crosswalk too); MLB and CFB probably do, same as NFL.
+- **NCAAF team-identity crosswalk.** `config/team_aliases/nfl.yaml`/
+  `mlb.yaml`/`nhl.yaml` (constraint #24) are done and live-verified, but
+  `ncaaf` deliberately has none yet: CFBD's school-name-only identifiers
+  (`"TCU"`, `"North Carolina"`) vs. ESPN's mascot-included `displayName`
+  (`"TCU Horned Frogs"`, `"North Carolina Tar Heels"`) need the same
+  crosswalk treatment, but the roster is ~130 FBS schools, changes with
+  yearly conference realignment, and hand-typing it from memory risks
+  real data corruption (a wrong mapping silently merges two different
+  schools) in a way an empty crosswalk doesn't - `resolve_team()` falls
+  back to treating the raw CFBD name as already-canonical when no alias
+  file exists, which is exactly today's pre-fix behavior for `ncaaf`, not
+  a regression. Needs either live API verification (not available from
+  every environment - `stats.nba.com` and CFBD both blocked/unkeyed from
+  some sandboxes) or a scripted diff against real CFBD + ESPN responses
+  before populating it by hand.
+- **`ncaam` and `ncaabaseball` historical loaders are non-functional/
+  mislabeled**, discovered while scoping constraint #24, unrelated to it:
+  `nba_loader.py`'s `_LEAGUE_ID` dict has no `"ncaam"` key at all, so
+  `seed_historical.py --sport ncaam` raises `KeyError` immediately -
+  `stats.nba.com` doesn't cover NCAA basketball anyway, so this needs an
+  entirely different data source, not a one-line fix. `mlb_loader.py`'s
+  `load_games()` hardcodes `"sport": "mlb"` on every row it returns
+  regardless of what's requested, so `--sport ncaabaseball` doesn't crash
+  but silently seeds real MLB team/game data mislabeled as college
+  baseball - `pybaseball`/Baseball-Reference has no NCAA baseball
+  coverage to draw from, so "best-effort college baseball" in that
+  module's docstring was aspirational, not implemented.
 
 ## What this is
 
@@ -220,32 +230,62 @@ Docker Compose.
     the dependency set at all. Fixed by dropping the SDK entirely -
     `cfb_loader.py` now calls the CFBD REST API directly with `httpx`,
     the same pattern every other provider in this codebase already uses.
-24. **Historical seed data and live-synced data don't share Team
-    identity, and nothing currently reconciles them.**
-    `scripts/seed_historical.py`'s NFL loader creates `Team` rows from
-    `nfl_data_py`'s abbreviations (`"KC"`, `"DET"`, ...) with no
-    `espn_id`; `GameSyncAgent` resolves teams for live ESPN-synced games
-    by `espn_id` first, then exact `Team.name` match against ESPN's full
-    display names (`"Kansas City Chiefs"`). Neither path matches the
-    other, so a live game's `home_team_id`/`away_team_id` stay `NULL`
-    even after historical seeding - which means `ValueAgent.evaluate_
-    game` skips it entirely (`if game.home_team_id is None: return []`),
-    and `/rankings/{sport}` stays empty despite real games and a real
-    trained model both existing. Verified directly: seeded NFL Team rows
-    are `['KC', 'DET', 'ATL', ...]`, not full names. Not fixed here -
-    needs a team-alias/crosswalk table (abbreviation + full name + espn_id
-    all pointing at one canonical `Team` row) before ELO ratings can
-    actually flow from historical training into live signal generation
-    for any sport whose historical loader doesn't already emit ESPN team
-    IDs. Flagging this precisely so a future session doesn't have to
-    re-derive it from the symptom.
+24. **FIXED (2026-08-06). Historical seed data and live-synced data used to
+    not share Team identity.** `scripts/seed_historical.py`'s NFL loader
+    created `Team` rows from `nfl_data_py`'s abbreviations (`"KC"`,
+    `"DET"`, ...) with no `espn_id`; `GameSyncAgent` resolved teams for
+    live ESPN-synced games by `espn_id` first, then exact `Team.name`
+    match against ESPN's full display names (`"Kansas City Chiefs"`).
+    Neither path matched the other, so a live game's `home_team_id`/
+    `away_team_id` stayed `NULL` even after historical seeding, and
+    `/rankings/{sport}` stayed empty. Fixed with
+    `src/data/team_resolution.py`'s `resolve_team()`, now the one place
+    either `seed_historical.py` (`create=True`) or `GameSyncAgent`
+    (`create=False`, unchanged read-only behavior) looks a team up -
+    both run it through `config/team_aliases/<sport>.yaml` first, so
+    whichever path runs first creates the canonical (ESPN name +
+    espn_id) row and the second attaches to it. `alembic/versions/0002`
+    backfills any Team row already sitting under the old raw name onto
+    its canonical identity (in place if it's the only row for that team,
+    re-pointing every Game/PowerRanking/Player FK first if a genuine
+    duplicate exists). Verified live against real Postgres on CT100:
+    560/561 seeded NFL games now resolve both `home_team_id`/
+    `away_team_id` (the one holdout is a pre-2024-relocation `"LA"` game
+    predating the current abbreviation convention, out of this fix's
+    documented scope - see the Planned section above).
+
+    Both `config/team_aliases/*.yaml` files and the ESPN-side data they
+    map to were fetched live (site.api.espn.com, plus
+    baseball-reference.com directly for MLB's actual abbreviation
+    scheme) on 2026-08-06, not written from memory. Two real bugs found
+    in the process, both now fixed:
+    - `nhl_loader.py` read a `home.get("name")`/`away.get("name")` field
+      that doesn't exist anywhere in the real NHL API v1 schema (verified
+      live against a real `club-schedule-season` response) - every NHL
+      historical game was silently dropped before `_seed_games` even ran
+      (`if not g.get("home_team_name"): continue`). Fixed to read the
+      real `abbrev` field instead.
+    - An unquoted `NO` (New Orleans Saints) key in `nfl.yaml` parsed as
+      the Python bool `False` under PyYAML's YAML-1.1 `safe_load`, not
+      the string `"NO"` - the classic "Norway problem." A structural
+      dict-shape test didn't catch it (still 32 entries, 32 unique
+      espn_ids); the backfill migration's real SQL bind against a
+      varchar column is what actually rejected it
+      (`UndefinedFunction: operator does not exist: character varying =
+      boolean`), live, on the first real run. `tests/test_team_aliases.py`
+      now asserts every alias key is an actual `str` for exactly this
+      reason.
 
 ## Layout
 
 ```
-config/settings.py     pydantic-settings from .env; sports.yaml loader helpers
+config/settings.py     pydantic-settings from .env; sports.yaml/team_aliases loaders
 config/sports.yaml     8 sports: season_months, ELO params, blend weights,
                        markets, ev_threshold_pct
+config/team_aliases/   nfl/mlb/nhl.yaml — historical loader identifier -> ESPN
+                       canonical name/espn_id (constraint #24); no ncaaf yet
+src/data/team_resolution.py  resolve_team() — the one place either historical
+                       seeding or live sync looks up/creates a Team row
 src/data/cache/        db_client.py — the two-engine rule (constraint #1)
 src/models/orm.py      11 tables, UUID PKs, UTC timestamps
 src/data/providers/    theodds_api.py (games only), espn_api.py (free backbone)
@@ -431,11 +471,10 @@ docker compose logs worker -f     # watch for asyncio loop errors
      made the literal documented `pip install .[historical]` command fail
      for every user who ever runs it, not a hypothetical edge case.
 
-  Also discovered and documented (not fixed - real scope, flagged for a
-  future session): **constraint #24**, historical and live-synced Team
-  rows don't share identity, so `/rankings/{sport}` stays empty and
-  `ValueAgent` skips ESPN-synced games entirely despite both real games
-  and a real trained model existing.
+  Also discovered and documented at the time (fixed 2026-08-06, see
+  constraint #24 above): historical and live-synced Team rows didn't
+  share identity, so `ValueAgent` skipped ESPN-synced games entirely
+  despite both real games and a real trained model existing.
 
 ## Downstream consumers (outside this repo)
 
@@ -467,10 +506,16 @@ know they exist before changing response shapes:
   OpenAI; Discord alerts cannot fire; the CFBD historical loader cannot run.
   `PropsAgent` (Underdog) and `GameSyncAgent` (ESPN) need no key and are
   unaffected.
-- **Historical and live-synced Team identity don't reconcile** - see
-  constraint #24. `/rankings/{sport}` stays empty and `ValueAgent` skips
-  ESPN-synced games with unresolved `home_team_id`/`away_team_id` even
-  after historical seeding, until a team-alias/crosswalk table exists.
+- **`/rankings/{sport}` may still return empty even where Team identity
+  now resolves correctly** (constraint #24 is fixed, this is a separate,
+  narrower gap). `ValueAgent` no longer skips ESPN-synced games over a
+  NULL `team_id`, but populated rankings additionally require
+  `ValueAgent` to have actually run and persisted `PowerRanking` rows for
+  those now-resolved teams - not independently re-verified in this
+  session beyond confirming the resolution pipeline itself is clean
+  end-to-end (real live task, zero errors). Check for real
+  `PowerRanking` rows before assuming this gap is fully closed for a
+  given sport.
 - **Flower's basic-auth password was generated once by
   `proxmox_bootstrap.sh` and is not re-printed on subsequent runs** (the
   script checks for an existing `/etc/nginx/.htpasswd-flower` and leaves it
