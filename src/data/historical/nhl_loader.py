@@ -60,8 +60,15 @@ async def load_games(season: str) -> list[dict[str, Any]]:
                 "sport": "nhl",
                 "season": season,
                 "game_date": game_date,
-                "home_team_name": (home.get("name") or {}).get("default"),
-                "away_team_name": (away.get("name") or {}).get("default"),
+                # The v1 schema has no "name" key at all (verified live
+                # 2026-08-06 against a real club-schedule-season response) -
+                # every homeTeam/awayTeam only has commonName (mascot only,
+                # e.g. "Maple Leafs") + placeName (city only) + abbrev. Use
+                # abbrev directly: config/team_aliases/nhl.yaml crosswalks
+                # it to ESPN's canonical full name/espn_id, same pattern as
+                # every other sport's abbreviation-keyed loader.
+                "home_team_name": home.get("abbrev"),
+                "away_team_name": away.get("abbrev"),
                 "home_score": home.get("score"),
                 "away_score": away.get("score"),
             }

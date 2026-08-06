@@ -24,37 +24,13 @@ import asyncio
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.data.cache.db_client import get_worker_db
-from src.models.orm import Game, Team
+from src.data.team_resolution import resolve_team
+from src.models.orm import Game
 from src.utils.logging import get_logger
 
 log = get_logger(__name__)
-
-
-async def _get_or_create_team(db: AsyncSession, sport: str, name: str) -> str:
-    result = await db.execute(select(Team.id).where(Team.sport == sport, Team.name == name))
-    row = result.first()
-    if row:
-        return str(row[0])
-
-    stmt = (
-        pg_insert(Team)
-        .values(sport=sport, name=name)
-        .on_conflict_do_nothing(constraint="uq_team_sport_name")
-        .returning(Team.id)
-    )
-    result = await db.execute(stmt)
-    row = result.first()
-    if row:
-        return str(row[0])
-
-    # Conflict raced us (another row inserted between the check and insert) -
-    # re-select rather than error, since the row now exists either way.
-    result = await db.execute(select(Team.id).where(Team.sport == sport, Team.name == name))
-    return str(result.first()[0])
 
 
 async def _seed_games(sport: str, games: list[dict[str, Any]]) -> int:
@@ -63,8 +39,8 @@ async def _seed_games(sport: str, games: list[dict[str, Any]]) -> int:
         for g in games:
             if not g.get("home_team_name") or not g.get("away_team_name"):
                 continue
-            home_id = await _get_or_create_team(db, sport, g["home_team_name"])
-            away_id = await _get_or_create_team(db, sport, g["away_team_name"])
+            home_id = await resolve_team(db, sport, g["home_team_name"], create=True)
+            away_id = await resolve_team(db, sport, g["away_team_name"], create=True)
 
             # Historical games have no ESPN event id, so identity is
             # (sport, home, away, season) instead of `uq_game_espn`.

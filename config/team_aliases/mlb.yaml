@@ -1,0 +1,46 @@
+# Maps pybaseball/Baseball-Reference's team abbreviations
+# (src/data/historical/mlb_loader.py's `Tm` column) to ESPN's canonical
+# displayName + espn_id. Both sides fetched live on 2026-08-06 - ESPN via
+# site.api.espn.com/.../mlb/teams, Baseball-Reference by inspecting the
+# real /teams/<ABBREV>/ links on its own standings page - not from memory.
+# Several BR codes intentionally differ from ESPN's own abbreviation for
+# the same team (e.g. KCR vs KC, SDP vs SD, SFG vs SF, TBR vs TB, WSN vs
+# WSH) - this file exists specifically because of that mismatch.
+aliases:
+  ARI: {espn_name: "Arizona Diamondbacks", espn_id: "29"}
+  ATL: {espn_name: "Atlanta Braves", espn_id: "15"}
+  BAL: {espn_name: "Baltimore Orioles", espn_id: "1"}
+  BOS: {espn_name: "Boston Red Sox", espn_id: "2"}
+  CHC: {espn_name: "Chicago Cubs", espn_id: "16"}
+  CHW: {espn_name: "Chicago White Sox", espn_id: "4"}
+  CIN: {espn_name: "Cincinnati Reds", espn_id: "17"}
+  CLE: {espn_name: "Cleveland Guardians", espn_id: "5"}
+  COL: {espn_name: "Colorado Rockies", espn_id: "27"}
+  DET: {espn_name: "Detroit Tigers", espn_id: "6"}
+  HOU: {espn_name: "Houston Astros", espn_id: "18"}
+  KCR: {espn_name: "Kansas City Royals", espn_id: "7"}
+  LAA: {espn_name: "Los Angeles Angels", espn_id: "3"}
+  LAD: {espn_name: "Los Angeles Dodgers", espn_id: "19"}
+  # Florida Marlins renamed to Miami Marlins in 2012 - same franchise,
+  # BR's historical standings pages for older seasons still use FLA.
+  FLA: {espn_name: "Miami Marlins", espn_id: "28"}
+  MIA: {espn_name: "Miami Marlins", espn_id: "28"}
+  MIL: {espn_name: "Milwaukee Brewers", espn_id: "8"}
+  MIN: {espn_name: "Minnesota Twins", espn_id: "9"}
+  NYM: {espn_name: "New York Mets", espn_id: "21"}
+  NYY: {espn_name: "New York Yankees", espn_id: "10"}
+  # Oakland Athletics relocated out of Oakland after the 2024 season;
+  # ESPN now lists the franchise with no place name at all pending a
+  # permanent home. Same franchise, BR's older-season standings pages
+  # still use OAK.
+  OAK: {espn_name: "Athletics", espn_id: "11"}
+  PHI: {espn_name: "Philadelphia Phillies", espn_id: "22"}
+  PIT: {espn_name: "Pittsburgh Pirates", espn_id: "23"}
+  SDP: {espn_name: "San Diego Padres", espn_id: "25"}
+  SFG: {espn_name: "San Francisco Giants", espn_id: "26"}
+  SEA: {espn_name: "Seattle Mariners", espn_id: "12"}
+  STL: {espn_name: "St. Louis Cardinals", espn_id: "24"}
+  TBR: {espn_name: "Tampa Bay Rays", espn_id: "30"}
+  TEX: {espn_name: "Texas Rangers", espn_id: "13"}
+  TOR: {espn_name: "Toronto Blue Jays", espn_id: "14"}
+  WSN: {espn_name: "Washington Nationals", espn_id: "20"}

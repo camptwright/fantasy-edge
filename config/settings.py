@@ -108,3 +108,23 @@ def all_sports() -> list[str]:
 def is_in_season(sport: str, month: int) -> bool:
     """Constraint #4a: only poll sports whose current month is in season."""
     return month in get_sport_config(sport)["season_months"]
+
+
+# --------------------------------------------------------- team aliases ----
+
+
+@lru_cache
+def get_team_aliases(sport: str) -> dict[str, dict[str, str]]:
+    """Historical-loader team identifier -> {espn_name, espn_id} for this
+    sport, or {} if no crosswalk file exists yet. See
+    src/data/team_resolution.py for how this is used - an empty/missing
+    entry means "treat the raw name as already canonical," which is
+    correct for sports whose historical loader already emits ESPN-
+    compatible full names (verified live for nba/wnba; not yet built for
+    ncaaf given its much larger, more volatile roster of ~130 schools)."""
+    path = CONFIG_DIR / "team_aliases" / f"{sport}.yaml"
+    if not path.exists():
+        return {}
+    with path.open() as fh:
+        raw = yaml.safe_load(fh) or {}
+    return raw.get("aliases", {})

@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.data.providers.espn_api import get_games
-from src.models.orm import Game, Team
+from src.data.team_resolution import resolve_team
+from src.models.orm import Game
 from src.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -46,36 +46,17 @@ class GameSyncAgent:
     """Upserts ESPN scoreboard events into `games`, keyed on
     (sport, espn_event_id) per the `uq_game_espn` constraint."""
 
-    async def _resolve_team_id(
-        self, db: AsyncSession, sport: str, espn_id: str | None, name: str | None
-    ) -> str | None:
-        if espn_id:
-            result = await db.execute(
-                select(Team.id).where(Team.sport == sport, Team.espn_id == espn_id)
-            )
-            row = result.first()
-            if row:
-                return str(row[0])
-        if name:
-            result = await db.execute(
-                select(Team.id).where(Team.sport == sport, Team.name == name)
-            )
-            row = result.first()
-            if row:
-                return str(row[0])
-        return None
-
     async def sync_sport(self, db: AsyncSession, sport: str, *, day: date | None = None) -> int:
         parsed_games = await get_games(sport, day=day)
         log.info("game_sync.fetched", sport=sport, count=len(parsed_games))
 
         upserted = 0
         for g in parsed_games:
-            home_team_id = await self._resolve_team_id(
-                db, sport, g.get("home_team_espn_id"), g.get("home_team_name")
+            home_team_id = await resolve_team(
+                db, sport, g.get("home_team_name"), g.get("home_team_espn_id")
             )
-            away_team_id = await self._resolve_team_id(
-                db, sport, g.get("away_team_espn_id"), g.get("away_team_name")
+            away_team_id = await resolve_team(
+                db, sport, g.get("away_team_name"), g.get("away_team_espn_id")
             )
 
             values = {
