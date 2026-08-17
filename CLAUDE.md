@@ -479,7 +479,7 @@ docker compose logs worker -f     # watch for asyncio loop errors
 ## Downstream consumers (outside this repo)
 
 Two homelab-repo services read this API read-only over the network
-(`http://10.51.24.80:8000` from CT110, see homelab's `env.example`
+(`http://192.168.8.140:8000` from CT110, see homelab's `env.example`
 `FANTASY_EDGE_URL`) - nothing in this repo needs to change for them, but
 know they exist before changing response shapes:
 
@@ -528,10 +528,10 @@ The build spec's `192.168.1.200` does not exist. Reality:
 
 | | |
 |---|---|
-| Proxmox host | `10.51.24.34` (`reekserver`), PVE 9.2.0 |
-| Host hardware | **Intel N95, 4 cores, 7,720 MB RAM** — *not* the 16GB the spec assumes |
-| Fantasy Edge | **CT 100 `fantasy-edge`, `10.51.24.80`**, 3 cores / 4096 MB / 40GB, Ubuntu 24.04 |
-| Access | no direct SSH — `ssh root@10.51.24.34 "pct exec 100 -- ..."` |
+| Proxmox host | `192.168.8.109` (`reekserver`), PVE 9.2.5 |
+| Host capacity | roughly 7.5 GiB physical RAM; re-audit allocations before growth |
+| Fantasy Edge | **CT 100 `fantasy-edge`, `192.168.8.140`**, 3 cores / 4096 MB / 40GB, Ubuntu 24.04 |
+| Access | through Proxmox — `ssh root@192.168.8.109 "pct exec 100 -- ..."` |
 | Code lives at | `/opt/fantasy-edge` |
 
 The host has only 7.5GB physical, so the spec's 6GB allocation was not

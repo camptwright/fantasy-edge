@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Proxmox host | `10.51.24.34` (`reekserver`), PVE 9.2.0 |
-| Container | CT 100 `fantasy-edge`, `10.51.24.80`, Ubuntu 24.04, 3 cores / 4096MB / 40GB |
-| Access | no direct SSH — `ssh root@10.51.24.34 "pct exec 100 -- ..."` |
+| Proxmox host | `192.168.8.109` (`reekserver`), PVE 9.2.5 |
+| Container | CT 100 `fantasy-edge`, `192.168.8.140`, Ubuntu 24.04, 3 cores / 4096MB / 40GB |
+| Access | through Proxmox — `ssh root@192.168.8.109 "pct exec 100 -- ..."` |
 | Code | `/opt/fantasy-edge` |
 | Data | `/mnt/data/fantasy-edge/{postgres,redis,models,logs}` (bind-mounted, survives container rebuilds) |
 
@@ -23,11 +23,11 @@ Created with `nesting=1,keyctl=1` (Docker-in-LXC), `net0 ip6=auto` (never
      --exclude='.venv' --exclude='.git' --exclude='__pycache__' \
      --exclude='dashboard/node_modules' --exclude='dashboard/.next' \
      --exclude='.env' --exclude='._*' . \
-     | ssh root@10.51.24.34 "pct exec 100 -- bash -c 'mkdir -p /opt/fantasy-edge && cd /opt/fantasy-edge && tar xzf -'"
+     | ssh root@192.168.8.109 "pct exec 100 -- bash -c 'mkdir -p /opt/fantasy-edge && cd /opt/fantasy-edge && tar xzf -'"
    ```
 3. Bootstrap the host (Docker, Node, nginx, systemd unit, backup cron):
    ```bash
-   ssh root@10.51.24.34 "pct exec 100 -- bash -s" < scripts/proxmox_bootstrap.sh
+   ssh root@192.168.8.109 "pct exec 100 -- bash -s" < scripts/proxmox_bootstrap.sh
    ```
 4. Create `.env` on the LXC from `.env.example` (never on the Mac — see the
    homelab repo's secrets-handling rule, which applies here too). At minimum
@@ -47,8 +47,8 @@ Created with `nesting=1,keyctl=1` (Docker-in-LXC), `net0 ip6=auto` (never
    docker compose run --rm -T api python -m scripts.seed_historical --sport nfl --seasons 2023 2024
    docker compose run --rm -T api python -m scripts.train_models --sport nfl --seasons 2023 2024
    ```
-7. Verify: `curl http://10.51.24.80/api/health`, `curl http://10.51.24.80/`
-   (dashboard), `curl -u admin:<flower-password> http://10.51.24.80/flower/`.
+7. Verify: `curl http://192.168.8.140/api/health`, `curl http://192.168.8.140/`
+   (dashboard), `curl -u admin:<flower-password> http://192.168.8.140/flower/`.
 
 ## Redeploying after a code change
 
