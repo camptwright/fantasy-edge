@@ -7,6 +7,7 @@ from sqlalchemy import engine_from_config, pool
 
 from config.settings import get_settings
 from src.models.orm import Base
+import src.models.sports  # noqa: F401 - register Sports tables on Base.metadata
 
 config = context.config
 

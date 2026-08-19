@@ -38,6 +38,26 @@ export function EmptyState({ message }: { message: string }) {
   return <p className="py-8 text-center text-sm text-gray-500">{message}</p>;
 }
 
+export function StatusBadge({ status }: { status: import("@/lib/types").MarketStatus }) {
+  const labels: Record<import("@/lib/types").MarketStatus, string> = {
+    qualified: "Qualified",
+    stale: "Stale",
+    coverage_incomplete: "Coverage incomplete",
+    uncalibrated: "Uncalibrated",
+    unsupported_market: "Unsupported",
+    cannot_price_correlation: "Correlation unavailable",
+  };
+  const colors: Record<import("@/lib/types").MarketStatus, string> = {
+    qualified: "bg-accent/15 text-accent",
+    stale: "bg-amber-400/15 text-amber-300",
+    coverage_incomplete: "bg-amber-400/15 text-amber-300",
+    uncalibrated: "bg-purple-400/15 text-purple-300",
+    unsupported_market: "bg-gray-400/15 text-gray-300",
+    cannot_price_correlation: "bg-red-400/15 text-red-300",
+  };
+  return <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${colors[status]}`}>{labels[status]}</span>;
+}
+
 export function formatPrice(price: number | null): string {
   if (price === null) return "—";
   return price > 0 ? `+${price}` : `${price}`;

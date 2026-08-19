@@ -40,7 +40,7 @@ export default function ParlaysPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <h1 className="text-lg font-semibold">Parlays</h1>
 
       <Card className="space-y-3">

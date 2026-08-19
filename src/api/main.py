@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from src.api.routers import fantasy, games, health, odds, parlays, props, rankings, signals
+from src.api.v1 import router as sports_v1_router
 from src.data.cache.db_client import dispose_api_engine
 from src.data.cache.redis_client import close_redis
 from src.utils.logging import configure_logging
@@ -36,3 +37,4 @@ app.include_router(props.router)
 app.include_router(parlays.router)
 app.include_router(fantasy.router)
 app.include_router(rankings.router)
+app.include_router(sports_v1_router)

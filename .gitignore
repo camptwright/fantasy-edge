@@ -9,6 +9,7 @@ models/
 *.pkl
 logs/
 .DS_Store
+.superpowers/
 node_modules/
 .next/
 *.tsbuildinfo

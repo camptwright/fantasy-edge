@@ -7,6 +7,26 @@ body {
   color: #e5e7eb;
 }
 
+::selection {
+  background: rgba(99, 196, 154, 0.25);
+  color: #f1f5f9;
+}
+
+.eyebrow {
+  color: #7f8b99;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+button,
+a,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
 ::-webkit-scrollbar {
   width: 10px;
 }

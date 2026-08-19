@@ -76,3 +76,72 @@ export interface Projection {
   source: string;
   captured_at: string;
 }
+
+export type MarketStatus =
+  | "qualified"
+  | "stale"
+  | "coverage_incomplete"
+  | "uncalibrated"
+  | "unsupported_market"
+  | "cannot_price_correlation";
+
+export interface SportsSourceRef {
+  provider: string;
+  snapshot_id: string;
+  observed_at: string;
+}
+
+export interface MarketAssessment {
+  id: string;
+  sport: string;
+  league: string;
+  event_id: string;
+  market: string;
+  selection: string;
+  status: MarketStatus;
+  status_reason: string | null;
+  probability: number | null;
+  fair_price_american: number | null;
+  edge_percent: number | null;
+  estimated_value_percent: number | null;
+  model_version: string | null;
+  calibration_label: string | null;
+  sources: SportsSourceRef[];
+  assessed_at: string;
+}
+
+export interface SportsModelHealth {
+  model_version: string;
+  coverage: Record<string, boolean>;
+  calibration: Record<string, number | null>;
+  last_successful_ingest: string | null;
+  status: "healthy" | "degraded" | "unavailable";
+}
+
+export interface SportsOverview {
+  qualified: MarketAssessment[];
+  watchlist: MarketAssessment[];
+  no_bet: MarketAssessment[];
+  freshness: { newest_observation: string; age_seconds: number; status: "current" | "stale" | "unavailable" } | null;
+  model_health: SportsModelHealth | null;
+}
+
+export interface SportsGame {
+  id: string;
+  sport: string;
+  league: string;
+  start_time: string | null;
+  home_team: string | null;
+  away_team: string | null;
+  status: string;
+}
+
+export interface MarketResponse {
+  items: MarketAssessment[];
+  next_cursor: string | null;
+}
+
+export interface GamesResponse {
+  items: SportsGame[];
+  next_cursor: string | null;
+}

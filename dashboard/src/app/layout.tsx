@@ -3,8 +3,8 @@ import "./globals.css";
 import { Nav } from "@/components/Nav";
 
 export const metadata: Metadata = {
-  title: "Fantasy Edge",
-  description: "Live sports betting value engine and fantasy optimizer",
+  title: "Sports | Camp T Wright",
+  description: "Evidence-backed sports market research for the homelab workspace",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
