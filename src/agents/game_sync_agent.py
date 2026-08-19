@@ -8,7 +8,7 @@ props game_id resolution, the /games API default) depends on.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -95,4 +95,14 @@ class GameSyncAgent:
         return upserted
 
     async def sync_all(self, db: AsyncSession, sports: list[str]) -> dict[str, int]:
-        return {sport: await self.sync_sport(db, sport) for sport in sports}
+        # ESPN's no-date scoreboard endpoint is a provider-defined current
+        # window (usually today). Request each UTC date explicitly so the
+        # schedule remains a genuine seven-day board across leagues.
+        today = date.today()
+        totals: dict[str, int] = {}
+        for sport in sports:
+            total = 0
+            for offset in range(7):
+                total += await self.sync_sport(db, sport, day=today + timedelta(days=offset))
+            totals[sport] = total
+        return totals
