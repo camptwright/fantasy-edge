@@ -1,7 +1,9 @@
 """Versioned Sports application API."""
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,7 +62,16 @@ async def player_odds(sport: str | None = Query(default=None), db: AsyncSession 
 @router.get("/games", response_model=GamesResponse)
 async def games(sport: str | None = Query(default=None), db: AsyncSession = Depends(get_db)) -> GamesResponse:
     try:
-        query = select(Game).where(Game.status == "scheduled").order_by(Game.game_time.asc().nulls_last()).limit(100)
+        now = datetime.now(UTC)
+        query = (
+            select(Game)
+            .where(
+                Game.status.in_(("scheduled", "live")),
+                or_(Game.game_time.is_(None), Game.game_time >= now),
+            )
+            .order_by(Game.game_time.asc().nulls_last())
+            .limit(100)
+        )
         if sport:
             query = query.where(Game.sport == sport)
         result = await db.execute(query)
