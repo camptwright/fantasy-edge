@@ -102,6 +102,9 @@ export interface MarketAssessment {
   status_reason: string | null;
   probability: number | null;
   fair_price_american: number | null;
+  line: number | null;
+  price_american: number | null;
+  bookmaker: string | null;
   edge_percent: number | null;
   estimated_value_percent: number | null;
   model_version: string | null;

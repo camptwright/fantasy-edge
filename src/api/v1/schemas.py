@@ -44,6 +44,9 @@ class MarketAssessment(BaseModel):
     status_reason: str | None = None
     probability: float | None = Field(default=None, ge=0, le=1)
     fair_price_american: int | None = None
+    line: float | None = None
+    price_american: int | None = None
+    bookmaker: str | None = None
     edge_percent: float | None = None
     estimated_value_percent: float | None = None
     model_version: str | None = None

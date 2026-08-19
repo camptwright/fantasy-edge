@@ -22,7 +22,10 @@ from src.utils.logging import get_logger
 
 log = get_logger(__name__)
 
-BASE_URL = "https://site.api.espn.com/apis/site/v2/sports"
+# The site.api host currently returns an Akamai 403 from CT100's network,
+# while the equivalent site.web.api host serves the same scoreboard payload.
+# Keep this as a provider detail so game sync remains keyless and resilient.
+BASE_URL = "https://site.web.api.espn.com/apis/site/v2/sports"
 CORE_BASE_URL = "https://sports.core.api.espn.com/v2/sports"
 
 # ESPN's status.type.state values, mapped to our games.status check constraint.

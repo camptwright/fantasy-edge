@@ -22,7 +22,7 @@ from .schemas import (
     TeamOddsResponse,
 )
 from src.data.cache.db_client import get_db
-from src.models.orm import Game
+from src.models.orm import Game, PlayerPropLine
 from src.models.sports import Favorite as FavoriteRow
 from src.models.sports import MarketAssessment as MarketAssessmentRow
 
@@ -142,6 +142,8 @@ def _assessment(row: MarketAssessmentRow) -> MarketAssessment:
 
 
 async def _market_rows(db: AsyncSession, *, sport: str | None, player: bool) -> list[MarketAssessment]:
+    if player:
+        return await _player_prop_rows(db, sport=sport)
     try:
         query = select(MarketAssessmentRow).order_by(MarketAssessmentRow.assessed_at.desc()).limit(200)
         if sport:
@@ -153,3 +155,53 @@ async def _market_rows(db: AsyncSession, *, sport: str | None, player: bool) -> 
     # participant links are populated; never guess from display text.
     rows = [row for row in result.scalars().all() if (row.market.startswith("player_") == player)]
     return [_assessment(row) for row in rows]
+
+
+async def _player_prop_rows(db: AsyncSession, *, sport: str | None) -> list[MarketAssessment]:
+    """Expose retained provider lines without pretending they are model edges.
+
+    Underdog props are already ingested by the legacy worker. Until player
+    identity, event context, and calibration gates are complete, each side is
+    deliberately marked ``coverage_incomplete`` and carries no fair price or
+    edge. This makes the observed line useful while preserving the no-bet
+    safety contract.
+    """
+    query = (
+        select(PlayerPropLine)
+        .distinct(PlayerPropLine.player_name, PlayerPropLine.stat_type, PlayerPropLine.source)
+        .order_by(
+            PlayerPropLine.player_name,
+            PlayerPropLine.stat_type,
+            PlayerPropLine.source,
+            PlayerPropLine.captured_at.desc(),
+        )
+        .limit(200)
+    )
+    if sport:
+        query = query.where(PlayerPropLine.sport == sport)
+    try:
+        result = await db.execute(query)
+    except SQLAlchemyError:
+        return []
+
+    rows: list[MarketAssessment] = []
+    for prop in result.scalars().all():
+        event_id = str(prop.game_id) if prop.game_id else f"unmatched:{prop.id}"
+        for side, price in (("over", prop.over_price_american), ("under", prop.under_price_american)):
+            rows.append(
+                MarketAssessment(
+                    id=f"{prop.id}:{side}",
+                    sport=prop.sport,
+                    league=prop.sport,
+                    event_id=event_id,
+                    market=f"player_{prop.stat_type}",
+                    selection=f"{prop.player_name} {side.upper()} {prop.line:g}",
+                    status=MarketStatus.coverage_incomplete,
+                    status_reason="Observed provider line; player/event identity or model calibration is incomplete.",
+                    line=prop.line,
+                    price_american=price,
+                    bookmaker=prop.source,
+                    assessed_at=prop.captured_at,
+                )
+            )
+    return rows
