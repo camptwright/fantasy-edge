@@ -15,7 +15,12 @@ const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
   async rewrites() {
-    return [{ source: "/api/:path*", destination: `${API_INTERNAL_URL}/:path*` }];
+    return [
+      // Sports v1 intentionally includes the /api prefix in FastAPI so its
+      // versioned contract remains distinct from the legacy routes below.
+      { source: "/api/v1/:path*", destination: `${API_INTERNAL_URL}/api/v1/:path*` },
+      { source: "/api/:path*", destination: `${API_INTERNAL_URL}/:path*` },
+    ];
   },
 };
 
