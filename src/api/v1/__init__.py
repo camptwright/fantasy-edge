@@ -76,7 +76,7 @@ async def games(sport: str | None = Query(default=None), db: AsyncSession = Depe
                 or_(Game.game_time.is_(None), Game.game_time.between(now, window_end)),
             )
             .order_by(Game.game_time.asc().nulls_last())
-            .limit(100)
+            .limit(500)
         )
         if sport:
             query = query.where(Game.sport == sport)
