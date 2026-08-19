@@ -1,51 +1,79 @@
 """Versioned Sports application API."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .schemas import (
     FavoritesResponse,
     GamesResponse,
+    GameSummary,
+    MarketAssessment,
+    MarketStatus,
     ModelHealth,
     OverviewResponse,
     PaperPositionsResponse,
     PlayerOddsResponse,
+    SourceRef,
     TeamOddsResponse,
 )
+from src.api.serializers import row_to_dict
+from src.data.cache.db_client import get_db
+from src.models.orm import Game
+from src.models.sports import Favorite as FavoriteRow
+from src.models.sports import MarketAssessment as MarketAssessmentRow
 
 router = APIRouter(prefix="/api/v1", tags=["sports-v1"])
 
 
 @router.get("/overview", response_model=OverviewResponse)
-async def overview() -> OverviewResponse:
-    """Return a safe empty overview until the snapshot pipeline is connected."""
-
+async def overview(db: AsyncSession = Depends(get_db)) -> OverviewResponse:
+    """Return the current board, failing closed while a migration is pending."""
+    try:
+        result = await db.execute(select(MarketAssessmentRow).order_by(MarketAssessmentRow.assessed_at.desc()).limit(100))
+        rows = list(result.scalars().all())
+    except SQLAlchemyError:
+        return OverviewResponse(qualified=[], watchlist=[], no_bet=[], freshness=None, model_health=None)
+    assessments = [_assessment(row) for row in rows]
     return OverviewResponse(
-        qualified=[],
-        watchlist=[],
-        no_bet=[],
+        qualified=[row for row in assessments if row.status is MarketStatus.qualified],
+        watchlist=[row for row in assessments if row.status in {MarketStatus.stale, MarketStatus.coverage_incomplete}],
+        no_bet=[row for row in assessments if row.status not in {MarketStatus.qualified, MarketStatus.stale, MarketStatus.coverage_incomplete}],
         freshness=None,
         model_health=None,
     )
 
 
 @router.get("/team-odds", response_model=TeamOddsResponse)
-async def team_odds() -> TeamOddsResponse:
-    return TeamOddsResponse()
+async def team_odds(sport: str | None = Query(default=None), db: AsyncSession = Depends(get_db)) -> TeamOddsResponse:
+    return TeamOddsResponse(items=await _market_rows(db, sport=sport, player=False))
 
 
 @router.get("/player-odds", response_model=PlayerOddsResponse)
-async def player_odds() -> PlayerOddsResponse:
-    return PlayerOddsResponse()
+async def player_odds(sport: str | None = Query(default=None), db: AsyncSession = Depends(get_db)) -> PlayerOddsResponse:
+    return PlayerOddsResponse(items=await _market_rows(db, sport=sport, player=True))
 
 
 @router.get("/games", response_model=GamesResponse)
-async def games() -> GamesResponse:
-    return GamesResponse()
+async def games(sport: str | None = Query(default=None), db: AsyncSession = Depends(get_db)) -> GamesResponse:
+    try:
+        query = select(Game).where(Game.status == "scheduled").order_by(Game.game_time.asc().nulls_last()).limit(100)
+        if sport:
+            query = query.where(Game.sport == sport)
+        result = await db.execute(query)
+    except SQLAlchemyError:
+        return GamesResponse()
+    return GamesResponse(items=[GameSummary(id=str(row.id), sport=row.sport, league=row.sport, start_time=row.game_time, home_team=row.home_team_name, away_team=row.away_team_name, status=row.status) for row in result.scalars().all()])
 
 
 @router.get("/favorites", response_model=FavoritesResponse)
-async def favorites() -> FavoritesResponse:
-    return FavoritesResponse()
+async def favorites(db: AsyncSession = Depends(get_db)) -> FavoritesResponse:
+    try:
+        result = await db.execute(select(FavoriteRow).order_by(FavoriteRow.created_at.desc()))
+    except SQLAlchemyError:
+        return FavoritesResponse()
+    return FavoritesResponse(items=[Favorite(id=str(row.id), kind=row.kind, canonical_id=str(row.canonical_id), display_name=row.display_name, sport=row.sport) for row in result.scalars().all()])
 
 
 @router.get("/model-health", response_model=ModelHealth | None)
@@ -56,3 +84,29 @@ async def model_health() -> ModelHealth | None:
 @router.get("/paper-positions", response_model=PaperPositionsResponse)
 async def paper_positions() -> PaperPositionsResponse:
     return PaperPositionsResponse()
+
+
+def _assessment(row: MarketAssessmentRow) -> MarketAssessment:
+    sources = [SourceRef(provider="snapshot", snapshot_id=str(snapshot_id), observed_at=row.assessed_at) for snapshot_id in (row.source_snapshot_ids or [])]
+    return MarketAssessment(
+        id=str(row.id), sport=row.sport, league=row.league, event_id=str(row.event_id), market=row.market,
+        selection=row.selection, status=MarketStatus(row.status), status_reason=row.status_reason,
+        probability=row.probability, fair_price_american=row.fair_price_american, edge_percent=row.edge_percent,
+        estimated_value_percent=row.estimated_value_percent, model_version=row.model_version,
+        calibration_label="passing" if row.status == MarketStatus.qualified.value else None,
+        sources=sources, assessed_at=row.assessed_at,
+    )
+
+
+async def _market_rows(db: AsyncSession, *, sport: str | None, player: bool) -> list[MarketAssessment]:
+    try:
+        query = select(MarketAssessmentRow).order_by(MarketAssessmentRow.assessed_at.desc()).limit(200)
+        if sport:
+            query = query.where(MarketAssessmentRow.sport == sport)
+        result = await db.execute(query)
+    except SQLAlchemyError:
+        return []
+    # Player/team market classification remains explicit until canonical
+    # participant links are populated; never guess from display text.
+    rows = [row for row in result.scalars().all() if (row.market.startswith("player_") == player)]
+    return [_assessment(row) for row in rows]
