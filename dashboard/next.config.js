@@ -17,19 +17,6 @@ const nextConfig = {
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${API_INTERNAL_URL}/:path*` }];
   },
-  // A plain HTTP redirect with a real Location header for a browser or curl
-  // hitting `/` directly. next/navigation's redirect() (the App Router
-  // runtime helper, previously used in app/page.tsx) is built for RSC
-  // client-side transitions instead: it returns 307 with `Vary: RSC,
-  // Next-Router-State-Tree, ...` and NO Location header, which only the
-  // Next.js client router (not a real HTTP client) knows how to follow.
-  // Verified against this app's own build: curl -I on `/` came back 307
-  // with a body but no Location header at all. Config-level redirects()
-  // resolve before the App Router even matches a page, so this doesn't
-  // need an app/page.tsx at `/` - there isn't one.
-  async redirects() {
-    return [{ source: "/", destination: "/signals", permanent: false }];
-  },
 };
 
 module.exports = nextConfig;
