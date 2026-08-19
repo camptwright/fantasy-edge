@@ -41,4 +41,5 @@ export const sportsApi = {
   teamOdds: (query = "") => fetcher<import("@/lib/types").MarketResponse>(`/v1/team-odds${query}`),
   playerOdds: (query = "") => fetcher<import("@/lib/types").MarketResponse>(`/v1/player-odds${query}`),
   games: (query = "") => fetcher<import("@/lib/types").GamesResponse>(`/v1/games${query}`),
+  favorites: () => fetcher<import("@/lib/types").FavoritesResponse>("/v1/favorites"),
 };

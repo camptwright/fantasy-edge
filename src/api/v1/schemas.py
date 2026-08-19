@@ -117,6 +117,10 @@ class FavoritesResponse(BaseModel):
     items: list[Favorite] = Field(default_factory=list)
 
 
+class FavoritesUpdateRequest(BaseModel):
+    items: list[Favorite] = Field(max_length=100)
+
+
 class ParlayLeg(BaseModel):
     assessment_id: str
     event_id: str

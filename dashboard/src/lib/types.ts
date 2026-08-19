@@ -145,3 +145,15 @@ export interface GamesResponse {
   items: SportsGame[];
   next_cursor: string | null;
 }
+
+export interface Favorite {
+  id: string;
+  kind: "team" | "player";
+  canonical_id: string;
+  display_name: string;
+  sport: string;
+}
+
+export interface FavoritesResponse {
+  items: Favorite[];
+}

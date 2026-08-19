@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .schemas import (
     FavoritesResponse,
+    FavoritesUpdateRequest,
     GamesResponse,
     GameSummary,
     MarketAssessment,
@@ -14,11 +15,12 @@ from .schemas import (
     ModelHealth,
     OverviewResponse,
     PaperPositionsResponse,
+    ParlayAssessmentRequest,
+    ParlayAssessmentResponse,
     PlayerOddsResponse,
     SourceRef,
     TeamOddsResponse,
 )
-from src.api.serializers import row_to_dict
 from src.data.cache.db_client import get_db
 from src.models.orm import Game
 from src.models.sports import Favorite as FavoriteRow
@@ -76,6 +78,25 @@ async def favorites(db: AsyncSession = Depends(get_db)) -> FavoritesResponse:
     return FavoritesResponse(items=[Favorite(id=str(row.id), kind=row.kind, canonical_id=str(row.canonical_id), display_name=row.display_name, sport=row.sport) for row in result.scalars().all()])
 
 
+@router.put("/favorites", response_model=FavoritesResponse)
+async def replace_favorites(request: FavoritesUpdateRequest, db: AsyncSession = Depends(get_db)) -> FavoritesResponse:
+    """Replace the single shared homelab favorite list."""
+    import uuid
+
+    await db.execute(FavoriteRow.__table__.delete())
+    rows = []
+    for item in request.items:
+        try:
+            canonical_id = uuid.UUID(item.canonical_id)
+        except ValueError as exc:
+            raise ValueError(f"favorite canonical_id is not a UUID: {item.canonical_id}") from exc
+        row = FavoriteRow(kind=item.kind, canonical_id=canonical_id, display_name=item.display_name, sport=item.sport)
+        db.add(row)
+        rows.append(row)
+    await db.commit()
+    return FavoritesResponse(items=[Favorite(id=str(row.id), kind=row.kind, canonical_id=str(row.canonical_id), display_name=row.display_name, sport=row.sport) for row in rows])
+
+
 @router.get("/model-health", response_model=ModelHealth | None)
 async def model_health() -> ModelHealth | None:
     return None
@@ -84,6 +105,28 @@ async def model_health() -> ModelHealth | None:
 @router.get("/paper-positions", response_model=PaperPositionsResponse)
 async def paper_positions() -> PaperPositionsResponse:
     return PaperPositionsResponse()
+
+
+@router.post("/parlays/assess", response_model=ParlayAssessmentResponse)
+async def assess_parlay(request: ParlayAssessmentRequest, db: AsyncSession = Depends(get_db)) -> ParlayAssessmentResponse:
+    """Validate a candidate parlay without placing or saving a wager."""
+    from datetime import UTC, datetime
+
+    ids = [leg.assessment_id for leg in request.legs]
+    try:
+        result = await db.execute(select(MarketAssessmentRow).where(MarketAssessmentRow.id.in_(ids)))
+        rows = list(result.scalars().all())
+    except SQLAlchemyError:
+        rows = []
+    by_id = {str(row.id): row for row in rows}
+    assessed_at = datetime.now(UTC)
+    if len(by_id) != len(set(ids)):
+        return ParlayAssessmentResponse(status=MarketStatus.coverage_incomplete, status_reason="One or more legs has no retained assessment.", leg_count=len(request.legs), assessed_at=assessed_at)
+    if any(row.status != MarketStatus.qualified.value for row in by_id.values()):
+        return ParlayAssessmentResponse(status=MarketStatus.coverage_incomplete, status_reason="Every leg must be qualified at assessment time.", leg_count=len(request.legs), assessed_at=assessed_at)
+    if len({str(row.event_id) for row in by_id.values()}) != len(by_id):
+        return ParlayAssessmentResponse(status=MarketStatus.cannot_price_correlation, status_reason="Multiple legs share an event and correlation is not modeled.", leg_count=len(request.legs), assessed_at=assessed_at)
+    return ParlayAssessmentResponse(status=MarketStatus.cannot_price_correlation, status_reason="Cross-event dependence is not yet modeled for combined pricing.", leg_count=len(request.legs), assessed_at=assessed_at)
 
 
 def _assessment(row: MarketAssessmentRow) -> MarketAssessment:
