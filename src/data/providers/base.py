@@ -7,6 +7,8 @@ only about parsing its own payload shape.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -28,6 +30,37 @@ DEFAULT_HEADERS = {
 
 class ProviderError(RuntimeError):
     """Raised when a provider is unreachable or returns an unusable payload."""
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedMarket:
+    """Provider-neutral market observation ready for persistence.
+
+    Adapters must fill this shape before an observation can enter the database;
+    keeping external payloads out of persistence makes provenance and replay
+    deterministic.
+    """
+
+    provider: str
+    external_event_id: str
+    sport: str
+    market: str
+    outcome: str
+    bookmaker: str
+    captured_at: datetime
+    price_american: int | None = None
+    price_decimal: float | None = None
+    point: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedEvent:
+    provider: str
+    external_id: str
+    sport: str
+    home_team: str | None
+    away_team: str | None
+    starts_at: datetime | None
 
 
 async def fetch_json(
