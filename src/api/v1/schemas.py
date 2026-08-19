@@ -47,6 +47,8 @@ class MarketAssessment(BaseModel):
     line: float | None = None
     price_american: int | None = None
     bookmaker: str | None = None
+    player_name: str | None = None
+    side: Literal["over", "under"] | None = None
     edge_percent: float | None = None
     estimated_value_percent: float | None = None
     model_version: str | None = None
@@ -106,6 +108,12 @@ class GameSummary(BaseModel):
 class GamesResponse(BaseModel):
     items: list[GameSummary] = Field(default_factory=list)
     next_cursor: str | None = None
+
+
+class GameDetailResponse(BaseModel):
+    game: GameSummary
+    team_lines: list[MarketAssessment] = Field(default_factory=list)
+    player_props: list[MarketAssessment] = Field(default_factory=list)
 
 
 class Favorite(BaseModel):

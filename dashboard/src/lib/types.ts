@@ -105,6 +105,8 @@ export interface MarketAssessment {
   line: number | null;
   price_american: number | null;
   bookmaker: string | null;
+  player_name: string | null;
+  side: "over" | "under" | null;
   edge_percent: number | null;
   estimated_value_percent: number | null;
   model_version: string | null;
@@ -147,6 +149,12 @@ export interface MarketResponse {
 export interface GamesResponse {
   items: SportsGame[];
   next_cursor: string | null;
+}
+
+export interface GameDetailResponse {
+  game: SportsGame;
+  team_lines: MarketAssessment[];
+  player_props: MarketAssessment[];
 }
 
 export interface Favorite {

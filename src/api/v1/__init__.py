@@ -1,8 +1,8 @@
 """Versioned Sports application API."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from .schemas import (
     FavoritesResponse,
     FavoritesUpdateRequest,
     GamesResponse,
+    GameDetailResponse,
     GameSummary,
     MarketAssessment,
     MarketStatus,
@@ -55,19 +56,24 @@ async def team_odds(sport: str | None = Query(default=None), db: AsyncSession = 
 
 
 @router.get("/player-odds", response_model=PlayerOddsResponse)
-async def player_odds(sport: str | None = Query(default=None), db: AsyncSession = Depends(get_db)) -> PlayerOddsResponse:
-    return PlayerOddsResponse(items=await _market_rows(db, sport=sport, player=True))
+async def player_odds(
+    sport: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> PlayerOddsResponse:
+    return PlayerOddsResponse(items=await _market_rows(db, sport=sport, player=True, source=source))
 
 
 @router.get("/games", response_model=GamesResponse)
 async def games(sport: str | None = Query(default=None), db: AsyncSession = Depends(get_db)) -> GamesResponse:
     try:
         now = datetime.now(UTC)
+        window_end = now + timedelta(days=7)
         query = (
             select(Game)
             .where(
                 Game.status.in_(("scheduled", "live")),
-                or_(Game.game_time.is_(None), Game.game_time >= now),
+                or_(Game.game_time.is_(None), Game.game_time.between(now, window_end)),
             )
             .order_by(Game.game_time.asc().nulls_last())
             .limit(100)
@@ -78,6 +84,22 @@ async def games(sport: str | None = Query(default=None), db: AsyncSession = Depe
     except SQLAlchemyError:
         return GamesResponse()
     return GamesResponse(items=[GameSummary(id=str(row.id), sport=row.sport, league=row.sport, start_time=row.game_time, home_team=row.home_team_name, away_team=row.away_team_name, status=row.status) for row in result.scalars().all()])
+
+
+@router.get("/games/{game_id}", response_model=GameDetailResponse)
+async def game_detail(game_id: str, db: AsyncSession = Depends(get_db)) -> GameDetailResponse:
+    game = await db.get(Game, game_id)
+    if game is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+    summary = GameSummary(
+        id=str(game.id), sport=game.sport, league=game.sport, start_time=game.game_time,
+        home_team=game.home_team_name, away_team=game.away_team_name, status=game.status,
+    )
+    return GameDetailResponse(
+        game=summary,
+        team_lines=await _market_rows(db, sport=game.sport, player=False, game_id=game.id),
+        player_props=await _market_rows(db, sport=game.sport, player=True, game_id=game.id),
+    )
 
 
 @router.get("/favorites", response_model=FavoritesResponse)
@@ -152,13 +174,15 @@ def _assessment(row: MarketAssessmentRow) -> MarketAssessment:
     )
 
 
-async def _market_rows(db: AsyncSession, *, sport: str | None, player: bool) -> list[MarketAssessment]:
+async def _market_rows(db: AsyncSession, *, sport: str | None, player: bool, game_id=None, source: str | None = None) -> list[MarketAssessment]:
     if player:
-        return await _player_prop_rows(db, sport=sport)
+        return await _player_prop_rows(db, sport=sport, game_id=game_id, source=source)
     try:
         query = select(MarketAssessmentRow).order_by(MarketAssessmentRow.assessed_at.desc()).limit(200)
         if sport:
             query = query.where(MarketAssessmentRow.sport == sport)
+        if game_id:
+            query = query.where(MarketAssessmentRow.event_id == game_id)
         result = await db.execute(query)
     except SQLAlchemyError:
         return []
@@ -168,7 +192,7 @@ async def _market_rows(db: AsyncSession, *, sport: str | None, player: bool) -> 
     return [_assessment(row) for row in rows]
 
 
-async def _player_prop_rows(db: AsyncSession, *, sport: str | None) -> list[MarketAssessment]:
+async def _player_prop_rows(db: AsyncSession, *, sport: str | None, game_id=None, source: str | None = None) -> list[MarketAssessment]:
     """Expose retained provider lines without pretending they are model edges.
 
     Underdog props are already ingested by the legacy worker. Until player
@@ -190,6 +214,10 @@ async def _player_prop_rows(db: AsyncSession, *, sport: str | None) -> list[Mark
     )
     if sport:
         query = query.where(PlayerPropLine.sport == sport)
+    if game_id:
+        query = query.where(PlayerPropLine.game_id == game_id)
+    if source:
+        query = query.where(PlayerPropLine.source == source)
     try:
         result = await db.execute(query)
     except SQLAlchemyError:
@@ -212,6 +240,8 @@ async def _player_prop_rows(db: AsyncSession, *, sport: str | None) -> list[Mark
                     line=prop.line,
                     price_american=price,
                     bookmaker=prop.source,
+                    player_name=prop.player_name,
+                    side=side,
                     assessed_at=prop.captured_at,
                 )
             )
