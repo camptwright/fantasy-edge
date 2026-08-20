@@ -24,10 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.data.providers.base import fetch_json
-from src.utils.logging import get_logger
-
-log = get_logger(__name__)
+import httpx
 
 # Public, unauthenticated. Underdog serves this to their own web client.
 APPEARANCES_URL = "https://api.underdogfantasy.com/beta/v6/over_under_lines"
@@ -57,7 +54,10 @@ async def get_over_under_lines() -> dict[str, Any]:
     There's no per-sport endpoint - Underdog returns everything in one call,
     so props_agent fetches once and filters client-side.
     """
-    return await fetch_json(APPEARANCES_URL)
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.get(APPEARANCES_URL)
+        response.raise_for_status()
+        return response.json()
 
 
 def raw_lines_to_props(payload: dict[str, Any]) -> list[dict[str, Any]]:

@@ -146,8 +146,7 @@ Python 3.12 · PostgreSQL 16 · Docker Compose.
     duplicate exists). Verified live against real Postgres on CT100:
     560/561 seeded NFL games now resolve both `home_team_id`/
     `away_team_id` (the one holdout is a pre-2024-relocation `"LA"` game
-    predating the current abbreviation convention, out of this fix's
-    documented scope - see the Planned section above).
+    predating the current abbreviation convention).
 
     Both `config/team_aliases/*.yaml` files and the ESPN-side data they
     map to were fetched live (site.api.espn.com, plus
