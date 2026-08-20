@@ -5,6 +5,9 @@ description = "NFL sports betting value engine foundation"
 requires-python = ">=3.12"
 
 dependencies = [
+  # settings
+  "pydantic>=2.9",
+  "pydantic-settings>=2.6",
   # db
   "sqlalchemy[asyncio]>=2.0.36",
   "asyncpg>=0.30",

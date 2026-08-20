@@ -5,7 +5,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
-models/
+/models/
 *.pkl
 logs/
 .DS_Store

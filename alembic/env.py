@@ -6,8 +6,10 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from config.settings import get_settings
-from src.models.orm import Base
-import src.models.sports  # noqa: F401 - register Sports tables on Base.metadata
+from src.models.base import Base
+import src.models.identity  # noqa: F401  - registers tables on Base.metadata
+import src.models.facts  # noqa: F401
+import src.models.governance  # noqa: F401
 
 config = context.config
 
