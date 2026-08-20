@@ -35,16 +35,23 @@ def test_nfl_alias_keys_are_all_strings():
     PyYAML's YAML 1.1 safe_load - the 'Norway problem' - and silently
     corrupts New Orleans' identity.
 
-    The file has 33 entries: 32 real NFL teams (Washington Commanders has two
-    entries: WAS and WSH) under a top-level `aliases:` key (verified 2026-08-20).
-    Iterating the outer document itself would trivially pass with one string
-    key ("aliases") and never touch the real data this test exists to protect.
+    The file has 37 entries: 32 real NFL teams, Washington Commanders has two
+    entries (WAS, WSH), and three relocated franchises each carry one extra
+    pre-move nflverse abbreviation (Rams: LA + STL, Chargers: LAC + SD,
+    Raiders: LV + OAK) - all under a top-level `aliases:` key. Task 3 added
+    the four relocation-era entries after discovering live (2026-08-20, via
+    nflreadpy.load_schedules across 1999-2025) that nflverse's schedules
+    table emits LA/STL/SD/OAK and the file did not cover them, which made
+    resolve_team() raise LookupError the moment ingestion reached any of
+    those franchises' games. Iterating the outer document itself would
+    trivially pass with one string key ("aliases") and never touch the real
+    data this test exists to protect.
     """
     import yaml
 
     data = yaml.safe_load((ROOT / "config/team_aliases/nfl.yaml").read_text())
     aliases = data["aliases"]
-    assert len(aliases) == 33, f"expected 33 NFL team aliases, got {len(aliases)}"
+    assert len(aliases) == 37, f"expected 37 NFL team aliases, got {len(aliases)}"
     for key in aliases:
         assert isinstance(key, str), f"alias key {key!r} is {type(key)}, not str"
 

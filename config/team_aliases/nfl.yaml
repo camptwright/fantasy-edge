@@ -1,10 +1,14 @@
-# Maps nfl_data_py's team abbreviations (src/data/historical/nfl_loader.py)
-# to ESPN's canonical displayName + espn_id, fetched live against
-# site.api.espn.com's /teams endpoint on 2026-08-06 - not from memory.
-# Covers the current 32-team alignment; nfl_data_py's older-season
-# relocation-era abbreviations (e.g. pre-2016 STL, pre-2017 SD, pre-2020
-# OAK) are not covered since this repo's own usage seeds recent seasons
-# only (see seed_historical.py's docstring example: `--seasons 2023 2024`).
+# Maps nflverse/nfl_data_py team abbreviations to ESPN's canonical
+# displayName + espn_id, fetched live against site.api.espn.com's /teams
+# endpoint on 2026-08-06 - not from memory.
+# Covers the current 32-team alignment plus the relocation-era and
+# alternate abbreviations nflverse's schedules table actually emits across
+# 1999-2025 (confirmed live 2026-08-20 via nflreadpy.load_schedules and
+# load_teams): pre-2016 STL and current LA both for the Los Angeles Rams,
+# pre-2017 SD for the Los Angeles Chargers, and pre-2020 OAK for the Las
+# Vegas Raiders. Each alternate maps to the same espn_id as its current
+# abbreviation - never a new Team row (see Task 3's identity.py docstring,
+# constraint #24).
 aliases:
   ARI: {espn_name: "Arizona Cardinals", espn_id: "22"}
   ATL: {espn_name: "Atlanta Falcons", espn_id: "1"}
@@ -23,8 +27,23 @@ aliases:
   JAX: {espn_name: "Jacksonville Jaguars", espn_id: "30"}
   KC: {espn_name: "Kansas City Chiefs", espn_id: "12"}
   LV: {espn_name: "Las Vegas Raiders", espn_id: "13"}
+  # OAK is the pre-2020 Oakland Raiders abbreviation nflverse's schedules
+  # table still uses for seasons before the Las Vegas move. Same franchise,
+  # same espn_id as LV (confirmed live 2026-08-20 via nflreadpy).
+  OAK: {espn_name: "Las Vegas Raiders", espn_id: "13"}
   LAC: {espn_name: "Los Angeles Chargers", espn_id: "24"}
+  # SD is the pre-2017 San Diego Chargers abbreviation nflverse's schedules
+  # table uses for seasons before the LA move. Same franchise, same espn_id.
+  SD: {espn_name: "Los Angeles Chargers", espn_id: "24"}
   LAR: {espn_name: "Los Angeles Rams", espn_id: "14"}
+  # LA is nflverse's actual current abbreviation for the Rams in the
+  # schedules table (verified live 2026-08-20 via nflreadpy.load_schedules
+  # and load_teams(), which lists both LA and LAR against the same
+  # team_id) - LAR is the ESPN/standard form, not what nflverse's games.csv
+  # emits. STL is the pre-2016 St. Louis Rams abbreviation for the same
+  # franchise. Both map to the same espn_id as LAR.
+  LA: {espn_name: "Los Angeles Rams", espn_id: "14"}
+  STL: {espn_name: "Los Angeles Rams", espn_id: "14"}
   MIA: {espn_name: "Miami Dolphins", espn_id: "15"}
   MIN: {espn_name: "Minnesota Vikings", espn_id: "16"}
   NE: {espn_name: "New England Patriots", espn_id: "17"}
