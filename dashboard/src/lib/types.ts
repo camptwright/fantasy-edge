@@ -58,7 +58,18 @@ export interface Parlay {
   combined_odds_american: number | null;
   ev_percent: number | null;
   result: string | null;
+  generator?: string | null;
+  legs?: ParlayLeg[];
   created_at: string;
+}
+
+export interface ParlayLeg {
+  id: string;
+  description: string;
+  selection: string | null;
+  price_american: number | null;
+  probability: number | null;
+  result: string | null;
 }
 
 export interface RankingRow {
