@@ -31,7 +31,7 @@ export default function ParlaysPage() {
       await apiPost("/parlays/generate", { sport: sport || null, num_legs: numLegs });
       await mutate();
     } catch (e) {
-      // CONSTRAINT #12: this legitimately 503s until OPENAI_API_KEY is set -
+      // CONSTRAINT #12: this legitimately 503s until the shared LiteLLM key is set -
       // that's a real, surfaced error, not a bug to hide.
       setGenError(e instanceof ApiError ? e.message : "Failed to generate parlay");
     } finally {

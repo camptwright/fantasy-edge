@@ -31,8 +31,9 @@ Created with `nesting=1,keyctl=1` (Docker-in-LXC), `net0 ip6=auto` (never
    ```
 4. Create `.env` on the LXC from `.env.example` (never on the Mac — see the
    homelab repo's secrets-handling rule, which applies here too). At minimum
-   set `POSTGRES_PASSWORD`. `ODDS_API_KEY`, `OPENAI_API_KEY`,
-   `DISCORD_WEBHOOK_URL`, `CFBD_API_KEY` are optional at first boot — their
+   set `POSTGRES_PASSWORD`. `LITELLM_BASE_URL` and `LITELLM_API_KEY` point
+   parlay generation at CT110's shared gateway (`FANTASY_MODEL_ALIAS=worker`);
+   `ODDS_API_KEY`, `DISCORD_WEBHOOK_URL`, `CFBD_API_KEY` are optional at first boot — their
    absence degrades specific features cleanly (see CLAUDE.md "Known gaps"),
    it doesn't crash the stack.
 5. Bring the stack up and migrate:
