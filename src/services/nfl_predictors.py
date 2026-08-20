@@ -165,6 +165,21 @@ class NFLPlayerStatPrediction:
     reason: str | None = None
 
 
+def probability_over_line(prediction: NFLPlayerStatPrediction, line: float) -> float | None:
+    """Convert a qualified projection into an over probability.
+
+    This is intentionally a small, inspectable normal approximation. The
+    walk-forward calibration layer remains the authority for publishing a
+    qualified edge; this helper is for evaluating every retained line in the
+    NFL model workspace without treating an unqualified projection as signal.
+    """
+    if not prediction.qualified or prediction.projection is None:
+        return None
+    spread = max(0.01, ((prediction.ceiling or prediction.projection) - (prediction.floor or prediction.projection)) / 2)
+    z = (line - prediction.projection) / spread
+    return round(0.5 * math.erfc(z / math.sqrt(2)), 4)
+
+
 def build_player_profiles(
     player_stats: Iterable[dict[str, Any]], *, min_games: int = 4
 ) -> dict[str, NFLPlayerProfile]:

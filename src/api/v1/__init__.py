@@ -28,6 +28,7 @@ from .schemas import (
     TeamOddsResponse,
 )
 from src.data.cache.db_client import get_db
+from src.data.providers.espn_api import get_nfl_game_odds
 from config.settings import all_sports, get_settings
 from src.models.orm import Game, PlayerPropLine
 from src.models.sports import Favorite as FavoriteRow
@@ -59,6 +60,67 @@ async def overview(db: AsyncSession = Depends(get_db)) -> OverviewResponse:
 @router.get("/team-odds", response_model=TeamOddsResponse)
 async def team_odds(sport: str | None = Query(default=None), db: AsyncSession = Depends(get_db)) -> TeamOddsResponse:
     return TeamOddsResponse(items=await _market_rows(db, sport=sport, player=False))
+
+
+@router.get("/nfl-predictions")
+async def nfl_predictions(db: AsyncSession = Depends(get_db)) -> dict:
+    """NFL-only board joining ESPN game markets to our model evidence.
+
+    ESPN is the secondary game-market source here. A line is never presented
+    as a model pick unless a calibrated assessment exists for its event;
+    player lines remain explicitly pending until the nflverse batch artifact
+    has a complete player/game join.
+    """
+    try:
+        games_result = await db.execute(
+            select(Game).where(Game.sport == "nfl", Game.status.in_(("scheduled", "live")))
+        )
+        games = {str(g.espn_event_id): g for g in games_result.scalars().all() if g.espn_event_id}
+        assessments_result = await db.execute(
+            select(MarketAssessmentRow).where(MarketAssessmentRow.sport == "nfl")
+        )
+        assessments = list(assessments_result.scalars().all())
+        props_result = await db.execute(
+            select(PlayerPropLine).where(PlayerPropLine.sport == "nfl").order_by(PlayerPropLine.captured_at.desc()).limit(300)
+        )
+        props = list(props_result.scalars().all())
+    except SQLAlchemyError:
+        return {"sport": "nfl", "status": "unavailable", "team_lines": [], "player_lines": []}
+
+    team_lines: list[dict] = []
+    try:
+        espn_lines = await get_nfl_game_odds()
+    except Exception:
+        espn_lines = []
+    for line in espn_lines:
+        game = games.get(line["event_id"])
+        if game is None:
+            continue
+        matching = [a for a in assessments if str(a.event_id) == str(game.id)]
+        # h2h is the only calibrated team probability currently published.
+        model = next((a for a in matching if a.market == "h2h"), None)
+        team_lines.append({
+            **line,
+            "game_id": str(game.id),
+            "matchup": f"{game.away_team_name} @ {game.home_team_name}",
+            "model_probability": model.probability if model else None,
+            "model_version": model.model_version if model else None,
+            "confidence": model.calibration_label if model else None,
+            "status": model.status.value if model else "uncalibrated",
+            "status_reason": None if model else "No calibrated NFL assessment is linked to this ESPN line.",
+        })
+
+    player_lines = [{
+        "id": str(prop.id), "player_name": prop.player_name, "stat_type": prop.stat_type,
+        "line": prop.line, "over_price_american": prop.over_price_american,
+        "under_price_american": prop.under_price_american, "source": prop.source,
+        "captured_at": prop.captured_at, "game_id": str(prop.game_id) if prop.game_id else None,
+        "model_projection": None, "model_probability": None, "confidence": None,
+        "status": "uncalibrated",
+        "status_reason": "nflreadpy player artifact is not complete for this player/game join yet.",
+    } for prop in props]
+    return {"sport": "nfl", "status": "ready" if team_lines or player_lines else "no_coverage",
+            "team_lines": team_lines, "player_lines": player_lines}
 
 
 @router.get("/player-odds", response_model=PlayerOddsResponse)

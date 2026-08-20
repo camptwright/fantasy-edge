@@ -3,6 +3,7 @@ from src.services.nfl_predictors import (
     build_team_profiles,
     predict_matchup,
     predict_player_stat,
+    probability_over_line,
 )
 
 
@@ -29,3 +30,11 @@ def test_player_projection_returns_range_from_complete_rows():
     prediction = predict_player_stat(profile, "rushing_yards")
     assert prediction.qualified is True
     assert prediction.floor <= prediction.projection <= prediction.ceiling
+
+
+def test_player_line_probability_is_gated_and_monotonic():
+    rows = [{"player_name": "A Player", "team": "KC", "passing_yards": 200 + i * 10} for i in range(8)]
+    profile = build_player_profiles(rows)["A Player"]
+    prediction = predict_player_stat(profile, "passing_yards")
+    assert probability_over_line(prediction, 180) > probability_over_line(prediction, 240)
+    assert probability_over_line(predict_player_stat(profile, "receptions"), 2.5) is None

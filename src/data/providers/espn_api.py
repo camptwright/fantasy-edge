@@ -127,3 +127,49 @@ async def get_injuries(sport: str) -> list[dict[str, Any]]:
         log.info("espn.injuries_unavailable", sport=sport)
         return []
     return data.get("injuries", [])
+
+
+def parse_game_odds(event: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract ESPN's published game markets without guessing missing values.
+
+    ESPN exposes these on the scoreboard competition (spread, moneyline and
+    total).  The shape has changed between API versions, so every field is
+    optional and the raw provider name is retained for provenance.
+    """
+    competition = (event.get("competitions") or [{}])[0]
+    odds = competition.get("odds") or []
+    if not odds:
+        return []
+    book = odds[0] or {}
+    event_id = str(event.get("id"))
+    rows: list[dict[str, Any]] = []
+
+    def add(market: str, selection: str, line: Any, price: Any = None) -> None:
+        if line is None and price is None:
+            return
+        try:
+            numeric_line = float(line) if line is not None else None
+        except (TypeError, ValueError):
+            numeric_line = None
+        try:
+            numeric_price = int(price) if price is not None else None
+        except (TypeError, ValueError):
+            numeric_price = None
+        rows.append({"event_id": event_id, "market": market, "selection": selection,
+                     "line": numeric_line, "price_american": numeric_price,
+                     "source": "espn", "observed_at": event.get("date")})
+
+    add("total", "game", book.get("overUnder"))
+    add("spread", "home", book.get("spread"))
+    add("moneyline", "home", (book.get("homeTeamOdds") or {}).get("moneyLine"))
+    add("moneyline", "away", (book.get("awayTeamOdds") or {}).get("moneyLine"))
+    return rows
+
+
+async def get_nfl_game_odds() -> list[dict[str, Any]]:
+    """Return current ESPN NFL game markets for the prediction board."""
+    events = await get_scoreboard("nfl")
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        rows.extend(parse_game_odds(event))
+    return rows
