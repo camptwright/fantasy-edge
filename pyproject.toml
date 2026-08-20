@@ -46,7 +46,9 @@ dependencies = [
 # least 5.21.0, a permanent conflict with this project's pydantic>=2.9.
 # cfb_loader.py calls the CFBD REST API directly with httpx instead.
 historical = [
-  "nfl_data_py>=0.3.2",
+  # nflreadpy is the maintained Python port of nflverse/nflreadr. It returns
+  # Polars frames and is used only by the offline NFL ingestion/training jobs.
+  "nflreadpy>=0.1.1",
   "appdirs>=1.4",
   "pybaseball>=2.2",
 ]
