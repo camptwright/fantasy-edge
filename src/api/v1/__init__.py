@@ -98,7 +98,9 @@ async def nfl_predictions(db: AsyncSession = Depends(get_db)) -> dict:
             continue
         matching = [a for a in assessments if str(a.event_id) == str(game.id)]
         # h2h is the only calibrated team probability currently published.
-        model = next((a for a in matching if a.market == "h2h"), None)
+        # Never reuse a win probability for a spread or total line.
+        target = game.home_team_name if line["selection"] == "home" else game.away_team_name
+        model = next((a for a in matching if line["market"] == "moneyline" and a.market == "h2h" and a.selection == target), None)
         team_lines.append({
             **line,
             "game_id": str(game.id),
