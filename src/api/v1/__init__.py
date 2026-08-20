@@ -308,7 +308,10 @@ async def _model_health(db: AsyncSession) -> ModelHealth:
     fresh = newest is not None and (now - newest).total_seconds() <= 900
     passing = [state for state in calibration_by_sport.values() if state.calibrated]
     latest = next((state for state in passing if state.model_version), None)
-    status = "healthy" if latest and fresh else "degraded" if newest or any(state.model_version for state in calibration_by_sport.values()) else "unavailable"
+    # Model health answers whether a calibrated artifact is safe to price.
+    # Feed freshness is reported independently in coverage: an exhausted or
+    # paused odds provider must not make a valid model appear uncalibrated.
+    status = "healthy" if latest else "degraded" if newest or any(state.model_version for state in calibration_by_sport.values()) else "unavailable"
     return ModelHealth(
         model_version=latest.model_version if latest else "untrained",
         coverage={"odds_feed": fresh, "calibrated_model": bool(passing)},
