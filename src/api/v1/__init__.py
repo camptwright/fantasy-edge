@@ -35,6 +35,8 @@ from src.models.sports import Favorite as FavoriteRow
 from src.models.sports import MarketAssessment as MarketAssessmentRow
 from src.models.orm import OddsSnapshot
 from src.services.model_health import calibration_state
+from src.utils.odds_math import probability_to_american
+import math
 
 router = APIRouter(prefix="/api/v1", tags=["sports-v1"])
 
@@ -84,10 +86,39 @@ async def nfl_predictions(db: AsyncSession = Depends(get_db)) -> dict:
             select(PlayerPropLine).where(PlayerPropLine.sport == "nfl").order_by(PlayerPropLine.captured_at.desc()).limit(300)
         )
         props = list(props_result.scalars().all())
+        final_result = await db.execute(
+            select(Game).where(Game.sport == "nfl", Game.status == "final", Game.home_score.is_not(None), Game.away_score.is_not(None)).limit(2000)
+        )
+        finals = list(final_result.scalars().all())
     except SQLAlchemyError:
         return {"sport": "nfl", "status": "unavailable", "team_lines": [], "player_lines": []}
 
     team_lines: list[dict] = []
+    def _team_context(game: Game) -> tuple[float, float, float, float]:
+        home_for, home_against, away_for, away_against = [], [], [], []
+        for final in finals:
+            if final.home_team_name == game.home_team_name:
+                home_for.append(final.home_score)
+                home_against.append(final.away_score)
+            if final.away_team_name == game.home_team_name:
+                home_for.append(final.away_score)
+                home_against.append(final.home_score)
+            if final.home_team_name == game.away_team_name:
+                away_for.append(final.home_score)
+                away_against.append(final.away_score)
+            if final.away_team_name == game.away_team_name:
+                away_for.append(final.away_score)
+                away_against.append(final.home_score)
+
+        def avg(values: list[int], fallback: float) -> float:
+            return sum(values) / len(values) if values else fallback
+        home_exp = (avg(home_for, 22.5) + avg(away_against, 22.5)) / 2 + 1.5
+        away_exp = (avg(away_for, 22.5) + avg(home_against, 22.5)) / 2
+        margins = [f.home_score - f.away_score for f in finals]
+        totals = [f.home_score + f.away_score for f in finals]
+        margin_sd = max(7.0, (sum((x - avg(margins, 0)) ** 2 for x in margins) / max(1, len(margins))) ** 0.5)
+        total_sd = max(10.0, (sum((x - avg(totals, 44.0)) ** 2 for x in totals) / max(1, len(totals))) ** 0.5)
+        return home_exp, away_exp, margin_sd, total_sd
     try:
         espn_lines = await get_nfl_game_odds()
     except Exception:
@@ -101,15 +132,26 @@ async def nfl_predictions(db: AsyncSession = Depends(get_db)) -> dict:
         # Never reuse a win probability for a spread or total line.
         target = game.home_team_name if line["selection"] == "home" else game.away_team_name
         model = next((a for a in matching if line["market"] == "moneyline" and a.market == "h2h" and a.selection == target), None)
+        home_exp, away_exp, margin_sd, total_sd = _team_context(game)
+        projection = None
+        model_probability = model.probability if model else None
+        if line["market"] == "spread" and line["line"] is not None:
+            projection = round(home_exp - away_exp, 2)
+            model_probability = round(0.5 * math.erfc((line["line"] - projection) / (margin_sd * math.sqrt(2))), 4)
+        elif line["market"] == "total" and line["line"] is not None:
+            projection = round(home_exp + away_exp, 2)
+            model_probability = round(0.5 * math.erfc((line["line"] - projection) / (total_sd * math.sqrt(2))), 4)
         team_lines.append({
             **line,
             "game_id": str(game.id),
             "matchup": f"{game.away_team_name} @ {game.home_team_name}",
-            "model_probability": model.probability if model else None,
+            "model_probability": model_probability,
+            "model_projection": projection,
+            "fair_price_american": probability_to_american(model_probability) if model_probability is not None else None,
             "model_version": model.model_version if model else None,
             "confidence": "calibrated" if model and model.probability is not None else None,
             "status": model.status if model else "uncalibrated",
-            "status_reason": None if model else "No calibrated NFL assessment is linked to this ESPN line.",
+            "status_reason": None if model else ("NFL baseline projection priced this line; spread/total market calibration is still pending." if model_probability is not None else "No calibrated NFL assessment is linked to this ESPN line."),
         })
 
     player_lines = [{
