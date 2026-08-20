@@ -141,35 +141,39 @@ async def model_health() -> ModelHealth | None:
 
 @router.get("/assistant-status", response_model=AssistantStatus)
 async def assistant_status() -> AssistantStatus:
-    """Expose live assistant connectivity without exposing service secrets."""
+    """Expose the live Fantasy assistant path without exposing secrets.
+
+    Adjutant itself remains private to CT110. Fantasy Edge's assistant path is
+    the shared LiteLLM gateway, which applies the same Hermes -> Mac -> cloud
+    routing policy without requiring CT100 to publish Adjutant's port.
+    """
     settings = get_settings()
-    if not settings.adjutant_api_url or not settings.adjutant_api_token:
+    if not settings.litellm_base_url or not settings.litellm_api_key:
         return AssistantStatus(
             active=False,
             model_alias=settings.fantasy_model_alias,
-            detail="Adjutant bridge is not configured",
+            service="litellm",
+            detail="LiteLLM gateway is not configured",
         )
 
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
-            adjutant = await client.get(
-                f"{settings.adjutant_api_url.rstrip('/')}/health",
-                headers={"Authorization": f"Bearer {settings.adjutant_api_token}"},
-            )
             gateway_base = settings.litellm_base_url.rstrip("/").removesuffix("/v1")
             litellm = await client.get(f"{gateway_base}/health/liveliness")
-        if adjutant.status_code == 200 and litellm.status_code == 200:
+        if litellm.status_code == 200:
             return AssistantStatus(
                 active=True,
                 model_alias=settings.fantasy_model_alias,
-                detail="Adjutant and LiteLLM are reachable",
+                service="litellm",
+                detail="LiteLLM gateway is reachable; local-first fallback is active",
             )
-        detail = f"Adjutant {adjutant.status_code}; LiteLLM {litellm.status_code}"
+        detail = f"LiteLLM {litellm.status_code}"
     except httpx.HTTPError:
-        detail = "Adjutant or LiteLLM is unreachable"
+        detail = "LiteLLM gateway is unreachable"
     return AssistantStatus(
         active=False,
         model_alias=settings.fantasy_model_alias,
+        service="litellm",
         detail=detail,
     )
 

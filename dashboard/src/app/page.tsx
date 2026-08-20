@@ -18,7 +18,7 @@ export default function SportsHomePage() {
       </header>
       <Card className="border-accent/20 bg-accent/[0.04]">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div><p className="eyebrow text-accent/80">Adjutant assistant</p><p className="mt-1 text-sm text-gray-300">Read-only sports reasoning uses the shared local-first assistant route.</p></div>
+          <div><p className="eyebrow text-accent/80">Sports assistant</p><p className="mt-1 text-sm text-gray-300">Sports reasoning uses the shared local-first assistant route.</p></div>
           <span className={assistant?.active ? "text-xs text-accent" : "text-xs text-gray-500"}>{assistant?.active ? `Active · ${assistant.model_alias}` : "Checking…"}</span>
         </div>
       </Card>
