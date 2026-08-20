@@ -50,3 +50,7 @@ spread or total.
 Player rows are deliberately shown as `uncalibrated` until the offline
 `nflreadpy` artifact has a complete player/game join and passes walk-forward
 evaluation. This is a visible coverage state, not an implied recommendation.
+
+Model health is reported separately from feed freshness: `healthy` means a
+passing calibrated artifact is loaded, while `coverage.odds_feed` can remain
+false when the provider quota guard has paused new odds polling.
