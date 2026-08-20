@@ -9,10 +9,8 @@ rather than aspirational.
 
 from __future__ import annotations
 
-import json
-
 from fastapi import APIRouter, Depends, HTTPException
-from openai import AsyncOpenAI, OpenAIError
+import httpx
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,32 +73,15 @@ async def _candidate_props(db: AsyncSession, sport: str | None) -> list[PlayerPr
     return ranked[:MAX_CANDIDATE_PROPS]
 
 
-def _build_prompt(props: list[PlayerPropLine], num_legs: int) -> str:
-    lines = []
-    for p in props:
-        lines.append(
-            f"- {p.player_name} | {p.stat_type} | line {p.line} | "
-            f"over {p.over_price_american} / under {p.under_price_american} | source {p.source}"
-        )
-    return (
-        f"You are picking a {num_legs}-leg player-prop parlay from the candidates below. "
-        "Prefer diversification across players and stat types over stacking the same "
-        "player twice. Respond ONLY with JSON matching this shape: "
-        '{"title": str, "rationale": str, '
-        '"legs": [{"player_name": str, "stat_type": str, "selection": "over"|"under", '
-        '"line": number}]}\n\nCandidates:\n' + "\n".join(lines)
-    )
-
-
 @router.post("/generate")
 async def generate_parlay(
     request: GenerateParlayRequest, db: AsyncSession = Depends(get_db)
 ) -> dict:
     settings = get_settings()
-    if not settings.litellm_base_url or not settings.litellm_api_key:
+    if not settings.adjutant_api_url or not settings.fantasy_parlay_token:
         raise HTTPException(
             status_code=503,
-            detail="LiteLLM is not configured - parlay generation is unavailable",
+            detail="Adjutant parlay reasoning is not configured",
         )
 
     props = await _candidate_props(db, request.sport)
@@ -112,30 +93,26 @@ async def generate_parlay(
         )
 
     num_legs = max(2, min(request.num_legs, MAX_LEGS, len(props)))
-    prompt = _build_prompt(props, num_legs)
-
-    # LiteLLM exposes an OpenAI-compatible API. The `worker` alias resolves in
-    # order: Hermes/Ollama on the gaming PC -> Ollama on the Mac mini -> cloud.
-    client = AsyncOpenAI(
-        base_url=settings.litellm_base_url.rstrip("/") + "/",
-        api_key=settings.litellm_api_key,
-    )
     try:
-        response = await client.chat.completions.create(
-            model=settings.fantasy_model_alias,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-        )
-    except OpenAIError as exc:
-        log.exception("parlay_generate.litellm_failed")
-        raise HTTPException(status_code=502, detail=f"LLM request failed: {exc}") from exc
-
-    try:
-        parsed = json.loads(response.choices[0].message.content)
-    except (json.JSONDecodeError, IndexError, TypeError) as exc:
-        raise HTTPException(
-            status_code=502, detail="LLM returned an unparseable response"
-        ) from exc
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{settings.adjutant_api_url.rstrip('/')}/sports/parlays/generate",
+                headers={"Authorization": f"Bearer {settings.fantasy_parlay_token}"},
+                json={
+                    "num_legs": num_legs,
+                    "candidates": [
+                        {"player_name": prop.player_name, "stat_type": prop.stat_type, "line": prop.line,
+                         "over_price_american": prop.over_price_american, "under_price_american": prop.under_price_american,
+                         "source": prop.source}
+                        for prop in props
+                    ],
+                },
+            )
+            response.raise_for_status()
+            parsed = response.json()
+    except httpx.HTTPError as exc:
+        log.exception("parlay_generate.adjutant_failed")
+        raise HTTPException(status_code=502, detail="Adjutant parlay reasoning failed") from exc
 
     props_by_key = {(p.normalized_name, p.stat_type): p for p in props}
 
@@ -143,7 +120,7 @@ async def generate_parlay(
         sport=request.sport,
         title=parsed.get("title"),
         rationale=parsed.get("rationale"),
-        generator=settings.fantasy_model_alias,
+        generator=f"adjutant:{parsed.get('model_alias', settings.fantasy_model_alias)}",
     )
     db.add(parlay)
     await db.flush()
@@ -156,6 +133,8 @@ async def generate_parlay(
             normalize_stat_type(leg.get("stat_type", "")),
         )
         prop = props_by_key.get(key)
+        if prop is None:
+            continue
         db.add(
             ParlayLeg(
                 parlay_id=parlay.id,

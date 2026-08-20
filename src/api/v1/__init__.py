@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,10 +28,12 @@ from .schemas import (
     TeamOddsResponse,
 )
 from src.data.cache.db_client import get_db
-from config.settings import get_settings
+from config.settings import all_sports, get_settings
 from src.models.orm import Game, PlayerPropLine
 from src.models.sports import Favorite as FavoriteRow
 from src.models.sports import MarketAssessment as MarketAssessmentRow
+from src.models.orm import OddsSnapshot
+from src.services.model_health import calibration_state
 
 router = APIRouter(prefix="/api/v1", tags=["sports-v1"])
 
@@ -49,8 +51,8 @@ async def overview(db: AsyncSession = Depends(get_db)) -> OverviewResponse:
         qualified=[row for row in assessments if row.status is MarketStatus.qualified],
         watchlist=[row for row in assessments if row.status in {MarketStatus.stale, MarketStatus.coverage_incomplete}],
         no_bet=[row for row in assessments if row.status not in {MarketStatus.qualified, MarketStatus.stale, MarketStatus.coverage_incomplete}],
-        freshness=None,
-        model_health=None,
+        freshness=await _freshness(db),
+        model_health=await _model_health(db),
     )
 
 
@@ -135,8 +137,8 @@ async def replace_favorites(request: FavoritesUpdateRequest, db: AsyncSession = 
 
 
 @router.get("/model-health", response_model=ModelHealth | None)
-async def model_health() -> ModelHealth | None:
-    return None
+async def model_health(db: AsyncSession = Depends(get_db)) -> ModelHealth | None:
+    return await _model_health(db)
 
 
 @router.get("/assistant-status", response_model=AssistantStatus)
@@ -214,6 +216,41 @@ def _assessment(row: MarketAssessmentRow) -> MarketAssessment:
         estimated_value_percent=row.estimated_value_percent, model_version=row.model_version,
         calibration_label="passing" if row.status == MarketStatus.qualified.value else None,
         sources=sources, assessed_at=row.assessed_at,
+    )
+
+
+async def _freshness(db: AsyncSession):
+    try:
+        newest = (await db.execute(select(func.max(OddsSnapshot.captured_at)))).scalar_one()
+    except SQLAlchemyError:
+        return None
+    if newest is None:
+        return None
+    now = datetime.now(UTC)
+    age = max(0, int((now - newest).total_seconds()))
+    from .schemas import Freshness
+
+    return Freshness(newest_observation=newest, age_seconds=age, status="current" if age <= 900 else "stale")
+
+
+async def _model_health(db: AsyncSession) -> ModelHealth:
+    """Expose evidence, including unavailable/degraded states, never a guess."""
+    calibration_by_sport = {sport: calibration_state(sport) for sport in all_sports()}
+    try:
+        newest = (await db.execute(select(func.max(OddsSnapshot.captured_at)))).scalar_one()
+    except SQLAlchemyError:
+        newest = None
+    now = datetime.now(UTC)
+    fresh = newest is not None and (now - newest).total_seconds() <= 900
+    passing = [state for state in calibration_by_sport.values() if state.calibrated]
+    latest = next((state for state in passing if state.model_version), None)
+    status = "healthy" if latest and fresh else "degraded" if newest or any(state.model_version for state in calibration_by_sport.values()) else "unavailable"
+    return ModelHealth(
+        model_version=latest.model_version if latest else "untrained",
+        coverage={"odds_feed": fresh, "calibrated_model": bool(passing)},
+        calibration={sport: state.oof_brier for sport, state in calibration_by_sport.items()},
+        last_successful_ingest=newest,
+        status=status,
     )
 
 

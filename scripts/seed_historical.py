@@ -50,8 +50,15 @@ async def _seed_games(sport: str, games: list[dict[str, Any]]) -> int:
                 Game.away_team_id == away_id,
             ]
             season_value = g.get("season")
-            if isinstance(season_value, int):
-                conditions.append(Game.season == season_value)
+            # Basketball APIs use e.g. "2024-25" while the database uses
+            # the season's opening year.  Preserve a stable dedupe/training
+            # key instead of silently storing NULL and making it untrainable.
+            try:
+                normalized_season = int(str(season_value).split("-")[0])
+            except (TypeError, ValueError):
+                normalized_season = None
+            if normalized_season is not None:
+                conditions.append(Game.season == normalized_season)
             existing = await db.execute(select(Game.id).where(*conditions))
             if existing.first():
                 continue
@@ -67,7 +74,7 @@ async def _seed_games(sport: str, games: list[dict[str, Any]]) -> int:
                     status="final",
                     home_score=g.get("home_score"),
                     away_score=g.get("away_score"),
-                    season=g.get("season") if isinstance(g.get("season"), int) else None,
+                    season=normalized_season,
                     week=g.get("week"),
                 )
             )

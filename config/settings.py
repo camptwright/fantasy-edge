@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     fantasy_model_alias: str = "worker"
     adjutant_api_url: str = ""
     adjutant_api_token: str = ""
+    fantasy_parlay_token: str = ""
     discord_webhook_url: str = ""
     cfbd_api_key: str = ""
 

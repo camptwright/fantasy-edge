@@ -40,6 +40,9 @@ from src.algorithms.ev_calculator import EVResult, evaluate
 from src.algorithms.kelly import fractional_kelly_stake
 from src.data.cache.redis_client import CHANNEL_LINE_MOVEMENT, get_worker_redis
 from src.models.orm import BetSignal, Game, ModelOutput, OddsSnapshot, PowerRanking
+from src.models.sports import MarketAssessment
+from src.services.model_health import calibration_state
+from src.utils.odds_math import probability_to_american
 from src.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -295,6 +298,10 @@ class ValueAgent:
             by_outcome.setdefault(outcome, []).append(snap)
 
         home_name = game.home_team_name or ""
+        calibration = calibration_state(sport)
+        # A new evaluation supersedes the previous board state for this game;
+        # keep immutable OddsSnapshot history, but do not leave stale cards.
+        await db.execute(MarketAssessment.__table__.delete().where(MarketAssessment.event_id == game.id))
         signals: list[BetSignal] = []
 
         for outcome, snaps in by_outcome.items():
@@ -316,6 +323,24 @@ class ValueAgent:
                 best_snap.price_american,
                 opposing_snap.price_american,
                 ev_threshold_pct=ev_threshold,
+            )
+            status = "qualified" if calibration.calibrated else "uncalibrated"
+            db.add(
+                MarketAssessment(
+                    event_id=game.id,
+                    sport=sport,
+                    league=sport,
+                    market="h2h",
+                    selection=outcome,
+                    status=status,
+                    status_reason=None if calibration.calibrated else "The model has no passing calibration record for this market.",
+                    probability=model_prob if calibration.calibrated else None,
+                    fair_price_american=probability_to_american(model_prob) if calibration.calibrated else None,
+                    edge_percent=result.edge_percent if calibration.calibrated else None,
+                    estimated_value_percent=result.ev_percent if calibration.calibrated else None,
+                    model_version=calibration.model_version if calibration.calibrated else None,
+                    source_snapshot_ids=[str(best_snap.id), str(opposing_snap.id)],
+                )
             )
             if result.tier == "none":
                 continue

@@ -79,6 +79,12 @@ class GameOutcomeEnsemble:
         )
         self.meta = LogisticRegression()
         self._fitted = False
+        # Persisted alongside the fitted estimators so inference can prove it
+        # is using a model with a leakage-free out-of-fold evaluation.  A
+        # model without this evidence may make internal predictions, but it
+        # must not qualify a public assessment.
+        self.metrics: EnsembleMetrics | None = None
+        self.version: str | None = None
 
     def fit(self, X: pd.DataFrame, y: pd.Series) -> EnsembleMetrics:
         """`X`/`y` MUST already be sorted chronologically (oldest first) -
@@ -126,6 +132,7 @@ class GameOutcomeEnsemble:
         metrics = EnsembleMetrics(
             n_samples=n, n_folds=n_splits, oof_accuracy=accuracy, oof_brier=brier
         )
+        self.metrics = metrics
         log.info("ensemble.fit", sport=self.sport, **metrics.__dict__)
         return metrics
 
@@ -157,6 +164,7 @@ class GameOutcomeEnsemble:
         settings = get_settings()
         settings.model_dir.mkdir(parents=True, exist_ok=True)
         version = version or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        self.version = version
         path = settings.model_dir / f"{self.sport}_ensemble_{version}.pkl"
         with path.open("wb") as fh:
             pickle.dump(self, fh)
@@ -171,5 +179,10 @@ class GameOutcomeEnsemble:
             raise FileNotFoundError(f"no trained ensemble found for sport={sport}")
         with candidates[-1].open("rb") as fh:
             model = pickle.load(fh)
+        # Pickles produced before evaluation metadata existed are intentionally
+        # treated as uncalibrated until retrained.
+        if not hasattr(model, "metrics"):
+            model.metrics = None
+        model.version = candidates[-1].stem.removeprefix(f"{sport}_ensemble_")
         log.info("ensemble.loaded", sport=sport, path=str(candidates[-1]))
         return model
