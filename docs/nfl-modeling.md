@@ -37,3 +37,16 @@ The Odds API remains limited to the configured game markets, and player lines
 continue to come from the permitted provider path. A later integration can
 join `NFLPlayerProfile` to those lines by the existing normalized player ID and
 feed the projection into `MarketAssessment` only after walk-forward evaluation.
+
+## NFL prediction board
+
+`GET /api/v1/nfl-predictions` and the dashboard's **NFL predictions** page use
+ESPN's scoreboard competition odds as a secondary source for game spread and
+total markets. ESPN rows retain their event id and observation time. A model
+probability is attached only when the market type and team selection match a
+calibrated persisted assessment; a moneyline probability is never reused for a
+spread or total.
+
+Player rows are deliberately shown as `uncalibrated` until the offline
+`nflreadpy` artifact has a complete player/game join and passes walk-forward
+evaluation. This is a visible coverage state, not an implied recommendation.
