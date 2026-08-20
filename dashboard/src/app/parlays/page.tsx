@@ -45,7 +45,7 @@ export default function ParlaysPage() {
 
       <Card className="space-y-3">
         <p className="text-sm text-gray-400">
-          Generates a parlay from current player-prop edges via OpenAI - never requires an
+          Generates a parlay from current player-prop edges via the shared local-first assistant - never requires an
           existing bet signal.
         </p>
         <div className="flex flex-wrap items-center gap-2">

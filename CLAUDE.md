@@ -384,8 +384,8 @@ docker compose logs worker -f     # watch for asyncio loop errors
   data (`/games` returns the live NFL fixture from Phase 2,
   `/props` returns live WNBA lines, `/props/best` correctly returns `[]`
   since Underdog is our only source so no pair has 2+ sources to diff -
-  not a bug); `/parlays/generate` returns a clean 503 on the missing
-  `OPENAI_API_KEY` rather than a 500, and `_candidate_props` was verified
+  not a bug); `/parlays/generate` returns a clean 503 when the shared
+  LiteLLM gateway is not configured rather than a 500, and `_candidate_props` was verified
   directly to find 20 real WNBA props while never touching `bet_signals`
   (0 rows in that table at the time); `/fantasy/dfs/optimize` solved a
   synthetic 8-player NBA pool correctly. The core smoke test - seed a
@@ -498,12 +498,13 @@ know they exist before changing response shapes:
 
 ## Known gaps
 
-- **`ODDS_API_KEY`, `OPENAI_API_KEY`, `DISCORD_WEBHOOK_URL`, `CFBD_API_KEY`
-  are all empty in `.env` on CT 100.** Mirrors the homelab repo's
-  `ANTHROPIC_API_KEY` gap. Consequences: `OddsMonitor` cannot poll odds
+- **`ODDS_API_KEY`, `DISCORD_WEBHOOK_URL`, `CFBD_API_KEY` are all empty in
+  `.env` on CT 100.** Parlay generation uses the shared CT110 LiteLLM gateway
+  (`LITELLM_BASE_URL`, `LITELLM_API_KEY`, `FANTASY_MODEL_ALIAS`) and follows
+  the Hermes/Ollama -> Mac Ollama -> cloud hierarchy; it no longer accepts a
+  direct `OPENAI_API_KEY`. Consequences: `OddsMonitor` cannot poll odds
   (fails loudly with `ProviderError`, by design - not a quota-exhaustion
-  silent skip); Phase 4's parlay generation (constraint #12) cannot call
-  OpenAI; Discord alerts cannot fire; the CFBD historical loader cannot run.
+  silent skip); Discord alerts cannot fire; the CFBD historical loader cannot run.
   `PropsAgent` (Underdog) and `GameSyncAgent` (ESPN) need no key and are
   unaffected.
 - **`/rankings/{sport}` may still return empty even where Team identity

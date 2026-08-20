@@ -1,4 +1,4 @@
-"""CONSTRAINT #12: parlay generation uses OpenAI (gpt-4o) and must work from
+"""CONSTRAINT #12: parlay generation uses the shared LiteLLM gateway and must work from
 prop edges alone - it must NEVER require `bet_signals` to be non-empty,
 since signals only exist after odds polling has succeeded (and odds polling
 needs `ODDS_API_KEY`, which is a separate, independently-configurable piece
@@ -97,10 +97,10 @@ async def generate_parlay(
     request: GenerateParlayRequest, db: AsyncSession = Depends(get_db)
 ) -> dict:
     settings = get_settings()
-    if not settings.openai_api_key:
+    if not settings.litellm_base_url or not settings.litellm_api_key:
         raise HTTPException(
             status_code=503,
-            detail="OPENAI_API_KEY is not configured - parlay generation is unavailable",
+            detail="LiteLLM is not configured - parlay generation is unavailable",
         )
 
     props = await _candidate_props(db, request.sport)
@@ -114,22 +114,27 @@ async def generate_parlay(
     num_legs = max(2, min(request.num_legs, MAX_LEGS, len(props)))
     prompt = _build_prompt(props, num_legs)
 
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    # LiteLLM exposes an OpenAI-compatible API. The `worker` alias resolves in
+    # order: Hermes/Ollama on the gaming PC -> Ollama on the Mac mini -> cloud.
+    client = AsyncOpenAI(
+        base_url=settings.litellm_base_url.rstrip("/") + "/",
+        api_key=settings.litellm_api_key,
+    )
     try:
         response = await client.chat.completions.create(
-            model=settings.openai_model,
+            model=settings.fantasy_model_alias,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
     except OpenAIError as exc:
-        log.exception("parlay_generate.openai_failed")
-        raise HTTPException(status_code=502, detail=f"OpenAI request failed: {exc}") from exc
+        log.exception("parlay_generate.litellm_failed")
+        raise HTTPException(status_code=502, detail=f"LLM request failed: {exc}") from exc
 
     try:
         parsed = json.loads(response.choices[0].message.content)
     except (json.JSONDecodeError, IndexError, TypeError) as exc:
         raise HTTPException(
-            status_code=502, detail="OpenAI returned an unparseable response"
+            status_code=502, detail="LLM returned an unparseable response"
         ) from exc
 
     props_by_key = {(p.normalized_name, p.stat_type): p for p in props}
@@ -138,7 +143,7 @@ async def generate_parlay(
         sport=request.sport,
         title=parsed.get("title"),
         rationale=parsed.get("rationale"),
-        generator=settings.openai_model,
+        generator=settings.fantasy_model_alias,
     )
     db.add(parlay)
     await db.flush()

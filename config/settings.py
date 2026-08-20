@@ -35,8 +35,13 @@ class Settings(BaseSettings):
     odds_api_key: str = ""
     # Free tier is 500 requests/month. The guard in constraint #4 keys off this.
     odds_api_quota_floor: int = 50
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o"
+    # All application LLM traffic goes through the shared LiteLLM gateway.
+    # The gateway owns the routing order: gaming-PC Hermes/Ollama, Mac mini
+    # Ollama, then the configured cloud provider. Keeping this boundary here
+    # means the sports app never needs provider-specific credentials.
+    litellm_base_url: str = ""
+    litellm_api_key: str = ""
+    fantasy_model_alias: str = "worker"
     discord_webhook_url: str = ""
     cfbd_api_key: str = ""
 
