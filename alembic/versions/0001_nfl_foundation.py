@@ -101,7 +101,7 @@ def upgrade() -> None:
     sa.Column('probability', sa.Float(), nullable=False),
     sa.Column('generated_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('id', sa.UUID(), nullable=False),
-    sa.ForeignKeyConstraint(['game_id'], ['games.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['game_id'], ['games.id'], ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('player_external_ids',
@@ -120,7 +120,7 @@ def upgrade() -> None:
     sa.Column('stat_type', sa.String(length=48), nullable=False),
     sa.Column('value', sa.Float(), nullable=False),
     sa.Column('id', sa.UUID(), nullable=False),
-    sa.ForeignKeyConstraint(['game_id'], ['games.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['game_id'], ['games.id'], ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['player_id'], ['players.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('player_id', 'game_id', 'stat_type', name='uq_player_game_stat')
@@ -150,7 +150,7 @@ def upgrade() -> None:
     sa.Column('line_type', sa.String(length=8), nullable=False),
     sa.Column('observed_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('id', sa.UUID(), nullable=False),
-    sa.ForeignKeyConstraint(['game_id'], ['games.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['game_id'], ['games.id'], ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('ix_team_lines_latest', 'team_market_lines', ['game_id', 'market', 'side', 'source', 'observed_at'], unique=False)

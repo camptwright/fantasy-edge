@@ -100,8 +100,11 @@ class TeamMarketLine(Base, UUIDPrimaryKey):
         ),
     )
 
+    # RESTRICT, not CASCADE: this table is append-only observation history
+    # (see module docstring). Cascading a Game delete would silently destroy
+    # that history instead of leaving the decision explicit.
     game_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("games.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("games.id", ondelete="RESTRICT"), nullable=False
     )
     market: Mapped[str] = mapped_column(String(16), nullable=False)  # spread|total|moneyline
     side: Mapped[str] = mapped_column(String(8), nullable=False)  # home|away|over|under
@@ -153,8 +156,11 @@ class PlayerGameStat(Base, UUIDPrimaryKey):
     player_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("players.id", ondelete="CASCADE"), nullable=False
     )
+    # RESTRICT, not CASCADE: this is the realized ground-truth training data
+    # the model fits against. Cascading a Game delete would silently destroy
+    # it instead of leaving the decision explicit.
     game_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("games.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("games.id", ondelete="RESTRICT"), nullable=False
     )
     stat_type: Mapped[str] = mapped_column(String(48), nullable=False)
     value: Mapped[float] = mapped_column(Float, nullable=False)

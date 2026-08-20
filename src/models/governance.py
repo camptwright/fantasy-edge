@@ -48,8 +48,11 @@ class ModelPrediction(Base, UUIDPrimaryKey):
     __tablename__ = "model_predictions"
 
     artifact_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    # RESTRICT, not CASCADE: a recorded prediction is part of the model's
+    # audit trail. Cascading a Game delete would silently destroy it instead
+    # of leaving the decision explicit.
     game_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("games.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("games.id", ondelete="RESTRICT"), nullable=False
     )
     market: Mapped[str] = mapped_column(String(16), nullable=False)
     side: Mapped[str] = mapped_column(String(8), nullable=False)
