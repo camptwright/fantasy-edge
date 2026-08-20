@@ -106,7 +106,7 @@ async def nfl_predictions(db: AsyncSession = Depends(get_db)) -> dict:
             "model_probability": model.probability if model else None,
             "model_version": model.model_version if model else None,
             "confidence": "calibrated" if model and model.probability is not None else None,
-            "status": model.status.value if model else "uncalibrated",
+            "status": model.status if model else "uncalibrated",
             "status_reason": None if model else "No calibrated NFL assessment is linked to this ESPN line.",
         })
 
