@@ -10,6 +10,7 @@ models/
 logs/
 .DS_Store
 .superpowers/
+.pgdata-test/
 node_modules/
 .next/
 *.tsbuildinfo
