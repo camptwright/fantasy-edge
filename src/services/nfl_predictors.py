@@ -198,8 +198,11 @@ def build_player_profiles(
             continue
         profiles[player] = NFLPlayerProfile(
             player=player,
-            team=str(rows[-1].get("recent_team") or rows[-1].get("team"))
-            if (rows[-1].get("recent_team") or rows[-1].get("team")) else None,
+            team=(
+                str(rows[-1].get("recent_team") or rows[-1].get("team"))
+                if (rows[-1].get("recent_team") or rows[-1].get("team"))
+                else None
+            ),
             games=len(rows), stats=stats, standard_deviations=deviations,
         )
     return profiles
