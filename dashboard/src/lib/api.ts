@@ -38,6 +38,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
 
 export const sportsApi = {
   overview: () => fetcher<import("@/lib/types").SportsOverview>("/v1/overview"),
+  assistantStatus: () => fetcher<import("@/lib/types").AssistantStatus>("/v1/assistant-status"),
   teamOdds: (query = "") => fetcher<import("@/lib/types").MarketResponse>(`/v1/team-odds${query}`),
   playerOdds: (query = "") => fetcher<import("@/lib/types").MarketResponse>(`/v1/player-odds${query}`),
   games: (query = "") => fetcher<import("@/lib/types").GamesResponse>(`/v1/games${query}`),

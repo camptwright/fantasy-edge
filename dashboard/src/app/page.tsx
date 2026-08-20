@@ -7,6 +7,7 @@ import { sportsApi } from "@/lib/api";
 
 export default function SportsHomePage() {
   const { data, error, isLoading } = useSWR("/v1/overview", sportsApi.overview, { refreshInterval: 60_000 });
+  const { data: assistant } = useSWR("/v1/assistant-status", sportsApi.assistantStatus, { refreshInterval: 30_000 });
 
   return (
     <div className="space-y-6">
@@ -17,8 +18,8 @@ export default function SportsHomePage() {
       </header>
       <Card className="border-accent/20 bg-accent/[0.04]">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div><p className="eyebrow text-accent/80">Adjutant · future panel</p><p className="mt-1 text-sm text-gray-300">A read-only daily brief will appear here after the internal Adjutant contract is enabled.</p></div>
-          <span className="text-xs text-gray-500">Not connected</span>
+          <div><p className="eyebrow text-accent/80">Adjutant assistant</p><p className="mt-1 text-sm text-gray-300">Read-only sports reasoning uses the shared local-first assistant route.</p></div>
+          <span className={assistant?.active ? "text-xs text-accent" : "text-xs text-gray-500"}>{assistant?.active ? `Active · ${assistant.model_alias}` : "Checking…"}</span>
         </div>
       </Card>
       {isLoading && <LoadingState />}

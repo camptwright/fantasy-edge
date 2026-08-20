@@ -131,6 +131,13 @@ export interface SportsOverview {
   model_health: SportsModelHealth | null;
 }
 
+export interface AssistantStatus {
+  active: boolean;
+  service: string;
+  model_alias: string;
+  detail: string;
+}
+
 export interface SportsGame {
   id: string;
   sport: string;

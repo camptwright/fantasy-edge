@@ -85,6 +85,15 @@ class OverviewResponse(BaseModel):
     model_health: ModelHealth | None = None
 
 
+class AssistantStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    active: bool
+    service: str = "adjutant"
+    model_alias: str
+    detail: str
+
+
 class TeamOddsResponse(BaseModel):
     items: list[MarketAssessment] = Field(default_factory=list)
     next_cursor: str | None = None

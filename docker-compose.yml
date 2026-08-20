@@ -59,6 +59,9 @@ services:
     <<: *app
     command: ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports: ["8000:8000"]
+    environment:
+      ADJUTANT_API_URL: ${ADJUTANT_API_URL:-http://192.168.8.200:8000}
+      ADJUTANT_API_TOKEN: ${ADJUTANT_API_TOKEN:-}
     mem_limit: 768m
 
   worker:

@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     litellm_base_url: str = ""
     litellm_api_key: str = ""
     fantasy_model_alias: str = "worker"
+    adjutant_api_url: str = ""
+    adjutant_api_token: str = ""
     discord_webhook_url: str = ""
     cfbd_api_key: str = ""
 
