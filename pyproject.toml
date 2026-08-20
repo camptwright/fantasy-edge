@@ -1,15 +1,10 @@
 [project]
 name = "fantasy-edge"
 version = "0.1.0"
-description = "Self-hosted live sports betting value engine and fantasy optimizer"
+description = "NFL sports betting value engine foundation"
 requires-python = ">=3.12"
 
 dependencies = [
-  # web / api
-  "fastapi>=0.115",
-  "uvicorn[standard]>=0.32",
-  "pydantic>=2.9",
-  "pydantic-settings>=2.6",
   # db
   "sqlalchemy[asyncio]>=2.0.36",
   "asyncpg>=0.30",
@@ -19,38 +14,23 @@ dependencies = [
   "psycopg[binary]>=3.2",
   "alembic>=1.14",
   "greenlet>=3.1",
-  # queue
-  "celery[redis]>=5.4",
-  "redis>=5.2",
-  "flower>=2.0",
   # http / logging
   "httpx>=0.28",
-  "structlog>=24.4",
   "pyyaml>=6.0",
-  # modelling
-  "xgboost>=2.1",
-  "lightgbm>=4.5",
-  "scikit-learn>=1.5",
-  "pandas>=2.2",
-  "numpy>=2.0",
-  "scipy>=1.14",
-  # optimisation
-  "pulp>=2.9",
-  # llm
-  "openai>=1.57",
 ]
 
 [project.optional-dependencies]
-# NCAAF's historical loader (cfb_loader.py) deliberately does NOT depend on
-# the `cfbd` package here - it pins pydantic<2 on every release through at
-# least 5.21.0, a permanent conflict with this project's pydantic>=2.9.
-# cfb_loader.py calls the CFBD REST API directly with httpx instead.
-historical = [
+offline = [
   # nflreadpy is the maintained Python port of nflverse/nflreadr. It returns
   # Polars frames and is used only by the offline NFL ingestion/training jobs.
   "nflreadpy>=0.1.1",
   "appdirs>=1.4",
-  "pybaseball>=2.2",
+  # modelling (training only, not needed in serving image)
+  "xgboost>=2.1",
+  "lightgbm>=4.5",
+  "scikit-learn>=1.5",
+  "pandas>=2.2",
+  "scipy>=1.14",
 ]
 dev = [
   "pytest>=8.3",
