@@ -51,6 +51,8 @@ packages = ["src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = ["live: makes real network calls; excluded by default"]
+addopts = "-m 'not live'"
 
 [tool.ruff]
 line-length = 100
