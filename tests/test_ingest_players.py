@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import func, select
 
 from src.ingest.identity import resolve_player
+from src.ingest.nflverse import ingest_games
 from src.ingest.players import ingest_player_stats, ingest_players
 from src.models.facts import Game, PlayerGameStat
 from src.models.identity import Player, PlayerExternalId
@@ -64,6 +65,7 @@ async def test_resolve_player_is_stable_across_calls(db):
 
 
 async def test_player_stats_are_long_form_and_normalized(db):
+    await ingest_games(db, seasons=[2025])
     await ingest_players(db)
     written = await ingest_player_stats(db, seasons=[2025])
     assert written > 0
@@ -90,6 +92,7 @@ async def test_stats_attach_to_a_game_the_players_team_actually_played(db):
     checks his stat rows attach to THAT game and no other - not "one of
     sixteen possible week-1 games", the literal correct one.
     """
+    await ingest_games(db, seasons=[2025])
     await ingest_players(db)
     await ingest_player_stats(db, seasons=[2025])
 
@@ -146,6 +149,7 @@ async def test_stats_attach_to_a_game_the_players_team_actually_played(db):
 
 
 async def test_player_stat_uniqueness_is_enforced_by_the_database(db):
+    await ingest_games(db, seasons=[2025])
     await ingest_players(db)
     await ingest_player_stats(db, seasons=[2025])
     row = await db.scalar(select(PlayerGameStat).limit(1))
