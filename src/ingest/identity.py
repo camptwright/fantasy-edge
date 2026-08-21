@@ -16,7 +16,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.identity import Team
+from src.models.identity import Player, PlayerExternalId, Team
 
 _ALIAS_PATH = Path(__file__).resolve().parents[2] / "config" / "team_aliases" / "nfl.yaml"
 
@@ -68,3 +68,45 @@ async def resolve_team(db: AsyncSession, identifier: str) -> Team:
     db.add(team)
     await db.flush()
     return team
+
+
+async def resolve_player(
+    db: AsyncSession,
+    source: str,
+    external_id: str,
+    full_name: str,
+    position: str | None = None,
+) -> Player | None:
+    """Resolve a source-specific player id to one canonical Player.
+
+    Returns None when the identifier is unknown and cannot be matched without
+    guessing. Callers must park the observation rather than fall back to a
+    name match: two active players are named Josh Allen, and a wrong match
+    poisons the training set silently.
+    """
+    mapped = await db.scalar(
+        select(PlayerExternalId).where(
+            PlayerExternalId.source == source,
+            PlayerExternalId.external_id == external_id,
+        )
+    )
+    if mapped is not None:
+        return await db.get(Player, mapped.player_id)
+
+    candidates = list(
+        (
+            await db.execute(select(Player).where(Player.full_name == full_name))
+        ).scalars()
+    )
+    if position is not None:
+        candidates = [c for c in candidates if c.position == position] or candidates
+
+    if len(candidates) != 1:
+        # Zero candidates: unknown player. More than one: ambiguous, and this
+        # is exactly the Josh Allen case. Both are parked, never guessed.
+        return None
+
+    player = candidates[0]
+    db.add(PlayerExternalId(player_id=player.id, source=source, external_id=external_id))
+    await db.flush()
+    return player
