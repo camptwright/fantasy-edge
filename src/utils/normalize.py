@@ -107,6 +107,11 @@ STAT_ALIASES: dict[str, str] = {
     "pass completions": "passing_completions",
     "completions": "passing_completions",
     "pass attempts": "passing_attempts",
+    # nflverse's raw player-stats column is the bare "attempts" (passing
+    # attempts) - without this entry it fell through to a slugified
+    # "attempts", a third spelling alongside "pass_attempts"-style joins
+    # from other sources. CONSTRAINT #8.
+    "attempts": "passing_attempts",
     "interceptions thrown": "interceptions_thrown",
     "int": "interceptions_thrown",
     "rush yds": "rushing_yards",
@@ -114,11 +119,19 @@ STAT_ALIASES: dict[str, str] = {
     "rush attempts": "rushing_attempts",
     "carries": "rushing_attempts",
     "rush tds": "rushing_touchdowns",
+    # nflverse's raw column is "rushing_tds" (-> "rushing tds" after
+    # separator normalization), which doesn't match the "rush tds" key
+    # above. Same canonical target as "rush tds" - CONSTRAINT #8.
+    "rushing tds": "rushing_touchdowns",
     "rec yds": "receiving_yards",
     "receiving yards": "receiving_yards",
     "rec": "receptions",
     "receptions": "receptions",
     "rec tds": "receiving_touchdowns",
+    # nflverse's raw column is "receiving_tds" (-> "receiving tds"), which
+    # doesn't match the "rec tds" key above. Same canonical target -
+    # CONSTRAINT #8.
+    "receiving tds": "receiving_touchdowns",
     "kicking points": "kicking_points",
     "tackles": "tackles",
     "tackles assists": "tackles_assists",
