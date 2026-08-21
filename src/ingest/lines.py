@@ -36,7 +36,20 @@ async def record_team_line(
             TeamMarketLine.side == side,
             TeamMarketLine.source == source,
         )
-        .order_by(desc(TeamMarketLine.observed_at))
+        # `observed_at` is a Python-side `datetime.now()` call (see
+        # src/models/base.py's `utcnow`), not a DB-generated monotonic
+        # sequence, so two observations for the same key could in principle
+        # share a timestamp. ORDER BY observed_at DESC alone would then have
+        # an undefined tiebreak - and this comparison is the entire
+        # mechanism deciding write-vs-skip, so an arbitrary pick could
+        # silently suppress a real line move or treat a stale row as
+        # current. `id` isn't time-ordered either, but adding it as a
+        # secondary key makes "latest" deterministic even under a tie -
+        # not true first-write-wins (that needs a DB-generated monotonic
+        # column, out of scope here), just a reproducible answer instead of
+        # an arbitrary one. This codebase's sequential-await polling
+        # pattern doesn't currently exercise a real collision.
+        .order_by(desc(TeamMarketLine.observed_at), desc(TeamMarketLine.id))
         .limit(1)
     )
     if (

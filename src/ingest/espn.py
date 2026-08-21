@@ -18,6 +18,7 @@ from src.ingest.identity import resolve_team
 from src.ingest.lines import record_team_line
 from src.ingest.runs import record_run
 from src.models.facts import Game
+from src.models.governance import IngestionRun
 
 SOURCE = "espn"
 
@@ -36,7 +37,7 @@ async def sync_scoreboard(db: AsyncSession, days_ahead: int = 7) -> int:
             payload = response.json()
 
         for event in payload.get("events", []):
-            game = await _upsert_event(db, event)
+            game = await _upsert_event(db, event, run)
             if game is None:
                 continue
             for entry in _odds_rows(event):
@@ -52,7 +53,31 @@ async def sync_scoreboard(db: AsyncSession, days_ahead: int = 7) -> int:
         return run.rows_written
 
 
-async def _upsert_event(db: AsyncSession, event: dict[str, Any]) -> Game | None:
+async def _upsert_event(
+    db: AsyncSession, event: dict[str, Any], run: IngestionRun
+) -> Game | None:
+    """Create or update the Game for one ESPN event.
+
+    Team resolution is deliberately run BEFORE a brand-new Game is ever
+    constructed or added to the session. `games.season` is NOT NULL, and
+    once a pending Game satisfies every NOT NULL constraint, any query
+    issued on this session (e.g. resolve_team()'s own SELECT for the very
+    next competitor, or the next event's lookup) autoflushes the whole unit
+    of work - which would silently INSERT a half-built Game (valid team IDs
+    still unknown) before we've even learned whether resolution will
+    succeed. Resolving first means a malformed event never gets a pending
+    row in the session in the first place, so there is nothing to discard
+    if it turns out incomplete - this is a stronger guarantee than adding
+    the Game early and expunging it after the fact, which would already be
+    too late if an intervening query had autoflushed it.
+
+    If the Game already exists (a prior successful sync gave it valid team
+    IDs) and THIS poll's competitor data is incomplete, the existing valid
+    team IDs are kept untouched; only the team assignment is skipped, while
+    schedule/status/score fields this poll does legitimately know are still
+    applied. Either way, a failure is recorded on `run.detail` so a
+    persistently malformed event doesn't go unnoticed.
+    """
     event_id = str(event.get("id") or "")
     if not event_id:
         return None
@@ -63,18 +88,55 @@ async def _upsert_event(db: AsyncSession, event: dict[str, Any]) -> Game | None:
     competition = competitions[0]
 
     game = await db.scalar(select(Game).where(Game.espn_event_id == event_id))
-    if game is None:
+    is_new = game is None
+
+    home = away = None
+    home_score = away_score = None
+    for competitor in competition.get("competitors", []):
+        team_name = (competitor.get("team") or {}).get("displayName")
+        if not team_name:
+            continue
+        resolved = await resolve_team(db, team_name)
+        if competitor.get("homeAway") == "home":
+            home, home_score = resolved, competitor.get("score")
+        else:
+            away, away_score = resolved, competitor.get("score")
+
+    if home is None or away is None:
+        run.detail = (
+            f"espn event {event_id}: incomplete competitor data this poll "
+            f"(home={'ok' if home else 'missing'}, away={'ok' if away else 'missing'})"
+        )[:2000]
+        if is_new:
+            # Nothing was ever added to the session for this event - there
+            # is no partial row to discard.
+            return None
+        # Existing game: keep its valid team IDs, but still record whatever
+        # this poll legitimately knows - schedule/status and scores don't
+        # depend on team resolution succeeding, only on which competitor
+        # entry was flagged home/away.
+        _apply_schedule_fields(game, event, competition)
+        _apply_scores(game, home_score, away_score)
+        await db.flush()
+        return game
+
+    if is_new:
         game = Game(espn_event_id=event_id)
         db.add(game)
 
-    # CONSTRAINT: games.season is NOT NULL. resolve_team() below issues a
-    # SELECT (and sometimes a flush of its own) against the same session, and
-    # SQLAlchemy autoflushes pending objects before running any query. A
-    # freshly created Game added above has season=None until this method
-    # assigns it, so that autoflush would try to INSERT a row with a NULL
-    # season and crash with NotNullViolationError. Every NOT NULL field must
-    # therefore be set on `game` before the competitor-resolution loop below
-    # runs any query.
+    _apply_schedule_fields(game, event, competition)
+    _apply_scores(game, home_score, away_score)
+    game.home_team_id, game.away_team_id = home.id, away.id
+    await db.flush()
+    return game
+
+
+def _apply_schedule_fields(
+    game: Game, event: dict[str, Any], competition: dict[str, Any]
+) -> None:
+    """Season/week/kickoff/status - shared by the happy path and the
+    existing-game-but-this-poll-is-incomplete path so both apply the same
+    parsing rather than duplicating it."""
     season = (event.get("season") or {}).get("year")
     game.season = int(season) if season else game.season
     week = (event.get("week") or {}).get("number")
@@ -89,25 +151,10 @@ async def _upsert_event(db: AsyncSession, event: dict[str, Any]) -> Game | None:
         state, "scheduled"
     )
 
-    home = away = None
-    for competitor in competition.get("competitors", []):
-        team_name = (competitor.get("team") or {}).get("displayName")
-        if not team_name:
-            continue
-        resolved = await resolve_team(db, team_name)
-        if competitor.get("homeAway") == "home":
-            home, home_score = resolved, competitor.get("score")
-            game.home_score = int(home_score) if home_score not in (None, "") else None
-        else:
-            away, away_score = resolved, competitor.get("score")
-            game.away_score = int(away_score) if away_score not in (None, "") else None
 
-    if home is None or away is None:
-        return None
-
-    game.home_team_id, game.away_team_id = home.id, away.id
-    await db.flush()
-    return game
+def _apply_scores(game: Game, home_score: Any, away_score: Any) -> None:
+    game.home_score = int(home_score) if home_score not in (None, "") else None
+    game.away_score = int(away_score) if away_score not in (None, "") else None
 
 
 def _odds_rows(event: dict[str, Any]) -> list[dict[str, Any]]:
