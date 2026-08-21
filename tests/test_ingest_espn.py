@@ -116,3 +116,70 @@ async def test_upsert_event_existing_game_keeps_valid_teams_when_poll_is_incompl
     assert result.status == "in_progress", "status should still update from this poll"
     assert result.home_score == 10, "home score is independent of team resolution"
     assert run.detail is not None and "888888" in run.detail
+
+
+async def test_upsert_event_existing_game_keeps_omitted_side_score_when_poll_is_incomplete(
+    db,
+):
+    """Regression test: an existing Game already carries real scores on
+    BOTH sides (e.g. from an earlier successful poll mid-game). A later
+    poll whose competitor list omits one side entirely (not merely a side
+    with no numeric score - actually absent from `competitors`) must leave
+    that omitted side's DB score exactly as it was; only the side that was
+    actually present this poll may update.
+
+    This is distinct from
+    test_upsert_event_existing_game_keeps_valid_teams_when_poll_is_incomplete
+    above, which seeds a Game with no prior scores at all (both start as
+    None), so it cannot detect a real prior value getting wiped to None -
+    None overwritten with None is indistinguishable from "left alone" in
+    that test. Here both sides start with a genuine non-None score so a
+    wipe is observable.
+    """
+    kc = await resolve_team(db, "Kansas City Chiefs")
+    lac = await resolve_team(db, "Los Angeles Chargers")
+    existing = Game(
+        espn_event_id="777777",
+        season=2026,
+        week=1,
+        status="in_progress",
+        home_team_id=kc.id,
+        away_team_id=lac.id,
+        home_score=17,
+        away_score=14,
+    )
+    db.add(existing)
+    await db.flush()
+
+    event = {
+        "id": "777777",
+        "date": "2026-09-10T20:15Z",
+        "season": {"year": 2026},
+        "week": {"number": 1},
+        "competitions": [
+            {
+                "status": {"type": {"state": "in"}},
+                "competitors": [
+                    {
+                        "homeAway": "home",
+                        "score": "24",
+                        "team": {"displayName": "Kansas City Chiefs"},
+                    }
+                    # away competitor entirely absent this poll - the score
+                    # variable for it never gets set, so home_seen/away_seen
+                    # is the only thing that can correctly distinguish "no
+                    # update" from "update to None".
+                ],
+            }
+        ],
+    }
+    run = IngestionRun(source="espn")
+
+    result = await _upsert_event(db, event, run)
+
+    assert result is not None and result.id == existing.id
+    assert result.home_score == 24, "the side present this poll must update"
+    assert result.away_score == 14, (
+        "the side absent from this poll's competitor list must keep its "
+        "prior DB value, not be nulled out"
+    )

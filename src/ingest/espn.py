@@ -92,12 +92,24 @@ async def _upsert_event(
 
     home = away = None
     home_score = away_score = None
+    # Tracks whether a competitor entry for that side was present in THIS
+    # poll at all - independent of whether it carried a resolvable team name
+    # or a numeric score. A side that's absent from `competitors` entirely
+    # (e.g. a transient ESPN payload glitch) must leave that side's existing
+    # DB score untouched; a side that IS present but pre-kickoff and
+    # scoreless legitimately means score=None and should still apply.
+    home_seen = away_seen = False
     for competitor in competition.get("competitors", []):
+        is_home = competitor.get("homeAway") == "home"
+        if is_home:
+            home_seen = True
+        else:
+            away_seen = True
         team_name = (competitor.get("team") or {}).get("displayName")
         if not team_name:
             continue
         resolved = await resolve_team(db, team_name)
-        if competitor.get("homeAway") == "home":
+        if is_home:
             home, home_score = resolved, competitor.get("score")
         else:
             away, away_score = resolved, competitor.get("score")
@@ -113,10 +125,12 @@ async def _upsert_event(
             return None
         # Existing game: keep its valid team IDs, but still record whatever
         # this poll legitimately knows - schedule/status and scores don't
-        # depend on team resolution succeeding, only on which competitor
-        # entry was flagged home/away.
+        # depend on team resolution succeeding. Per-side score updates are
+        # further gated on home_seen/away_seen so a side missing from this
+        # poll's competitor list entirely keeps its existing DB score
+        # rather than being nulled out.
         _apply_schedule_fields(game, event, competition)
-        _apply_scores(game, home_score, away_score)
+        _apply_scores(game, home_score, away_score, home_seen, away_seen)
         await db.flush()
         return game
 
@@ -125,7 +139,7 @@ async def _upsert_event(
         db.add(game)
 
     _apply_schedule_fields(game, event, competition)
-    _apply_scores(game, home_score, away_score)
+    _apply_scores(game, home_score, away_score, home_seen, away_seen)
     game.home_team_id, game.away_team_id = home.id, away.id
     await db.flush()
     return game
@@ -152,9 +166,20 @@ def _apply_schedule_fields(
     )
 
 
-def _apply_scores(game: Game, home_score: Any, away_score: Any) -> None:
-    game.home_score = int(home_score) if home_score not in (None, "") else None
-    game.away_score = int(away_score) if away_score not in (None, "") else None
+def _apply_scores(
+    game: Game,
+    home_score: Any,
+    away_score: Any,
+    home_seen: bool,
+    away_seen: bool,
+) -> None:
+    """Only touch a side's score if that side actually had a competitor
+    entry in this poll. A side missing from this poll entirely must leave
+    the existing DB value alone rather than being coerced to None."""
+    if home_seen:
+        game.home_score = int(home_score) if home_score not in (None, "") else None
+    if away_seen:
+        game.away_score = int(away_score) if away_score not in (None, "") else None
 
 
 def _odds_rows(event: dict[str, Any]) -> list[dict[str, Any]]:
