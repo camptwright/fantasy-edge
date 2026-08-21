@@ -12,22 +12,29 @@ keeps them correct from both the FastAPI process (one persistent event
 loop) and a Celery task (fresh event loop per invocation) - do not add a
 global/cached Redis client here.
 
-SCOPE NOTE (Task 6, Steps 1-4 only): `poll_team_markets`'s event-parsing
-body and its `_match_game`/`_rows_for` helpers are deliberately not
-implemented in this module yet. The Odds API's spread-sign convention has to
-be checked against a captured live payload before it can be trusted - ESPN's
-and nflverse's ingestion each hit a mirrored-sign bug from trusting
-documentation over a real response, and that fixture capture costs one of
-the 500 free monthly requests. That capture and the parsing it unlocks are
-Task 6 Step 5, done separately. Only the quota guard - fully specifiable and
-testable offline with fakeredis, no network call required - is implemented
-here.
+Verified 2026-08-21 against a live fixture (tests/fixtures/theodds_nfl.json,
+one request against the 500/month budget): the historical endpoint is
+restricted to paid plans and billed at ten times the cost of current odds,
+so this module polls current odds only. Player props are billed per
+market-region combination and are not fetched here; Underdog is the props
+source.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Any
+
+import httpx
 from redis.asyncio import Redis
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from config.settings import get_settings
+from src.ingest.identity import resolve_team
+from src.ingest.lines import record_team_line
+from src.ingest.runs import record_run
+from src.models.facts import Game
 
 SOURCE = "theodds"
 QUOTA_KEY = "odds_api:quota_exhausted"
@@ -47,14 +54,136 @@ async def clear_quota_exhausted(redis: Redis) -> None:
 
 
 async def poll_team_markets(db: AsyncSession, redis: Redis) -> int:
-    """Poll h2h, spreads, and totals. Returns rows written.
+    """Poll h2h, spreads, and totals. Returns rows written."""
+    settings = get_settings()
+    if not settings.odds_api_key:
+        return 0
+    if await is_quota_exhausted(redis):
+        return 0
 
-    NOT YET IMPLEMENTED. Event parsing (`_match_game`, `_rows_for`) depends
-    on a live fixture captured from The Odds API to verify the spread-sign
-    convention before it's trusted - see the module docstring's SCOPE NOTE
-    and task-6-brief.md Step 5.
-    """
-    raise NotImplementedError(
-        "poll_team_markets is implemented in Task 6 Step 5, after a live "
-        "fixture verifies The Odds API's spread-sign convention"
+    async with record_run(db, SOURCE) as run:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(
+                f"{settings.odds_api_base_url}/sports/americanfootball_nfl/odds",
+                params={
+                    "apiKey": settings.odds_api_key,
+                    "regions": "us",
+                    "markets": "h2h,spreads,totals",
+                    "oddsFormat": "american",
+                },
+            )
+            remaining = response.headers.get("x-requests-remaining")
+            if remaining is not None and int(remaining) < settings.odds_api_quota_floor:
+                await set_quota_exhausted(redis)
+                run.detail = f"quota guard tripped at {remaining} remaining"
+            response.raise_for_status()
+            events = response.json()
+
+        for event in events:
+            game = await _match_game(db, event)
+            if game is None:
+                continue
+            for entry in _rows_for(event):
+                if await record_team_line(
+                    db, game_id=game.id, source=SOURCE, line_type="live", **entry
+                ):
+                    run.rows_written += 1
+        await db.commit()
+        return run.rows_written
+
+
+async def _match_game(db: AsyncSession, event: dict[str, Any]) -> Game | None:
+    """The Odds API identifies teams by full display name, not abbreviation."""
+    home_name, away_name = event.get("home_team"), event.get("away_team")
+    commence = event.get("commence_time")
+    if not home_name or not away_name or not commence:
+        return None
+
+    try:
+        home = await resolve_team(db, home_name)
+        away = await resolve_team(db, away_name)
+    except LookupError:
+        return None
+    kickoff = datetime.fromisoformat(str(commence).replace("Z", "+00:00"))
+
+    # CONSTRAINT #2: game_time is nullable, so a bare range comparison would
+    # silently drop fixtures published without a kickoff time. Match on the
+    # team pair first and only narrow by time when both sides have one.
+    candidates = list(
+        (
+            await db.execute(
+                select(Game).where(
+                    Game.home_team_id == home.id, Game.away_team_id == away.id
+                )
+            )
+        ).scalars()
     )
+    if not candidates:
+        return None
+    timed = [
+        game
+        for game in candidates
+        if game.game_time is not None
+        and abs((game.game_time - kickoff).total_seconds()) < 86400
+    ]
+    if timed:
+        return timed[0]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _rows_for(event: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten one event's bookmaker blocks into line rows.
+
+    Response shape: event.bookmakers[].markets[].outcomes[], where an outcome
+    carries `name`, `price`, and - for spreads and totals - `point`. Team
+    outcomes are named by full team name; totals outcomes are named Over and
+    Under.
+
+    Only the first bookmaker is taken. Storing every book would multiply row
+    volume without helping: this feed exists to corroborate ESPN, and a
+    consensus across books is a modelling decision for Plan 2, not an
+    ingestion one.
+
+    SIGN: verified 2026-08-21 against a live fixture
+    (tests/fixtures/theodds_nfl.json, event 0 - Seahawks -3.5/-185 favourite
+    over the Patriots +3.5/+154). The Odds API publishes each side's own
+    handicap already in sportsbook convention - the favourite's `point` is
+    negative - which matches the storage convention directly, so no
+    negation is applied here.
+    """
+    bookmakers = event.get("bookmakers") or []
+    if not bookmakers:
+        return []
+
+    home_name, away_name = event.get("home_team"), event.get("away_team")
+    rows: list[dict[str, Any]] = []
+
+    for market in bookmakers[0].get("markets") or []:
+        key = market.get("key")
+        for outcome in market.get("outcomes") or []:
+            name = outcome.get("name")
+            price = outcome.get("price")
+            point = outcome.get("point")
+
+            if key == "h2h" and name in (home_name, away_name):
+                rows.append({
+                    "market": "moneyline",
+                    "side": "home" if name == home_name else "away",
+                    "line": None,
+                    "price_american": None if price is None else int(price),
+                })
+            elif key == "spreads" and name in (home_name, away_name):
+                rows.append({
+                    "market": "spread",
+                    "side": "home" if name == home_name else "away",
+                    "line": None if point is None else float(point),
+                    "price_american": None if price is None else int(price),
+                })
+            elif key == "totals" and name in ("Over", "Under"):
+                rows.append({
+                    "market": "total",
+                    "side": name.lower(),
+                    "line": None if point is None else float(point),
+                    "price_american": None if price is None else int(price),
+                })
+    return rows
