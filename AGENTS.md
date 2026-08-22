@@ -6,8 +6,8 @@ A self-hosted sports betting value engine and fantasy optimizer: it prices bets
 by comparing model win probabilities (ELO + Dixon-Coles Poisson + XGBoost/
 LightGBM ensemble) against vig-removed sportsbook odds, sizes them with
 quarter-Kelly, and runs a DFS lineup optimizer (PuLP) plus season-long
-start/sit and waiver tools. It runs as a 7-container Docker Compose stack
-(postgres, redis, api, worker, beat, flower, dashboard) on Proxmox LXC CT 100,
+start/sit and waiver tools. It runs as a 6-container Docker Compose stack
+(postgres, redis, api, worker, beat, dashboard) on Proxmox LXC CT 100,
 and is consumed read-only over the network by homelab-dashboard's Fantasy tile
 and Adjutant's `fantasy` sub-agent via `/props`, `/games`, `/rankings`, etc. —
 nothing here needs to change for them, but a response-shape change affects both.

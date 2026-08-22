@@ -78,12 +78,6 @@ services:
     command: ["celery", "-A", "src.scheduler.celery_app", "beat", "--loglevel=info"]
     mem_limit: 256m
 
-  flower:
-    <<: *app
-    command: ["celery", "-A", "src.scheduler.celery_app", "flower", "--port=5555"]
-    ports: ["5555:5555"]
-    mem_limit: 256m
-
   dashboard:
     build:
       context: ./dashboard

@@ -49,7 +49,7 @@ Created with `nesting=1,keyctl=1` (Docker-in-LXC), `net0 ip6=auto` (never
    docker compose run --rm -T api python -m scripts.train_models --sport nfl --seasons 2023 2024
    ```
 7. Verify: `curl http://192.168.8.140/api/health`, `curl http://192.168.8.140/`
-   (dashboard), `curl -u admin:<flower-password> http://192.168.8.140/flower/`.
+   (dashboard).
 
 ## Redeploying after a code change
 
@@ -62,10 +62,10 @@ line after any schema change.
 
 ## Operational notes
 
-- **RAM budget**: compose `mem_limit`s sum to ~4.7GB against the container's
-  4GB (see CLAUDE.md) — fine idle, trim before all seven services run
-  simultaneously under load. `docker compose ps` + `docker stats` are the
-  first check if something OOMs.
+- **RAM budget**: compose `mem_limit`s sum against the container's 4GB (see
+  CLAUDE.md) — fine idle, trim before all services run simultaneously under
+  load. `docker compose ps` + `docker stats` are the first check if
+  something OOMs.
 - **Backups**: `/usr/local/bin/fantasy-edge-backup.sh` runs at 05:00 daily
   via cron, `pg_dump`s to `/opt/backups/fantasy-edge/`, keeps 7 days. It does
   NOT back up `/mnt/data/fantasy-edge/models` — those are regenerable via
@@ -73,5 +73,3 @@ line after any schema change.
 - **Logs**: `docker compose logs worker -f` is the first move for anything
   Celery-related — constraint #1 violations show up there as asyncio/
   connection errors, not as a crash.
-- **Flower** (`/flower/`, basic-auth) is the Celery task monitor — check it
-  before assuming a scheduled tick silently isn't running.
