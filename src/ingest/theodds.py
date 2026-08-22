@@ -76,7 +76,21 @@ async def poll_team_markets(db: AsyncSession, redis: Redis) -> int:
             if remaining is not None and int(remaining) < settings.odds_api_quota_floor:
                 await set_quota_exhausted(redis)
                 run.detail = f"quota guard tripped at {remaining} remaining"
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                # httpx.HTTPStatusError's message embeds the full request
+                # URL, including the apiKey query parameter - letting it
+                # propagate unchanged would write the live API key straight
+                # into ingestion_runs.detail, an ordinary application table
+                # with no secret protection, on any failed request (a bad
+                # key, rate limiting, a transient 5xx). `from None` also
+                # severs exception chaining so nothing downstream can
+                # recover the original exception's request/URL via
+                # __cause__/__context__.
+                raise RuntimeError(
+                    f"Odds API request failed: {exc.response.status_code}"
+                ) from None
             events = response.json()
 
         for event in events:
