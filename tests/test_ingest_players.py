@@ -45,6 +45,45 @@ async def test_resolve_player_returns_none_for_ambiguous_name(db):
     assert result is None, "an ambiguous name must resolve to None, never a guess"
 
 
+async def test_resolve_player_suffix_fallback_matches_a_unique_player(db):
+    """Live Underdog data (Task 7) showed real, unique, unambiguous players
+    going unresolved purely because the exact-string match doesn't account
+    for a suffix one provider includes and another drops - e.g. Underdog's
+    "Deebo Samuel" against nflverse's "Deebo Samuel Sr.". The exact match
+    finds zero candidates, so the zero-candidate fallback retries through
+    normalize_player_name(), which already exists to collapse exactly this
+    kind of provider disagreement (see its own docstring)."""
+    player = Player(full_name="Deebo Samuel Sr.", position="WR")
+    db.add(player)
+    await db.flush()
+
+    result = await resolve_player(
+        db, source="underdog", external_id="udg-deebo-1", full_name="Deebo Samuel"
+    )
+    assert result is not None, "a suffix-only mismatch must resolve via normalize_player_name"
+    assert result.id == player.id
+
+
+async def test_resolve_player_ambiguous_exact_match_is_unaffected_by_suffix_fallback(db):
+    """The suffix fallback only fires when the exact-string match finds ZERO
+    candidates. Two players sharing the exact same full_name (no suffix
+    difference at all - the Josh Allen shape) must still park, because the
+    exact match already finds more than one row and the fallback branch is
+    never reached."""
+    db.add_all(
+        [
+            Player(full_name="Test Ambiguous Name", position="QB"),
+            Player(full_name="Test Ambiguous Name", position="DE"),
+        ]
+    )
+    await db.flush()
+
+    result = await resolve_player(
+        db, source="underdog", external_id="udg-ambiguous-1", full_name="Test Ambiguous Name"
+    )
+    assert result is None, "an exact-match collision must still park, fallback must not apply"
+
+
 async def test_resolve_player_is_stable_across_calls(db):
     await ingest_players(db)
     known = await db.scalar(select(Player).where(Player.gsis_id.isnot(None)).limit(1))

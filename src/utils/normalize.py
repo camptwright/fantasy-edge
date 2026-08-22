@@ -100,6 +100,7 @@ STAT_ALIASES: dict[str, str] = {
     "triple double": "triple_double",
     # football
     "pass yds": "passing_yards",
+    "pass yards": "passing_yards",
     "passing yards": "passing_yards",
     "pass tds": "passing_touchdowns",
     "passing tds": "passing_touchdowns",
@@ -115,6 +116,7 @@ STAT_ALIASES: dict[str, str] = {
     "interceptions thrown": "interceptions_thrown",
     "int": "interceptions_thrown",
     "rush yds": "rushing_yards",
+    "rush yards": "rushing_yards",
     "rushing yards": "rushing_yards",
     "rush attempts": "rushing_attempts",
     "carries": "rushing_attempts",

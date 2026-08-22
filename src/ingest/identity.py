@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.identity import Player, PlayerExternalId, Team
+from src.utils.normalize import normalize_player_name
 
 _ALIAS_PATH = Path(__file__).resolve().parents[2] / "config" / "team_aliases" / "nfl.yaml"
 
@@ -98,6 +99,19 @@ async def resolve_player(
             await db.execute(select(Player).where(Player.full_name == full_name))
         ).scalars()
     )
+    if not candidates:
+        # Exact match found nothing. Suffixes are the known gap
+        # (normalize_player_name's own docstring: "Ken Griffey Jr." vs
+        # "Ken Griffey" - same person, different provider conventions).
+        # Only retried on a ZERO-candidate miss, never added to an
+        # already-ambiguous multi-candidate result, so this cannot widen
+        # the Josh Allen collision case - it only recovers exact matches
+        # that differ purely by a suffix.
+        target = normalize_player_name(full_name)
+        all_players = (await db.execute(select(Player))).scalars().all()
+        candidates = [
+            p for p in all_players if normalize_player_name(p.full_name) == target
+        ]
     if position is not None:
         candidates = [c for c in candidates if c.position == position] or candidates
 
