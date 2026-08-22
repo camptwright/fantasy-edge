@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime, time, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,7 @@ from src.models.facts import Game, TeamMarketLine
 
 CLOSING = "closing"
 SOURCE = "nflverse"
+_EASTERN = ZoneInfo("America/New_York")
 
 
 def _nflreadpy() -> Any:
@@ -51,21 +53,27 @@ def _number(value: Any) -> float | None:
 
 
 def _kickoff(record: dict[str, Any]) -> datetime | None:
-    """CONSTRAINT #2: game_time stays null when the source has no time."""
+    """CONSTRAINT #2: game_time stays null when the source has no time.
+
+    nflverse's own dictionary: "gametime... is represented in 24-hour time
+    and the Eastern time zone, regardless of what time zone the game was
+    being played in." Must be interpreted as Eastern LOCAL time and
+    converted to UTC - a fixed offset is wrong because the season spans
+    the November DST transition (verified live 2026-08-22: the 2025
+    season-opener, a real 8:20 PM ET kickoff, was stored as 20:20 UTC
+    before this fix - four hours early).
+    """
     gameday = record.get("gameday")
     if not gameday:
         return None
     gametime = record.get("gametime")
+    date_part = datetime.fromisoformat(str(gameday)).date()
     if not gametime:
-        return datetime.combine(
-            datetime.fromisoformat(str(gameday)).date(), time(0, 0), tzinfo=timezone.utc
-        )
+        eastern_midnight = datetime.combine(date_part, time(0, 0), tzinfo=_EASTERN)
+        return eastern_midnight.astimezone(timezone.utc)
     hour, minute = (int(part) for part in str(gametime).split(":")[:2])
-    return datetime.combine(
-        datetime.fromisoformat(str(gameday)).date(),
-        time(hour, minute),
-        tzinfo=timezone.utc,
-    )
+    eastern_kickoff = datetime.combine(date_part, time(hour, minute), tzinfo=_EASTERN)
+    return eastern_kickoff.astimezone(timezone.utc)
 
 
 def _closing_lines(record: dict[str, Any]) -> list[dict[str, Any]]:
