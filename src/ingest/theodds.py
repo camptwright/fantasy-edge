@@ -142,7 +142,14 @@ async def _match_game(db: AsyncSession, event: dict[str, Any]) -> Game | None:
     ]
     if timed:
         return timed[0]
-    return candidates[0] if len(candidates) == 1 else None
+    # No candidate matched the time window. Only trust an unconditional
+    # single match when its game_time is unknown (None) - a known,
+    # mismatched kickoff means this candidate is almost certainly a
+    # different season's fixture for the same team pair (division rivals
+    # recur every season), and attaching current odds to it would silently
+    # corrupt that game's line history.
+    untimed = [game for game in candidates if game.game_time is None]
+    return untimed[0] if len(untimed) == 1 else None
 
 
 def _rows_for(event: dict[str, Any]) -> list[dict[str, Any]]:
