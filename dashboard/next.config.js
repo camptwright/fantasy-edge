@@ -4,11 +4,10 @@
 //
 // The rewrite below is a fallback, not the primary path: CONSTRAINT #11's
 // system nginx already proxies /api/ -> the FastAPI container for the
-// whole LXC (it also fronts /flower/, which this app doesn't touch). This
-// rewrite exists so the dashboard is independently functional if hit
-// directly on :3000 - `API_INTERNAL_URL` defaults to the Docker Compose
-// service DNS name, which resolves on the shared `fantasy` network with no
-// extra config.
+// whole LXC. This rewrite exists so the dashboard is independently
+// functional if hit directly on :3000 - `API_INTERNAL_URL` defaults to the
+// Docker Compose service DNS name, which resolves on the shared `fantasy`
+// network with no extra config.
 const API_INTERNAL_URL = process.env.API_INTERNAL_URL || "http://api:8000";
 
 const nextConfig = {

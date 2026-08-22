@@ -44,18 +44,6 @@ chown -R 1001:1001 "$DATA_DIR/models" "$DATA_DIR/logs"
 mkdir -p "$BACKUP_DIR"
 
 echo "==> nginx site config (CONSTRAINT #11: system nginx, not containerized)"
-FLOWER_HTPASSWD=/etc/nginx/.htpasswd-flower
-if [ ! -f "$FLOWER_HTPASSWD" ]; then
-  if [ -z "${FLOWER_BASIC_AUTH_PASSWORD:-}" ]; then
-    FLOWER_BASIC_AUTH_PASSWORD=$(openssl rand -base64 18)
-    echo "Generated Flower basic-auth password (save this - not printed again):"
-    echo "  user=admin password=$FLOWER_BASIC_AUTH_PASSWORD"
-  fi
-  htpasswd -cb "$FLOWER_HTPASSWD" admin "$FLOWER_BASIC_AUTH_PASSWORD"
-else
-  echo "htpasswd file already exists, leaving credentials as-is"
-fi
-
 cat >/etc/nginx/sites-available/fantasy-edge <<'NGINX'
 server {
     listen 80 default_server;
@@ -73,13 +61,6 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
     }
 
-    location /flower/ {
-        auth_basic "Fantasy Edge - Flower";
-        auth_basic_user_file /etc/nginx/.htpasswd-flower;
-        proxy_pass http://127.0.0.1:5555/;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
 }
 NGINX
 
