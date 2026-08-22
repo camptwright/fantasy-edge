@@ -13,7 +13,7 @@ import uuid
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.facts import TeamMarketLine
+from src.models.facts import PlayerPropLine, TeamMarketLine
 
 
 async def record_team_line(
@@ -68,6 +68,51 @@ async def record_team_line(
             price_american=price_american,
             source=source,
             line_type=line_type,
+        )
+    )
+    await db.flush()
+    return True
+
+
+async def record_prop_line(
+    db: AsyncSession,
+    *,
+    player_id: uuid.UUID,
+    game_id: uuid.UUID | None,
+    stat_type: str,
+    line: float,
+    over_price_american: int | None,
+    under_price_american: int | None,
+    source: str,
+) -> bool:
+    """Write a prop observation only if it differs from the most recent one."""
+    latest = await db.scalar(
+        select(PlayerPropLine)
+        .where(
+            PlayerPropLine.player_id == player_id,
+            PlayerPropLine.stat_type == stat_type,
+            PlayerPropLine.source == source,
+        )
+        .order_by(desc(PlayerPropLine.observed_at))
+        .limit(1)
+    )
+    if (
+        latest is not None
+        and latest.line == line
+        and latest.over_price_american == over_price_american
+        and latest.under_price_american == under_price_american
+    ):
+        return False
+
+    db.add(
+        PlayerPropLine(
+            player_id=player_id,
+            game_id=game_id,
+            stat_type=stat_type,
+            line=line,
+            over_price_american=over_price_american,
+            under_price_american=under_price_american,
+            source=source,
         )
     )
     await db.flush()

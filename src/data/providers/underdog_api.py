@@ -113,6 +113,10 @@ def raw_lines_to_props(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 "sport": sport,
                 "source": "underdog",
                 "player_name": player_name,
+                # Stable per-player identifier for the crosswalk. Names are
+                # not unique (two active Josh Allens), so this is what
+                # resolve_player keys on.
+                "underdog_player_id": str(player.get("id") or ""),
                 # No `teams` array in this payload - team_id can't be
                 # resolved to a name here, so game_id matching in
                 # props_agent falls back to player-only resolution.
