@@ -223,10 +223,23 @@ async def props_best(sport: str | None = Query(default=None), db: AsyncSession =
 
 
 async def signal_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]]:
+    """Only games that haven't been decided yet are real, bettable signals.
+
+    FOUND LIVE 2026-09-04: nflverse's historical closing-line ingestion
+    (src/ingest/nflverse.py, meant for backtesting - see that module's own
+    "closing-line value" docstring) writes a TeamMarketLine row for every
+    game in a season, finished or not. Without this filter, a finalized
+    January game got priced with TODAY's team rating - a rating that
+    already includes that exact game's own outcome - producing a 235% "EV"
+    on a highly-favored team's underdog opponent. That isn't miscalibration,
+    it's lookahead bias: the model was shown the answer before "predicting"
+    it. Excluding final games fixes /signals, /parlays, /parlays/build, and
+    the recommendations narrative all at once, since they all call this.
+    """
     stmt = (
         select(TeamMarketLine, Game)
         .join(Game, TeamMarketLine.game_id == Game.id)
-        .where(TeamMarketLine.market.in_(_MODELED_MARKETS))
+        .where(TeamMarketLine.market.in_(_MODELED_MARKETS), Game.status != "final")
     )
     if sport is not None:
         stmt = stmt.where(Game.sport == sport)

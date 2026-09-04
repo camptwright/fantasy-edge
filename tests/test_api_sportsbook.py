@@ -129,6 +129,38 @@ async def test_signals_and_rankings_reflect_elo_ratings(db):
         app.dependency_overrides.clear()
 
 
+async def test_signals_exclude_games_that_have_already_finished(db):
+    """FOUND LIVE 2026-09-04: nflverse's historical closing-line ingestion
+    writes a TeamMarketLine row for every game in a season, decided or not.
+    Without this exclusion, a finished game gets priced with TODAY's team
+    rating - which already includes that exact game's own outcome - and
+    produced a real 235% "EV" on a heavy underdog. That's lookahead bias,
+    not an uncalibrated model, and it's fixed once at the source
+    (signal_rows), not per-endpoint."""
+    home = await resolve_team(db, "Kansas City Chiefs")
+    away = await resolve_team(db, "Los Angeles Chargers")
+    db.add(TeamRating(team_id=home.id, sport="nfl", rating=1600.0))
+    db.add(TeamRating(team_id=away.id, sport="nfl", rating=1400.0))
+    game = Game(
+        sport="nfl", espn_event_id="signal-test-final", season=2026,
+        home_team_id=home.id, away_team_id=away.id, status="final",
+        home_score=30, away_score=10,
+    )
+    db.add(game)
+    await db.flush()
+    now = datetime.now(timezone.utc)
+    db.add(TeamMarketLine(game_id=game.id, market="moneyline", side="home", price_american=-150, source="nflverse", line_type="closing", observed_at=now))
+    db.add(TeamMarketLine(game_id=game.id, market="moneyline", side="away", price_american=130, source="nflverse", line_type="closing", observed_at=now))
+    await db.commit()
+
+    client = await _client(db)
+    try:
+        response = await client.get("/signals?sport=nfl")
+        assert response.json() == [], "a decided game must never appear as a live signal"
+    finally:
+        app.dependency_overrides.clear()
+
+
 async def test_rankings_rejects_an_unsupported_sport(db):
     client = await _client(db)
     try:
