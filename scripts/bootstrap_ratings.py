@@ -59,10 +59,23 @@ async def _bootstrap_ncaaf(seasons: list[int]) -> None:
     """Weekly date windows, not one season-wide range - see sync_scoreboard's
     own docstring on why. Regular season runs late August through early
     December; conference championships and bowls run through early January
-    of the following year."""
+    of the following year.
+
+    BUG FOUND LIVE 2026-09-04: the 7-day stride must land on a Saturday -
+    that's the whole premise of sampling once a week for a Saturday-
+    concentrated sport. A raw `date(season, 8, 20)` anchor doesn't
+    guarantee that (8/20/2025 is a Wednesday), and stepping by exactly 7
+    days from a non-Saturday start never once touches a Saturday for the
+    entire loop. Verified against a real backfill: it produced an average
+    of 1.4 games per team (max 3) across a full season, versus MLB/NBA/NHL
+    landing 89-195 games per team the same run - proof this had been
+    silently sampling almost nothing, not "nearly every game" as the
+    comment below claims. Advancing `start` to the next Saturday on or
+    after Aug 20 fixes it."""
     async with get_worker_db() as db:
         for season in seasons:
             start = date(season, 8, 20)
+            start += timedelta(days=(5 - start.weekday()) % 7)  # next Saturday (weekday 5)
             end = date(season + 1, 1, 20)
             current = start
             while current <= end:
