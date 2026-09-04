@@ -19,6 +19,7 @@ EXPECTED_TABLES = {
     "sleeper_rosters",
     "sleeper_league_snapshots",
     "team_ratings",
+    "recommendation_snapshots",
 }
 
 

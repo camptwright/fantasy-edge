@@ -20,15 +20,17 @@ client.
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from pydantic import BaseModel
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import get_settings
 from src.db.client import get_db
 from src.models.facts import Game, PlayerPropLine, TeamMarketLine
+from src.models.governance import RecommendationSnapshot
 from src.models.identity import Player, Team
 from src.models.ratings import TeamRating
 from src.services.elo import moneyline_probability, spread_cover_probability
@@ -38,6 +40,7 @@ from src.utils.normalize import normalize_player_name
 from src.utils.odds_math import (
     american_to_decimal,
     american_to_implied,
+    decimal_to_american,
     expected_value_percent,
     remove_vig_two_way,
 )
@@ -121,7 +124,7 @@ def _emit_pair_rows(
         )
 
 
-async def _prop_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]]:
+async def prop_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]]:
     stmt = select(PlayerPropLine, Player).join(Player, PlayerPropLine.player_id == Player.id)
     if sport is not None:
         stmt = stmt.where(Player.sport == sport)
@@ -143,11 +146,20 @@ async def _prop_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]
     for prop, player in rows:
         projected = projections.get((player.id, prop.stat_type))
         projection_value = projected[0] if projected is not None else None
+        model_probability = None
+        under_model_probability = None
         edge_percent = None
-        if projected is not None and prop.over_price_american is not None:
+        under_edge_percent = None
+        if projected is not None:
             mean, stddev = projected
-            over_prob = over_probability(mean, stddev, prop.line)
-            edge_percent = round(expected_value_percent(over_prob, prop.over_price_american), 2)
+            model_probability = over_probability(mean, stddev, prop.line)
+            under_model_probability = 1.0 - model_probability
+            if prop.over_price_american is not None:
+                edge_percent = round(expected_value_percent(model_probability, prop.over_price_american), 2)
+            if prop.under_price_american is not None:
+                under_edge_percent = round(
+                    expected_value_percent(under_model_probability, prop.under_price_american), 2
+                )
 
         out.append(
             {
@@ -172,6 +184,14 @@ async def _prop_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]
                 # projections.py) - never fabricated in the meantime.
                 "projection": round(projection_value, 2) if projection_value is not None else None,
                 "edge_percent": edge_percent,
+                # Added for the custom parlay builder (POST /parlays/build),
+                # which needs a real per-side probability to price an
+                # "Under" leg, not just the over side /props/best already
+                # ranked by. Additive fields only - over_price_american/
+                # edge_percent/projection keep their original meaning.
+                "model_probability": round(model_probability, 4) if model_probability is not None else None,
+                "under_model_probability": round(under_model_probability, 4) if under_model_probability is not None else None,
+                "under_edge_percent": under_edge_percent,
                 "captured_at": prop.observed_at.isoformat(),
             }
         )
@@ -180,7 +200,7 @@ async def _prop_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]
 
 @router.get("/props")
 async def props(sport: str | None = Query(default=None), db: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
-    return await _prop_rows(db, sport)
+    return await prop_rows(db, sport)
 
 
 @router.get("/props/best")
@@ -189,7 +209,7 @@ async def props_best(sport: str | None = Query(default=None), db: AsyncSession =
     (src/services/projections.py) carry one; the rest are excluded rather
     than sorted in as an implicit zero edge."""
     qualified = sorted(
-        (row for row in await _prop_rows(db, sport) if row["edge_percent"] is not None),
+        (row for row in await prop_rows(db, sport) if row["edge_percent"] is not None),
         key=lambda row: row["edge_percent"],
         reverse=True,
     )[:20]
@@ -202,7 +222,7 @@ async def props_best(sport: str | None = Query(default=None), db: AsyncSession =
     return {"items": qualified}
 
 
-async def _signal_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]]:
+async def signal_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]]:
     stmt = (
         select(TeamMarketLine, Game)
         .join(Game, TeamMarketLine.game_id == Game.id)
@@ -329,7 +349,7 @@ async def _signal_rows(db: AsyncSession, sport: str | None) -> list[dict[str, An
 
 @router.get("/signals")
 async def signals(sport: str | None = Query(default=None), db: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
-    return await _signal_rows(db, sport)
+    return await signal_rows(db, sport)
 
 
 @router.get("/odds/{game_id}/history")
@@ -411,7 +431,7 @@ async def parlays(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     correlation awareness here would be worse than being explicit about not
     having it yet.
     """
-    all_signals = await _signal_rows(db, sport=None)
+    all_signals = await signal_rows(db, sport=None)
     legs = sorted(
         (s for s in all_signals if s["price_american"] is not None),
         key=lambda s: s["ev_percent"],
@@ -430,3 +450,120 @@ async def parlays(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
         "independent_legs_assumption": True,
         "note": "legs assumed independent - no correlated joint-distribution model yet",
     }
+
+
+class ParlayLegRequest(BaseModel):
+    kind: Literal["signal", "prop"]
+    id: uuid.UUID
+    # Only meaningful for a prop leg (a signal row is already one specific
+    # side); defaults to "over" if omitted rather than rejecting the request.
+    side: Literal["over", "under"] | None = None
+
+
+class ParlayBuildRequest(BaseModel):
+    legs: list[ParlayLegRequest]
+
+
+@router.post("/parlays/build")
+async def build_parlay(request: ParlayBuildRequest, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Combine specific user-picked legs (signals and/or props, either
+    side of a prop) into one parlay - unlike /parlays' own top-3-by-EV
+    auto-pick, this prices exactly what the caller selected. Still assumes
+    independence between legs, the same disclosed simplification /parlays
+    already carries.
+
+    A leg that doesn't resolve (unknown id, or the market has no price/no
+    qualified projection yet) is reported in skipped_legs, never silently
+    dropped or priced with a guessed number.
+    """
+    signals_by_id = {row["id"]: row for row in await signal_rows(db, sport=None)}
+    props_by_id = {row["id"]: row for row in await prop_rows(db, sport=None)}
+
+    resolved: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+
+    for leg in request.legs:
+        leg_id = str(leg.id)
+        if leg.kind == "signal":
+            row = signals_by_id.get(leg_id)
+            if row is None or row["price_american"] is None:
+                skipped.append({"kind": "signal", "id": leg_id, "reason": "not found or unpriced"})
+                continue
+            resolved.append(
+                {
+                    "kind": "signal",
+                    "id": leg_id,
+                    "sport": row["sport"],
+                    "context": row["matchup"],
+                    "selection": row["selection"],
+                    "price_american": row["price_american"],
+                    "model_probability": row["model_probability"],
+                    "fair_probability": row["fair_probability"],
+                }
+            )
+            continue
+
+        row = props_by_id.get(leg_id)
+        if row is None:
+            skipped.append({"kind": "prop", "id": leg_id, "reason": "not found"})
+            continue
+        side = leg.side or "over"
+        if side == "over":
+            price, probability = row["over_price_american"], row["model_probability"]
+        else:
+            price, probability = row["under_price_american"], row["under_model_probability"]
+        if price is None or probability is None:
+            skipped.append({"kind": "prop", "id": leg_id, "side": side, "reason": "not qualified or unpriced"})
+            continue
+        resolved.append(
+            {
+                "kind": "prop",
+                "id": leg_id,
+                "sport": row["sport"],
+                "context": row["player_name"],
+                "selection": f"{row['player_name']} {side.capitalize()} {row['line']} {row['stat_type']}",
+                "price_american": price,
+                "model_probability": probability,
+                "fair_probability": None,
+            }
+        )
+
+    if not resolved:
+        return {
+            "legs": [],
+            "combined_probability": None,
+            "combined_price_american": None,
+            "skipped_legs": skipped,
+            "independent_legs_assumption": True,
+            "note": "no requested legs resolved to a priced signal or prop",
+        }
+
+    combined_probability = 1.0
+    combined_decimal = 1.0
+    for resolved_leg in resolved:
+        combined_probability *= resolved_leg["model_probability"]
+        combined_decimal *= american_to_decimal(resolved_leg["price_american"])
+
+    return {
+        "legs": resolved,
+        "combined_probability": round(combined_probability, 4),
+        "combined_price_american": decimal_to_american(combined_decimal),
+        "skipped_legs": skipped,
+        "independent_legs_assumption": True,
+        "note": "legs assumed independent - no correlated joint-distribution model yet",
+    }
+
+
+@router.get("/recommendations")
+async def recommendations(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """The latest cached LLM narrative (src/services/recommendations.py),
+    generated on a Celery schedule - never computed live in this request. A
+    real generation call through this stack's local Ollama model takes
+    ~78s, so this is always a fast read of the most recent
+    RecommendationSnapshot row, not an LLM call."""
+    snapshot = await db.scalar(
+        select(RecommendationSnapshot).order_by(desc(RecommendationSnapshot.generated_at)).limit(1)
+    )
+    if snapshot is None:
+        return {"narrative": None, "generated_at": None, "note": "no recommendation generated yet"}
+    return {"narrative": snapshot.narrative, "generated_at": snapshot.generated_at.isoformat()}

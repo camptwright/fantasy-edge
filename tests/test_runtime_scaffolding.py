@@ -20,6 +20,7 @@ def test_celery_schedule_covers_every_ingestion_source():
         "fantasy.check_data_health",
         "fantasy.sync_mlb",
         "fantasy.sync_nhl",
+        "fantasy.generate_recommendations",
     }
 
 

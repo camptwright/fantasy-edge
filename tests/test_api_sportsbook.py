@@ -257,6 +257,11 @@ async def test_props_carries_a_real_projection_once_qualified(db):
         # Line (200) is well below the 262.5 mean - the over should carry a
         # positive edge.
         assert row["edge_percent"] > 0
+        # The under's own probability/edge (added for the parlay builder,
+        # POST /parlays/build) must be the complement, not a repeat of the
+        # over side's numbers.
+        assert row["model_probability"] + row["under_model_probability"] == pytest.approx(1.0)
+        assert row["under_edge_percent"] < 0
 
         best_response = await client.get("/props/best?sport=nfl")
         best = best_response.json()
@@ -282,5 +287,105 @@ async def test_odds_history_404s_for_an_unknown_game(db):
     try:
         response = await client.get("/odds/00000000-0000-0000-0000-000000000000/history")
         assert response.status_code == 404
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_recommendations_reports_the_gap_when_nothing_has_been_generated(db):
+    client = await _client(db)
+    try:
+        response = await client.get("/recommendations")
+        body = response.json()
+        assert body["narrative"] is None
+        assert body["generated_at"] is None
+        assert "no recommendation generated yet" in body["note"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_recommendations_returns_the_latest_snapshot(db):
+    from src.models.governance import RecommendationSnapshot
+
+    db.add(RecommendationSnapshot(narrative="Older narrative.", generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc)))
+    db.add(RecommendationSnapshot(narrative="Newest narrative.", generated_at=datetime(2026, 1, 2, tzinfo=timezone.utc)))
+    await db.commit()
+
+    client = await _client(db)
+    try:
+        response = await client.get("/recommendations")
+        body = response.json()
+        assert body["narrative"] == "Newest narrative."
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_build_parlay_combines_a_signal_and_a_prop_leg(db):
+    home = await resolve_team(db, "Kansas City Chiefs")
+    away = await resolve_team(db, "Los Angeles Chargers")
+    db.add(TeamRating(team_id=home.id, sport="nfl", rating=1600.0))
+    db.add(TeamRating(team_id=away.id, sport="nfl", rating=1400.0))
+    game = Game(
+        sport="nfl", espn_event_id="parlay-test-1", season=2026,
+        home_team_id=home.id, away_team_id=away.id, status="scheduled",
+    )
+    db.add(game)
+    await db.flush()
+    now = datetime.now(timezone.utc)
+    db.add(TeamMarketLine(game_id=game.id, market="moneyline", side="home", price_american=-150, source="pinnacle", line_type="live", observed_at=now))
+    db.add(TeamMarketLine(game_id=game.id, market="moneyline", side="away", price_american=130, source="pinnacle", line_type="live", observed_at=now))
+
+    player = Player(sport="nfl", full_name="Parlay Test Player", current_team_id=home.id)
+    db.add(player)
+    await db.flush()
+    for i, value in enumerate([250.0, 275.0, 300.0, 225.0]):
+        stat_game = Game(
+            sport="nfl", espn_event_id=f"parlay-test-stat-{i}", season=2026,
+            home_team_id=home.id, away_team_id=away.id, status="final",
+        )
+        db.add(stat_game)
+        await db.flush()
+        db.add(PlayerGameStat(player_id=player.id, game_id=stat_game.id, stat_type="passing_yards", value=value))
+    prop = PlayerPropLine(
+        player_id=player.id, stat_type="passing_yards", line=200.0,
+        over_price_american=-110, under_price_american=-110,
+        source="underdog", observed_at=now,
+    )
+    db.add(prop)
+    await db.commit()
+
+    client = await _client(db)
+    try:
+        signals_response = await client.get("/signals?sport=nfl")
+        signal_id = next(s["id"] for s in signals_response.json() if s["selection"].startswith("Kansas City"))
+
+        response = await client.post(
+            "/parlays/build",
+            json={"legs": [
+                {"kind": "signal", "id": signal_id},
+                {"kind": "prop", "id": str(prop.id), "side": "over"},
+            ]},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["legs"]) == 2
+        assert body["skipped_legs"] == []
+        assert 0 < body["combined_probability"] < 1
+        assert body["combined_price_american"] is not None
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_build_parlay_skips_an_unknown_leg_instead_of_erroring(db):
+    client = await _client(db)
+    try:
+        response = await client.post(
+            "/parlays/build",
+            json={"legs": [{"kind": "signal", "id": "00000000-0000-0000-0000-000000000099"}]},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["legs"] == []
+        assert len(body["skipped_legs"]) == 1
+        assert body["combined_probability"] is None
     finally:
         app.dependency_overrides.clear()

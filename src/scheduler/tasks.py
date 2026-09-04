@@ -17,8 +17,10 @@ from src.ingest.prizepicks import ingest_props as ingest_prizepicks_props
 from src.ingest.theodds import poll_team_markets
 from src.ingest.underdog import ingest_props
 from src.ingest.sleeper import sync_sleeper_account
+from src.models.governance import RecommendationSnapshot
 from src.scheduler.celery_app import celery_app
 from src.services.reconciliation import run_health_checks
+from src.services.recommendations import generate_narrative
 from src.utils.alerts import notify
 
 
@@ -169,3 +171,25 @@ def check_data_health() -> dict[str, int]:
             )
         )
     return {"issues": len(messages)}
+
+
+@celery_app.task(name="fantasy.generate_recommendations")
+def generate_recommendations() -> dict[str, int]:
+    """Runs the ~78s LLM narrative generation (src/services/
+    recommendations.py) and persists it - the only place this ever runs;
+    GET /recommendations just reads the latest row this writes."""
+
+    async def run() -> int:
+        async with get_worker_db() as db:
+            narrative = await generate_narrative(db)
+            db.add(RecommendationSnapshot(narrative=narrative))
+            await db.commit()
+            return len(narrative)
+
+    try:
+        return {"narrative_length": asyncio.run(run())}
+    except Exception as exc:
+        asyncio.run(
+            notify(f"Recommendation generation failed: {exc}", title="Fantasy Edge: Recommendations")
+        )
+        raise

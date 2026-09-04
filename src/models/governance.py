@@ -74,3 +74,28 @@ class IngestionRun(Base, UUIDPrimaryKey):
     rows_written: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="running", nullable=False)
     detail: Mapped[str | None] = mapped_column(Text)
+
+
+class RecommendationSnapshot(Base, UUIDPrimaryKey):
+    """One row per LLM narrative-generation cycle (src/services/
+    recommendations.py), append-only like team_market_lines - kept for
+    history, not upserted.
+
+    Deliberately carries no reference to which signals/props fed it: the
+    API layer re-fetches live /signals and /props for the actual numbers,
+    and this row's own `generated_at` is what tells a reader how fresh the
+    commentary is - the same explicit-staleness-over-silent-guessing
+    pattern src/services/reconciliation.py's freshness check already uses.
+    One combined narrative across every sport, not one per sport - a real
+    generation call through this stack's local Ollama model took ~78s
+    (verified live 2026-09-04), so five per-sport calls would eat most of
+    a 30-minute beat cycle and contend with the worker's own concurrency
+    limit against every other scheduled task.
+    """
+
+    __tablename__ = "recommendation_snapshots"
+
+    narrative: Mapped[str] = mapped_column(Text, nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )

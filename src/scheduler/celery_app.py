@@ -42,5 +42,10 @@ celery_app.conf.update(
         # individual poller since it only needs to catch a source going
         # stale or two books diverging, not react in real time.
         "check-data-health": {"task": "fantasy.check_data_health", "schedule": 3600.0},
+        # A real generation call through this stack's local Ollama model
+        # takes ~78s (verified live 2026-09-04, no GPU acceleration for a
+        # 9B model on this Mac mini) - same 30-minute cadence as the odds
+        # sources it narrates over, not faster.
+        "generate-recommendations": {"task": "fantasy.generate_recommendations", "schedule": 1800.0},
     },
 )

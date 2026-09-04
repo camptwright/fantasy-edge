@@ -12,6 +12,7 @@ const LINKS = [
   { href: "/fantasy", label: "Fantasy" },
   { href: "/fantasy/matchup", label: "Matchup" },
   { href: "/board", label: "Board" },
+  { href: "/recommendations", label: "Recommendations" },
 ];
 
 export function Nav() {
