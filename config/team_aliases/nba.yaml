@@ -1,0 +1,38 @@
+# NBA team identifiers -> ESPN canonical displayName/id, fetched live
+# against site.api.espn.com's /basketball/nba/teams endpoint on
+# 2026-09-04 - not from memory. Same shape as nfl.yaml/ncaaf.yaml
+# (constraint #24 in CLAUDE.md): every key is quoted because ESPN's own
+# abbreviation for New Orleans is the bare string "NO", which PyYAML's
+# YAML-1.1 safe_load parses as the boolean False unless quoted - the
+# exact bug nfl.yaml's own alias file already hit once for the Saints.
+aliases:
+  "ATL": {espn_name: "Atlanta Hawks", espn_id: "1"}
+  "BKN": {espn_name: "Brooklyn Nets", espn_id: "17"}
+  "BOS": {espn_name: "Boston Celtics", espn_id: "2"}
+  "CHA": {espn_name: "Charlotte Hornets", espn_id: "30"}
+  "CHI": {espn_name: "Chicago Bulls", espn_id: "4"}
+  "CLE": {espn_name: "Cleveland Cavaliers", espn_id: "5"}
+  "DAL": {espn_name: "Dallas Mavericks", espn_id: "6"}
+  "DEN": {espn_name: "Denver Nuggets", espn_id: "7"}
+  "DET": {espn_name: "Detroit Pistons", espn_id: "8"}
+  "GS": {espn_name: "Golden State Warriors", espn_id: "9"}
+  "HOU": {espn_name: "Houston Rockets", espn_id: "10"}
+  "IND": {espn_name: "Indiana Pacers", espn_id: "11"}
+  "LAC": {espn_name: "LA Clippers", espn_id: "12"}
+  "LAL": {espn_name: "Los Angeles Lakers", espn_id: "13"}
+  "MEM": {espn_name: "Memphis Grizzlies", espn_id: "29"}
+  "MIA": {espn_name: "Miami Heat", espn_id: "14"}
+  "MIL": {espn_name: "Milwaukee Bucks", espn_id: "15"}
+  "MIN": {espn_name: "Minnesota Timberwolves", espn_id: "16"}
+  "NO": {espn_name: "New Orleans Pelicans", espn_id: "3"}
+  "NY": {espn_name: "New York Knicks", espn_id: "18"}
+  "OKC": {espn_name: "Oklahoma City Thunder", espn_id: "25"}
+  "ORL": {espn_name: "Orlando Magic", espn_id: "19"}
+  "PHI": {espn_name: "Philadelphia 76ers", espn_id: "20"}
+  "PHX": {espn_name: "Phoenix Suns", espn_id: "21"}
+  "POR": {espn_name: "Portland Trail Blazers", espn_id: "22"}
+  "SA": {espn_name: "San Antonio Spurs", espn_id: "24"}
+  "SAC": {espn_name: "Sacramento Kings", espn_id: "23"}
+  "TOR": {espn_name: "Toronto Raptors", espn_id: "28"}
+  "UTAH": {espn_name: "Utah Jazz", espn_id: "26"}
+  "WSH": {espn_name: "Washington Wizards", espn_id: "27"}

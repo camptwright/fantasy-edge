@@ -1,0 +1,669 @@
+{
+  "data": [
+    {
+      "type": "projection",
+      "id": "13957673",
+      "attributes": {
+        "adjusted_odds": true,
+        "allowed_wager_types": "under_or_over",
+        "board_time": "2026-08-19T20:26:32.498-04:00",
+        "custom_image": null,
+        "description": "SEA",
+        "end_time": null,
+        "event_type": "team",
+        "flash_sale_line_score": null,
+        "game_id": "NFL_game_vZ6B5J0rXESRNW9AcC2Muotr",
+        "group_key": "215664-260-NFL_game_vZ6B5J0rXESRNW9AcC2Muotr-11-false",
+        "in_game": false,
+        "is_live": false,
+        "is_live_scored": true,
+        "is_promo": false,
+        "league_ppid": "NFL",
+        "line_score": 253.5,
+        "odds_type": "standard",
+        "projection_type": "Single Stat",
+        "rank": 18482,
+        "refundable": true,
+        "start_time": "2026-09-09T20:20:00.000-04:00",
+        "stat_display_name": "Pass+Rush Yds",
+        "stat_type": "Pass+Rush Yds",
+        "status": "pre_game",
+        "trending_count": 155,
+        "tv_channel": null,
+        "updated_at": "2026-08-28T17:40:17.532-04:00"
+      },
+      "relationships": {
+        "duration": {
+          "data": {
+            "type": "duration",
+            "id": "11"
+          }
+        },
+        "game": {
+          "data": {
+            "type": "game",
+            "id": "162474"
+          }
+        },
+        "league": {
+          "data": {
+            "type": "league",
+            "id": "9"
+          }
+        },
+        "new_player": {
+          "data": {
+            "type": "new_player",
+            "id": "215664"
+          }
+        },
+        "projection_type": {
+          "data": {
+            "type": "projection_type",
+            "id": "2"
+          }
+        },
+        "score": {
+          "data": null
+        },
+        "stat_type": {
+          "data": {
+            "type": "stat_type",
+            "id": "260"
+          }
+        }
+      }
+    },
+    {
+      "type": "projection",
+      "id": "13957685",
+      "attributes": {
+        "adjusted_odds": true,
+        "allowed_wager_types": "under_or_over",
+        "board_time": "2026-08-19T20:26:33.471-04:00",
+        "custom_image": null,
+        "description": "NE",
+        "end_time": null,
+        "event_type": "team",
+        "flash_sale_line_score": null,
+        "game_id": "NFL_game_vZ6B5J0rXESRNW9AcC2Muotr",
+        "group_key": "246597-260-NFL_game_vZ6B5J0rXESRNW9AcC2Muotr-11-false",
+        "in_game": false,
+        "is_live": false,
+        "is_live_scored": true,
+        "is_promo": false,
+        "league_ppid": "NFL",
+        "line_score": 240.5,
+        "odds_type": "standard",
+        "projection_type": "Single Stat",
+        "rank": 18486,
+        "refundable": true,
+        "start_time": "2026-09-09T20:20:00.000-04:00",
+        "stat_display_name": "Pass+Rush Yds",
+        "stat_type": "Pass+Rush Yds",
+        "status": "pre_game",
+        "tv_channel": null,
+        "updated_at": "2026-08-24T16:58:25.423-04:00"
+      },
+      "relationships": {
+        "duration": {
+          "data": {
+            "type": "duration",
+            "id": "11"
+          }
+        },
+        "game": {
+          "data": {
+            "type": "game",
+            "id": "162474"
+          }
+        },
+        "league": {
+          "data": {
+            "type": "league",
+            "id": "9"
+          }
+        },
+        "new_player": {
+          "data": {
+            "type": "new_player",
+            "id": "246597"
+          }
+        },
+        "projection_type": {
+          "data": {
+            "type": "projection_type",
+            "id": "2"
+          }
+        },
+        "score": {
+          "data": null
+        },
+        "stat_type": {
+          "data": {
+            "type": "stat_type",
+            "id": "260"
+          }
+        }
+      }
+    },
+    {
+      "type": "projection",
+      "id": "12379063",
+      "attributes": {
+        "adjusted_odds": false,
+        "allowed_wager_types": "under_or_over",
+        "board_time": "2026-03-17T09:01:00.000-04:00",
+        "custom_image": null,
+        "description": "SEA",
+        "end_time": null,
+        "event_type": "team",
+        "flash_sale_line_score": null,
+        "game_id": "NFL_game_vZ6B5J0rXESRNW9AcC2Muotr",
+        "group_key": "215664-16-NFL_game_vZ6B5J0rXESRNW9AcC2Muotr-11-false",
+        "in_game": false,
+        "is_live": false,
+        "is_live_scored": true,
+        "is_promo": false,
+        "league_ppid": "NFL",
+        "line_score": 226.5,
+        "odds_type": "standard",
+        "projection_type": "Single Stat",
+        "rank": 18493,
+        "refundable": true,
+        "start_time": "2026-09-09T20:20:00.000-04:00",
+        "stat_display_name": "Pass Yards",
+        "stat_type": "Pass Yards",
+        "status": "pre_game",
+        "trending_count": 8265,
+        "tv_channel": null,
+        "updated_at": "2026-09-02T15:38:23.816-04:00"
+      },
+      "relationships": {
+        "duration": {
+          "data": {
+            "type": "duration",
+            "id": "11"
+          }
+        },
+        "game": {
+          "data": {
+            "type": "game",
+            "id": "162474"
+          }
+        },
+        "league": {
+          "data": {
+            "type": "league",
+            "id": "9"
+          }
+        },
+        "new_player": {
+          "data": {
+            "type": "new_player",
+            "id": "215664"
+          }
+        },
+        "projection_type": {
+          "data": {
+            "type": "projection_type",
+            "id": "2"
+          }
+        },
+        "score": {
+          "data": null
+        },
+        "stat_type": {
+          "data": {
+            "type": "stat_type",
+            "id": "16"
+          }
+        }
+      }
+    },
+    {
+      "type": "projection",
+      "id": "12379450",
+      "attributes": {
+        "adjusted_odds": false,
+        "allowed_wager_types": "under_or_over",
+        "board_time": "2026-03-08T09:01:00.000-04:00",
+        "custom_image": null,
+        "description": "NE",
+        "end_time": null,
+        "event_type": "team",
+        "flash_sale_line_score": null,
+        "game_id": "NFL_game_vZ6B5J0rXESRNW9AcC2Muotr",
+        "group_key": "211247-17-NFL_game_vZ6B5J0rXESRNW9AcC2Muotr-11-false",
+        "in_game": false,
+        "is_live": false,
+        "is_live_scored": true,
+        "is_promo": false,
+        "league_ppid": "NFL",
+        "line_score": 82.5,
+        "odds_type": "standard",
+        "projection_type": "Single Stat",
+        "rank": 18529,
+        "refundable": true,
+        "start_time": "2026-09-09T20:20:00.000-04:00",
+        "stat_display_name": "Rec Yards",
+        "stat_type": "Receiving Yards",
+        "status": "pre_game",
+        "trending_count": 3149,
+        "tv_channel": null,
+        "updated_at": "2026-09-03T18:07:08.823-04:00"
+      },
+      "relationships": {
+        "duration": {
+          "data": {
+            "type": "duration",
+            "id": "11"
+          }
+        },
+        "game": {
+          "data": {
+            "type": "game",
+            "id": "162474"
+          }
+        },
+        "league": {
+          "data": {
+            "type": "league",
+            "id": "9"
+          }
+        },
+        "new_player": {
+          "data": {
+            "type": "new_player",
+            "id": "211247"
+          }
+        },
+        "projection_type": {
+          "data": {
+            "type": "projection_type",
+            "id": "2"
+          }
+        },
+        "score": {
+          "data": null
+        },
+        "stat_type": {
+          "data": {
+            "type": "stat_type",
+            "id": "17"
+          }
+        }
+      }
+    },
+    {
+      "type": "projection",
+      "id": "14095138",
+      "attributes": {
+        "adjusted_odds": false,
+        "allowed_wager_types": "under_or_over",
+        "board_time": "2026-08-31T21:06:00.000-04:00",
+        "custom_image": null,
+        "description": "SEA",
+        "end_time": null,
+        "event_type": "team",
+        "flash_sale_line_score": null,
+        "game_id": "NFL_game_vZ6B5J0rXESRNW9AcC2Muotr",
+        "group_key": "210968-259-NFL_game_vZ6B5J0rXESRNW9AcC2Muotr-11-false",
+        "in_game": false,
+        "is_live": false,
+        "is_live_scored": true,
+        "is_promo": false,
+        "league_ppid": "NFL",
+        "line_score": 66.5,
+        "odds_type": "standard",
+        "projection_type": "Single Stat",
+        "rank": 18544,
+        "refundable": true,
+        "start_time": "2026-09-09T20:20:00.000-04:00",
+        "stat_display_name": "Rush+Rec Yds",
+        "stat_type": "Rush+Rec Yds",
+        "status": "pre_game",
+        "trending_count": 636,
+        "tv_channel": null,
+        "updated_at": "2026-09-03T15:56:27.271-04:00"
+      },
+      "relationships": {
+        "duration": {
+          "data": {
+            "type": "duration",
+            "id": "11"
+          }
+        },
+        "game": {
+          "data": {
+            "type": "game",
+            "id": "162474"
+          }
+        },
+        "league": {
+          "data": {
+            "type": "league",
+            "id": "9"
+          }
+        },
+        "new_player": {
+          "data": {
+            "type": "new_player",
+            "id": "210968"
+          }
+        },
+        "projection_type": {
+          "data": {
+            "type": "projection_type",
+            "id": "2"
+          }
+        },
+        "score": {
+          "data": null
+        },
+        "stat_type": {
+          "data": {
+            "type": "stat_type",
+            "id": "259"
+          }
+        }
+      }
+    },
+    {
+      "type": "projection",
+      "id": "14380036",
+      "attributes": {
+        "adjusted_odds": true,
+        "allowed_wager_types": "under_or_over",
+        "board_time": "2026-08-31T21:06:00.000-04:00",
+        "custom_image": null,
+        "description": "NE",
+        "end_time": null,
+        "event_type": "team",
+        "flash_sale_line_score": null,
+        "game_id": "NFL_game_vZ6B5J0rXESRNW9AcC2Muotr",
+        "group_key": "320307-259-NFL_game_vZ6B5J0rXESRNW9AcC2Muotr-11-false",
+        "in_game": false,
+        "is_live": false,
+        "is_live_scored": true,
+        "is_promo": false,
+        "league_ppid": "NFL",
+        "line_score": 63.5,
+        "odds_type": "standard",
+        "projection_type": "Single Stat",
+        "rank": 18546,
+        "refundable": true,
+        "start_time": "2026-09-09T20:20:00.000-04:00",
+        "stat_display_name": "Rush+Rec Yds",
+        "stat_type": "Rush+Rec Yds",
+        "status": "pre_game",
+        "tv_channel": null,
+        "updated_at": "2026-09-03T21:20:00.717-04:00"
+      },
+      "relationships": {
+        "duration": {
+          "data": {
+            "type": "duration",
+            "id": "11"
+          }
+        },
+        "game": {
+          "data": {
+            "type": "game",
+            "id": "162474"
+          }
+        },
+        "league": {
+          "data": {
+            "type": "league",
+            "id": "9"
+          }
+        },
+        "new_player": {
+          "data": {
+            "type": "new_player",
+            "id": "320307"
+          }
+        },
+        "projection_type": {
+          "data": {
+            "type": "projection_type",
+            "id": "2"
+          }
+        },
+        "score": {
+          "data": null
+        },
+        "stat_type": {
+          "data": {
+            "type": "stat_type",
+            "id": "259"
+          }
+        }
+      }
+    }
+  ],
+  "included": [
+    {
+      "type": "new_player",
+      "id": "211247",
+      "attributes": {
+        "combo": false,
+        "display_name": "",
+        "image_url": "https://static.prizepicks.com/images/teams/nfl/NFL_team_CagV60AIajg4pizCSJD5M18M/11.webp",
+        "jersey_number": "11",
+        "league": "NFL",
+        "league_id": 9,
+        "market": "Seattle",
+        "name": "Jaxon Smith-Njigba",
+        "position": "WR",
+        "ppid": "NFL_player_X9M9ow4iJQknt8dTF7dK5A7Y",
+        "team": "SEA",
+        "team_name": "Seahawks"
+      },
+      "relationships": {
+        "league": {
+          "data": {
+            "type": "league",
+            "id": "9"
+          }
+        },
+        "team_data": {
+          "data": {
+            "type": "team",
+            "id": "1196"
+          }
+        }
+      }
+    },
+    {
+      "type": "new_player",
+      "id": "246597",
+      "attributes": {
+        "combo": false,
+        "display_name": "",
+        "image_url": "https://static.prizepicks.com/images/teams/nfl/NFL_team_CagV60AIajg4pizCSJD5M18M/14.webp",
+        "jersey_number": "14",
+        "league": "NFL",
+        "league_id": 9,
+        "market": "Seattle",
+        "name": "Sam Darnold",
+        "position": "QB",
+        "ppid": "NFL_player_Fg1p3wmY33ZaM4GhkgslyjbZ",
+        "team": "SEA",
+        "team_name": "Seahawks"
+      },
+      "relationships": {
+        "league": {
+          "data": {
+            "type": "league",
+            "id": "9"
+          }
+        },
+        "team_data": {
+          "data": {
+            "type": "team",
+            "id": "1196"
+          }
+        }
+      }
+    },
+    {
+      "type": "new_player",
+      "id": "320307",
+      "attributes": {
+        "combo": false,
+        "display_name": "Jadarian Price",
+        "image_url": "https://static.prizepicks.com/images/teams/nfl/NFL_team_CagV60AIajg4pizCSJD5M18M/8.webp",
+        "jersey_number": "8",
+        "league": "NFL",
+        "league_id": 9,
+        "market": "Seattle",
+        "name": "Jadarian Price",
+        "position": "RB",
+        "ppid": "NFL_player_HFTIO2JnynpsYiqLe3rOYNY8",
+        "team": "SEA",
+        "team_name": "Seahawks"
+      },
+      "relationships": {
+        "league": {
+          "data": {
+            "type": "league",
+            "id": "9"
+          }
+        },
+        "team_data": {
+          "data": {
+            "type": "team",
+            "id": "1196"
+          }
+        }
+      }
+    },
+    {
+      "type": "new_player",
+      "id": "215664",
+      "attributes": {
+        "combo": false,
+        "display_name": "",
+        "image_url": "https://static.prizepicks.com/images/teams/nfl/NFL_team_OqHm2WrR1koV4WNCwbEs7ZvG/10.webp",
+        "jersey_number": "10",
+        "league": "NFL",
+        "league_id": 9,
+        "market": "New England",
+        "name": "Drake Maye",
+        "position": "QB",
+        "ppid": "NFL_player_3X2sVkS5qsEqC9ftBbXeFzc5",
+        "team": "NE",
+        "team_name": "Patriots"
+      },
+      "relationships": {
+        "league": {
+          "data": {
+            "type": "league",
+            "id": "9"
+          }
+        },
+        "team_data": {
+          "data": {
+            "type": "team",
+            "id": "1232"
+          }
+        }
+      }
+    },
+    {
+      "type": "league",
+      "id": "15",
+      "attributes": {
+        "active": true,
+        "f2p_enabled": true,
+        "full_logo": null,
+        "has_live_projections": false,
+        "icon": "football",
+        "image_url": "https://static.prizepicks.com/images/leagues/production/41.svg",
+        "last_five_games_enabled": true,
+        "league_icon_id": 41,
+        "logo": null,
+        "name": "CFB",
+        "parent_id": null,
+        "parent_name": null,
+        "player_headshot_fallback": "https://static.prizepicks.com/production/p5tx33d4clfczh5p4oxrsz43mpsh-cffbfall.webp",
+        "projections_count": 0,
+        "rank": 999,
+        "show_trending": true
+      },
+      "relationships": {
+        "projection_filters": {
+          "data": []
+        }
+      }
+    },
+    {
+      "type": "new_player",
+      "id": "210968",
+      "attributes": {
+        "combo": false,
+        "display_name": "Rhamondre Stevenson",
+        "image_url": "https://static.prizepicks.com/images/teams/nfl/NFL_team_OqHm2WrR1koV4WNCwbEs7ZvG/38.webp",
+        "jersey_number": "38",
+        "league": "NFL",
+        "league_id": 9,
+        "market": "New England",
+        "name": "Rhamondre Stevenson",
+        "position": "RB",
+        "ppid": "NFL_player_adoG1mnQlGlmOfucC204vcjI",
+        "team": "NE",
+        "team_name": "Patriots"
+      },
+      "relationships": {
+        "league": {
+          "data": {
+            "type": "league",
+            "id": "9"
+          }
+        },
+        "team_data": {
+          "data": {
+            "type": "team",
+            "id": "1232"
+          }
+        }
+      }
+    },
+    {
+      "type": "league",
+      "id": "9",
+      "attributes": {
+        "active": true,
+        "f2p_enabled": true,
+        "full_logo": null,
+        "has_live_projections": false,
+        "icon": "football",
+        "image_url": "https://static.prizepicks.com/images/leagues/production/30.svg",
+        "last_five_games_enabled": true,
+        "league_icon_id": 30,
+        "logo": null,
+        "name": "NFL",
+        "parent_id": null,
+        "parent_name": null,
+        "player_headshot_fallback": null,
+        "projections_count": 0,
+        "rank": 999,
+        "show_trending": true
+      },
+      "relationships": {
+        "projection_filters": {
+          "data": []
+        }
+      }
+    }
+  ],
+  "links": {
+    "self": "partner-api.prod01.universe.prizepicks.com/projections?per_page=1000&new_player=true"
+  },
+  "meta": {
+    "current_page": 1,
+    "total_pages": 1
+  }
+}

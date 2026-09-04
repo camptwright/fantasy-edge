@@ -5,13 +5,21 @@ def test_celery_schedule_covers_every_ingestion_source():
     """Was "NFL only" before Sleeper's own scheduled sync existed - that
     scope no longer matches beat_schedule's real contents, which now also
     covers NCAAF via the same three tasks (see src/scheduler/tasks.py, each
-    of which loops over settings.supported_sports internally)."""
+    of which loops over settings.supported_sports internally), plus the
+    scraped sources (Pinnacle, Bovada, PrizePicks) added alongside The Odds
+    API and Underdog as team-market/props sources."""
     scheduled = celery_app.conf.beat_schedule
     assert {item["task"] for item in scheduled.values()} == {
         "fantasy.sync_espn",
         "fantasy.sync_underdog",
         "fantasy.sync_team_markets",
         "fantasy.sync_sleeper",
+        "fantasy.sync_pinnacle",
+        "fantasy.sync_bovada",
+        "fantasy.sync_prizepicks",
+        "fantasy.check_data_health",
+        "fantasy.sync_mlb",
+        "fantasy.sync_nhl",
     }
 
 

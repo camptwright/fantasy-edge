@@ -24,25 +24,123 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://redis:6379/0"
 
-    # Sports supported end-to-end (ingestion, API, scheduler). Sleeper's own
-    # feature stays NFL-only regardless - Sleeper has no NCAAF product.
-    supported_sports: tuple[str, ...] = ("nfl", "ncaaf")
+    # Sports supported end-to-end (ingestion, API, scheduler). NCAAF has no
+    # Sleeper product at all, so Sleeper sync stays scoped to whichever of
+    # these sports Sleeper itself actually supports (NFL, NBA, MLB, and NHL
+    # as of the nhl addition - see src/ingest/sleeper.py) - not every entry
+    # here implies a Sleeper integration.
+    supported_sports: tuple[str, ...] = ("nfl", "ncaaf", "nba", "mlb", "nhl")
 
     espn_base_urls: dict[str, str] = {
         "nfl": "https://site.api.espn.com/apis/site/v2/sports/football/nfl",
         "ncaaf": "https://site.api.espn.com/apis/site/v2/sports/football/college-football",
+        "nba": "https://site.api.espn.com/apis/site/v2/sports/basketball/nba",
     }
+    # Subset of supported_sports whose schedule/scores come from ESPN
+    # (src/scheduler/tasks.py's sync_espn loops this, not supported_sports
+    # directly) - MLB and NHL deliberately excluded: each has its own
+    # official API as its primary source (src/ingest/mlb.py,
+    # src/ingest/nhl.py), which the free-source research rates well above
+    # ESPN's undocumented scoreboard for reliability, so ESPN is not run
+    # redundantly alongside either.
+    espn_sports: tuple[str, ...] = ("nfl", "ncaaf", "nba")
+
+    # statsapi.mlb.com - official, unauthenticated, no documented rate
+    # limit. MLB's primary schedule/score source (see espn_sports above).
+    mlb_stats_api_base_url: str = "https://statsapi.mlb.com/api/v1"
+    # api-web.nhle.com - official, unauthenticated, no documented rate
+    # limit. NHL's primary schedule/score source (see espn_sports above).
+    nhl_api_base_url: str = "https://api-web.nhle.com/v1"
+
     odds_api_key: str = ""
     odds_api_base_url: str = "https://api.the-odds-api.com/v4"
+    # nba/mlb/nhl keys are The Odds API's documented sport keys, not
+    # independently verified live like the scraped sources below (no
+    # ODDS_API_KEY is configured in dev to test against) - taken from their
+    # public API reference, which is a stable contract unlike an
+    # undocumented endpoint.
     odds_api_sport_keys: dict[str, str] = {
         "nfl": "americanfootball_nfl",
         "ncaaf": "americanfootball_ncaaf",
+        "nba": "basketball_nba",
+        "mlb": "baseball_mlb",
+        "nhl": "icehockey_nhl",
     }
     odds_api_quota_floor: int = 50
+
+    # guest.api.arcadia.pinnacle.com - the public site's own consumer API,
+    # not Pinnacle's (now-closed-to-the-public, per its own docs since
+    # 2025-07-23) official paid suite. This X-API-Key is a widely-known
+    # guest/community key, not a real account secret - verified live
+    # 2026-09-03. Override only if it ever rotates.
+    pinnacle_api_key: str = "CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R"
+    pinnacle_base_url: str = "https://guest.api.arcadia.pinnacle.com/0.1"
+    # Sport -> Pinnacle league id. Verified live 2026-09-03 via
+    # /0.1/sports/15/leagues (15 = Pinnacle's own "Football" sport id) for
+    # nfl/ncaaf, 2026-09-04 via /0.1/sports/4/leagues (4 = "Basketball") for
+    # nba, /0.1/sports/3/leagues (3 = "Baseball") for mlb, and
+    # /0.1/sports/19/leagues (19 = "Hockey") for nhl. Only add an entry
+    # here once it has actually been looked up live - guessing a
+    # plausible-looking id is exactly the kind of unverified fact this
+    # codebase's CLAUDE.md constraints warn against.
+    pinnacle_league_ids: dict[str, int] = {
+        "nfl": 889, "ncaaf": 880, "nba": 487, "mlb": 246, "nhl": 1456,
+    }
+
+    # www.bovada.lv's public coupon JSON - offshore book, no state
+    # geofencing (unlike DraftKings/FanDuel/BetMGM, which are legal-state-
+    # only and therefore unreachable from a non-legal-state IP - see
+    # DEPLOYMENT.md's scraping notes).
+    bovada_base_url: str = "https://www.bovada.lv/services/sports/event/coupon/events/A/description"
+    bovada_sport_paths: dict[str, str] = {
+        "nfl": "football/nfl", "ncaaf": "football/college-football",
+        "nba": "basketball/nba", "mlb": "baseball/mlb", "nhl": "hockey/nhl",
+    }
+
+    prizepicks_base_url: str = "https://partner-api.prizepicks.com/projections"
+    # PrizePicks league NAME (its own included[].attributes.name string,
+    # e.g. "CFB" for college football - unrelated to Pinnacle's numeric
+    # league/sport ids above, different provider's own scheme entirely) ->
+    # our sport code. Mirrors underdog_api.py's _SPORT_ID_MAP shape/coverage
+    # (verified live 2026-09-03 against a real /projections response) so a
+    # later supported_sports addition (NBA/MLB/NHL) needs no code change
+    # here, same as Underdog already doesn't.
+    prizepicks_league_sports: dict[str, str] = {
+        "NFL": "nfl", "CFB": "ncaaf", "NBA": "nba", "MLB": "mlb", "NHL": "nhl",
+    }
     underdog_base_url: str = "https://api.underdogfantasy.com"
     sleeper_username: str = ""
     sleeper_base_url: str = "https://api.sleeper.app/v1"
+    # Subset of supported_sports Sleeper actually has a fantasy product for
+    # - NCAAF has none at all, so it's excluded even though it's a
+    # supported_sports entry. Verified live 2026-09-04 that /state/{sport},
+    # /players/{sport}, and /projections/{sport}/{season}/{week} all mirror
+    # the /nfl shape sync_sleeper_account already used, for nba, mlb, and
+    # nhl alike (mlb's and nhl's /projections responses were empty but
+    # well-formed - not every sport publishes that feed, and the sync
+    # already tolerates an empty snapshot rather than requiring one).
+    sleeper_sports: tuple[str, ...] = ("nfl", "nba", "mlb", "nhl")
+    # Optional licensed weekly fantasy-projection feed. This is deliberately
+    # separate from Sleeper: the public Sleeper projection payload is often
+    # empty before kickoff even while its consumer app shows preview values.
+    sportsdataio_api_key: str = ""
+    sportsdataio_projection_base_url: str = "https://api.sportsdata.io/v3/nfl/projections/json"
     fantasy_api_token: str = ""
+
+    # Canary/anomaly alerting - the homelab's own self-hosted ntfy instance
+    # (see the ntfy project's DEPLOYMENT.md), not ntfy.sh. Empty base URL or
+    # topic means alerts are logged only, never sent - see src/utils/alerts.py.
+    ntfy_base_url: str = ""
+    ntfy_topic: str = ""
+    ntfy_token: str = ""
+
+    # Raw HTTP response archive for direct-to-source scrapers (src/data/
+    # scrapers/). A Docker named volume mounted here, not a host bind mount -
+    # unlike the old Proxmox /mnt/data bind-mount setup (CLAUDE.md constraint
+    # #18), a named volume inherits the image's chowned directory on first
+    # creation, so no separate host-side chown step is needed.
+    raw_archive_dir: str = "/mnt/data/fantasy-edge/raw"
+
     litellm_base_url: str = "http://litellm:4000/v1"
     litellm_api_key: str = ""
     fantasy_model_alias: str = "worker"

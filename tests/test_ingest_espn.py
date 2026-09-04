@@ -22,7 +22,7 @@ async def test_sync_records_a_run_and_creates_fixtures(db):
     await sync_scoreboard(db, days_ahead=7)
 
     run = await db.scalar(
-        select(IngestionRun).where(IngestionRun.source == "espn").limit(1)
+        select(IngestionRun).where(IngestionRun.source == "espn_nfl").limit(1)
     )
     assert run is not None and run.status == "succeeded"
 

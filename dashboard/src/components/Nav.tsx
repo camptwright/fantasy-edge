@@ -8,7 +8,9 @@ import { usePathname } from "next/navigation";
 // paper tracker, ...) were removed in the 2026-08-20 NFL-only clean slate
 // and never rebuilt - this list used to still reference all of them.
 const LINKS = [
+  { href: "/", label: "Dashboard" },
   { href: "/fantasy", label: "Fantasy" },
+  { href: "/fantasy/matchup", label: "Matchup" },
   { href: "/board", label: "Board" },
 ];
 
@@ -19,10 +21,10 @@ export function Nav() {
       <div className="mx-auto flex max-w-7xl items-center gap-5 px-4 py-3 lg:px-6">
         <Link href="/" className="mr-2 flex min-w-fit items-center gap-2" aria-label="Sports home">
           <span className="h-2.5 w-2.5 rounded-full bg-accent shadow-[0_0_16px_rgba(99,196,154,0.65)]" />
-          <span className="font-semibold tracking-tight text-gray-100">Sports</span>
+          <span className="font-semibold tracking-tight text-gray-100">Fantasy Edge</span>
         </Link>
         <div className="hidden items-center gap-0.5 overflow-x-auto md:flex">
-          {LINKS.map((link, index) => {
+          {LINKS.map((link) => {
             const active = link.href === "/" ? pathname === "/" : pathname?.startsWith(link.href);
           return (
             <Link

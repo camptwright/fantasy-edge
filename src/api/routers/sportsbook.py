@@ -32,6 +32,8 @@ from src.models.facts import Game, PlayerPropLine, TeamMarketLine
 from src.models.identity import Player, Team
 from src.models.ratings import TeamRating
 from src.services.elo import moneyline_probability, spread_cover_probability
+from src.services.projections import MIN_GAMES_FOR_PROJECTION, over_probability, project_stats
+from src.services.totals import expected_total_points, is_qualified, total_over_probability
 from src.utils.normalize import normalize_player_name
 from src.utils.odds_math import (
     american_to_decimal,
@@ -42,9 +44,10 @@ from src.utils.odds_math import (
 
 router = APIRouter()
 
-# Markets a rating-only baseline can honestly speak to. Totals need a points
-# model this Elo baseline does not provide - omitted rather than faked.
-_MODELED_MARKETS = ("moneyline", "spread")
+# Every market this baseline can honestly speak to: moneyline/spread from
+# the Elo rating (src/services/elo.py), total from the scoring-average
+# baseline (src/services/totals.py) that same rating update maintains.
+_MODELED_MARKETS = ("moneyline", "spread", "total")
 
 
 async def _team_lookup(db: AsyncSession, team_ids: set[uuid.UUID]) -> dict[uuid.UUID, Team]:
@@ -54,17 +57,71 @@ async def _team_lookup(db: AsyncSession, team_ids: set[uuid.UUID]) -> dict[uuid.
     return {team.id: team for team in rows}
 
 
-async def _rating_lookup(db: AsyncSession, team_ids: set[uuid.UUID]) -> dict[uuid.UUID, float]:
+async def _rating_lookup(db: AsyncSession, team_ids: set[uuid.UUID]) -> dict[uuid.UUID, TeamRating]:
     if not team_ids:
         return {}
     rows = (
         await db.execute(select(TeamRating).where(TeamRating.team_id.in_(team_ids)))
     ).scalars()
-    return {rating.team_id: rating.rating for rating in rows}
+    return {rating.team_id: rating for rating in rows}
 
 
-@router.get("/props")
-async def props(sport: str | None = Query(default=None), db: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
+def _emit_pair_rows(
+    out: list[dict[str, Any]],
+    pairs: tuple[tuple[TeamMarketLine, float, str, float | None], ...],
+    *,
+    market: str,
+    source: str,
+    matchup: str,
+    game: Game,
+) -> None:
+    """Shared row-builder for both sides of one (game, market, source)
+    quote - moneyline/spread (home/away) and total (over/under) all end up
+    here with an identical output shape, just different `pairs` inputs."""
+    for line, model_prob, selection, fair_prob in pairs:
+        implied_prob = american_to_implied(line.price_american) if line.price_american is not None else None
+        ev_percent = (
+            expected_value_percent(model_prob, line.price_american)
+            if line.price_american is not None
+            else None
+        )
+        kelly = None
+        if line.price_american is not None:
+            b = american_to_decimal(line.price_american) - 1.0
+            edge = model_prob * (b + 1.0) - 1.0
+            full_kelly = max(0.0, edge / b) if b > 0 else 0.0
+            kelly = round(full_kelly * get_settings().kelly_fraction_cap, 4)
+
+        out.append(
+            {
+                "id": str(line.id),
+                "sport": game.sport,
+                "market": market,
+                "selection": selection,
+                "bookmaker": source,
+                "price_american": line.price_american,
+                "model_probability": round(model_prob, 4),
+                "fair_probability": round(fair_prob, 4) if fair_prob is not None else None,
+                "implied_probability": round(implied_prob, 4) if implied_prob is not None else None,
+                "ev_percent": round(ev_percent, 2) if ev_percent is not None else 0.0,
+                "kelly_fraction": kelly,
+                # No credit/staking system yet (deferred contest system) -
+                # null rather than an invented unit size.
+                "stake_units": None,
+                "confidence": None,
+                "tier": None,
+                # No settlement/grading system yet (same deferral) - null
+                # until a real contest engine can grade this leg.
+                "result": None,
+                "created_at": line.observed_at.isoformat(),
+                "matchup": matchup,
+                "game_time": game.game_time.isoformat() if game.game_time else None,
+                "game_status": game.status,
+            }
+        )
+
+
+async def _prop_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]]:
     stmt = select(PlayerPropLine, Player).join(Player, PlayerPropLine.player_id == Player.id)
     if sport is not None:
         stmt = stmt.where(Player.sport == sport)
@@ -80,41 +137,69 @@ async def props(sport: str | None = Query(default=None), db: AsyncSession = Depe
 
     team_ids = {row.Player.current_team_id for row in rows if row.Player.current_team_id}
     teams = await _team_lookup(db, team_ids)
+    projections = await project_stats(db, {(player.id, prop.stat_type) for prop, player in rows})
 
-    return [
-        {
-            "id": str(prop.id),
-            "sport": player.sport,
-            "source": prop.source,
-            "player_name": player.full_name,
-            "normalized_name": normalize_player_name(player.full_name),
-            "player_id": str(player.id),
-            # Underdog's payload carries no team array (constraint #17), so
-            # game_id is never resolved at ingest time - always null today,
-            # not a bug in this endpoint.
-            "game_id": str(prop.game_id) if prop.game_id else None,
-            "team_name": teams[player.current_team_id].name if player.current_team_id in teams else None,
-            "opponent_name": None,
-            "stat_type": prop.stat_type,
-            "line": prop.line,
-            "over_price_american": prop.over_price_american,
-            "under_price_american": prop.under_price_american,
-            # No player-projection pipeline yet (docs/nfl-modeling.md) -
-            # null, not fabricated, until one exists.
-            "projection": None,
-            "edge_percent": None,
-            "captured_at": prop.observed_at.isoformat(),
-        }
-        for prop, player in rows
-    ]
+    out = []
+    for prop, player in rows:
+        projected = projections.get((player.id, prop.stat_type))
+        projection_value = projected[0] if projected is not None else None
+        edge_percent = None
+        if projected is not None and prop.over_price_american is not None:
+            mean, stddev = projected
+            over_prob = over_probability(mean, stddev, prop.line)
+            edge_percent = round(expected_value_percent(over_prob, prop.over_price_american), 2)
+
+        out.append(
+            {
+                "id": str(prop.id),
+                "sport": player.sport,
+                "source": prop.source,
+                "player_name": player.full_name,
+                "normalized_name": normalize_player_name(player.full_name),
+                "player_id": str(player.id),
+                # Underdog's payload carries no team array (constraint #17),
+                # so game_id is never resolved at ingest time - always null
+                # today, not a bug in this endpoint.
+                "game_id": str(prop.game_id) if prop.game_id else None,
+                "team_name": teams[player.current_team_id].name if player.current_team_id in teams else None,
+                "opponent_name": None,
+                "stat_type": prop.stat_type,
+                "line": prop.line,
+                "over_price_american": prop.over_price_american,
+                "under_price_american": prop.under_price_american,
+                # Null until the player has MIN_GAMES_FOR_PROJECTION
+                # realized games for this stat_type (src/services/
+                # projections.py) - never fabricated in the meantime.
+                "projection": round(projection_value, 2) if projection_value is not None else None,
+                "edge_percent": edge_percent,
+                "captured_at": prop.observed_at.isoformat(),
+            }
+        )
+    return out
+
+
+@router.get("/props")
+async def props(sport: str | None = Query(default=None), db: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
+    return await _prop_rows(db, sport)
 
 
 @router.get("/props/best")
-async def props_best() -> dict[str, Any]:
-    """edge_percent has no producer yet (see /props), so there is no honest
-    way to rank "best" props. Returns the gap explicitly rather than a
-    fabricated ordering."""
-    return {"items": [], "note": "no player-projection pipeline yet - edge_percent is not populated"}
+async def props_best(sport: str | None = Query(default=None), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Ranked by edge_percent - only props with a qualified projection
+    (src/services/projections.py) carry one; the rest are excluded rather
+    than sorted in as an implicit zero edge."""
+    qualified = sorted(
+        (row for row in await _prop_rows(db, sport) if row["edge_percent"] is not None),
+        key=lambda row: row["edge_percent"],
+        reverse=True,
+    )[:20]
+    if not qualified:
+        return {
+            "items": [],
+            "note": "no props have a qualified projection yet - each needs "
+            f"{MIN_GAMES_FOR_PROJECTION} realized games for that player/stat_type",
+        }
+    return {"items": qualified}
 
 
 async def _signal_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]]:
@@ -150,8 +235,51 @@ async def _signal_rows(db: AsyncSession, sport: str | None) -> list[dict[str, An
         key = (line.game_id, line.market, line.source)
         paired.setdefault(key, {})[line.side] = (line, game)
 
-    out = []
+    out: list[dict[str, Any]] = []
     for (_, market, source), sides in paired.items():
+        if market == "total":
+            over_entry, under_entry = sides.get("over"), sides.get("under")
+            if over_entry is None or under_entry is None:
+                continue
+            over_line, game = over_entry
+            under_line, _ = under_entry
+
+            home_rating = ratings.get(game.home_team_id)
+            away_rating = ratings.get(game.away_team_id)
+            if home_rating is None or away_rating is None:
+                continue
+            if not is_qualified(home_rating) or not is_qualified(away_rating):
+                # Fewer than MIN_GAMES_FOR_TOTALS games played - the scoring
+                # average isn't trustworthy yet, same "omit rather than
+                # assume" discipline as the moneyline/spread branch below.
+                continue
+            home_name = teams[game.home_team_id].name if game.home_team_id in teams else "Home"
+            away_name = teams[game.away_team_id].name if game.away_team_id in teams else "Away"
+            matchup = f"{away_name} @ {home_name}"
+
+            expected_total = expected_total_points(home_rating, away_rating)
+            over_model_prob = total_over_probability(
+                expected_total, over_line.line or 0.0, game.sport
+            )
+            over_selection = f"Over {over_line.line:.1f}" if over_line.line is not None else "Over"
+            under_selection = f"Under {under_line.line:.1f}" if under_line.line is not None else "Under"
+
+            fair_over, fair_under = None, None
+            if over_line.price_american is not None and under_line.price_american is not None:
+                fair_over, fair_under = remove_vig_two_way(
+                    over_line.price_american, under_line.price_american
+                )
+
+            _emit_pair_rows(
+                out,
+                (
+                    (over_line, over_model_prob, over_selection, fair_over),
+                    (under_line, 1.0 - over_model_prob, under_selection, fair_under),
+                ),
+                market=market, source=source, matchup=matchup, game=game,
+            )
+            continue
+
         home_entry = sides.get("home")
         away_entry = sides.get("away")
         if home_entry is None or away_entry is None:
@@ -162,12 +290,14 @@ async def _signal_rows(db: AsyncSession, sport: str | None) -> list[dict[str, An
         home_line, game = home_entry
         away_line, _ = away_entry
 
-        if game.home_team_id not in ratings or game.away_team_id not in ratings:
+        home_rating_row = ratings.get(game.home_team_id)
+        away_rating_row = ratings.get(game.away_team_id)
+        if home_rating_row is None or away_rating_row is None:
             # No Elo history for one side yet (brand-new team, or the
             # sport's bootstrap hasn't run) - omit rather than assume the
             # 1500 default means something.
             continue
-        home_rating, away_rating = ratings[game.home_team_id], ratings[game.away_team_id]
+        home_rating, away_rating = home_rating_row.rating, away_rating_row.rating
         home_name = teams[game.home_team_id].name if game.home_team_id in teams else "Home"
         away_name = teams[game.away_team_id].name if game.away_team_id in teams else "Away"
         matchup = f"{away_name} @ {home_name}"
@@ -186,56 +316,64 @@ async def _signal_rows(db: AsyncSession, sport: str | None) -> list[dict[str, An
         if home_line.price_american is not None and away_line.price_american is not None:
             fair_home, fair_away = remove_vig_two_way(home_line.price_american, away_line.price_american)
 
-        for line, model_prob, selection, fair_prob in (
-            (home_line, home_model_prob, home_selection, fair_home),
-            (away_line, 1.0 - home_model_prob, away_selection, fair_away),
-        ):
-            implied_prob = american_to_implied(line.price_american) if line.price_american is not None else None
-            ev_percent = (
-                expected_value_percent(model_prob, line.price_american)
-                if line.price_american is not None
-                else None
-            )
-            kelly = None
-            if line.price_american is not None:
-                b = american_to_decimal(line.price_american) - 1.0
-                edge = model_prob * (b + 1.0) - 1.0
-                full_kelly = max(0.0, edge / b) if b > 0 else 0.0
-                kelly = round(full_kelly * get_settings().kelly_fraction_cap, 4)
-
-            out.append(
-                {
-                    "id": str(line.id),
-                    "sport": game.sport,
-                    "market": market,
-                    "selection": selection,
-                    "bookmaker": source,
-                    "price_american": line.price_american,
-                    "model_probability": round(model_prob, 4),
-                    "fair_probability": round(fair_prob, 4) if fair_prob is not None else None,
-                    "implied_probability": round(implied_prob, 4) if implied_prob is not None else None,
-                    "ev_percent": round(ev_percent, 2) if ev_percent is not None else 0.0,
-                    "kelly_fraction": kelly,
-                    # No credit/staking system yet (deferred contest system)
-                    # - null rather than an invented unit size.
-                    "stake_units": None,
-                    "confidence": None,
-                    "tier": None,
-                    # No settlement/grading system yet (same deferral) -
-                    # null until a real contest engine can grade this leg.
-                    "result": None,
-                    "created_at": line.observed_at.isoformat(),
-                    "matchup": matchup,
-                    "game_time": game.game_time.isoformat() if game.game_time else None,
-                    "game_status": game.status,
-                }
-            )
+        _emit_pair_rows(
+            out,
+            (
+                (home_line, home_model_prob, home_selection, fair_home),
+                (away_line, 1.0 - home_model_prob, away_selection, fair_away),
+            ),
+            market=market, source=source, matchup=matchup, game=game,
+        )
     return out
 
 
 @router.get("/signals")
 async def signals(sport: str | None = Query(default=None), db: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
     return await _signal_rows(db, sport)
+
+
+@router.get("/odds/{game_id}/history")
+async def odds_history(
+    game_id: uuid.UUID,
+    market: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Full line-movement history for one game - deliberately every
+    observation, NOT constraint #7's DISTINCT-ON-latest-only discipline,
+    which applies to /props and /signals because those are current-state
+    listings. This endpoint's entire purpose is the opposite: showing what
+    the market did over time, which is exactly what team_market_lines'
+    append-only design (src/models/facts.py) exists to make possible."""
+    game = await db.get(Game, game_id)
+    if game is None:
+        raise HTTPException(status_code=404, detail="game not found")
+
+    stmt = select(TeamMarketLine).where(TeamMarketLine.game_id == game_id)
+    if market is not None:
+        stmt = stmt.where(TeamMarketLine.market == market)
+    if source is not None:
+        stmt = stmt.where(TeamMarketLine.source == source)
+    stmt = stmt.order_by(TeamMarketLine.observed_at)
+    rows = (await db.execute(stmt)).scalars().all()
+
+    return {
+        "game_id": str(game_id),
+        "sport": game.sport,
+        "lines": [
+            {
+                "id": str(row.id),
+                "market": row.market,
+                "side": row.side,
+                "line": row.line,
+                "price_american": row.price_american,
+                "source": row.source,
+                "line_type": row.line_type,
+                "observed_at": row.observed_at.isoformat(),
+            }
+            for row in rows
+        ],
+    }
 
 
 @router.get("/rankings/{sport}")

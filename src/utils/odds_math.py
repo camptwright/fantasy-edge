@@ -10,6 +10,16 @@ payout maths is multiplicative. Implied probability is decimal reciprocal.
 
 from __future__ import annotations
 
+import math
+
+
+def normal_cdf(x: float) -> float:
+    """Standard normal CDF, stdlib-only (math.erf, not scipy.stats) - the
+    baseline models (src/services/elo.py, src/services/totals.py) run
+    inside the serving path, which deliberately carries no offline
+    modelling dependencies."""
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
 
 def american_to_decimal(american: float) -> float:
     """-110 -> 1.9091, +150 -> 2.50.

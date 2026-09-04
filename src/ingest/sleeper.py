@@ -1,50 +1,100 @@
-"""Read-only, account-wide Sleeper sync. League IDs are always discovered."""
+"""Read-only, account-wide Sleeper sync. League IDs are always discovered.
+
+Parametrized per sport (settings.sleeper_sports) - Sleeper's own API already
+generalizes cleanly across sports with an identical endpoint shape
+(/state/{sport}, /user/{id}/leagues/{sport}/{season}, /players/{sport},
+/league/{id}/matchups/{week}, /projections/{sport}/{season}/{week}), all
+verified live 2026-09-04 for nba matching the nfl shape this module already
+used. The SportsDataIO external-projections adapter
+(src/data/providers/sportsdataio.py) stays NFL-only - its STAT_FIELDS
+mapping is passing/rushing/receiving specific with no NBA equivalent, so it
+is only ever called for sport == "nfl".
+"""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import get_settings
+from src.data.providers.sportsdataio import weekly_projections
 from src.models.sleeper import SleeperLeague, SleeperLeagueSnapshot, SleeperRoster
 
 
-async def sync_sleeper_account(db: AsyncSession) -> dict[str, int]:
+async def sync_sleeper_account(db: AsyncSession) -> dict[str, dict[str, int]]:
     settings = get_settings()
     if not settings.sleeper_username:
         raise ValueError("SLEEPER_USERNAME is not configured")
+    username = settings.sleeper_username.lstrip("@")
+
+    results: dict[str, dict[str, int]] = {}
     async with httpx.AsyncClient(base_url=settings.sleeper_base_url, timeout=20) as client:
-        user = (await client.get(f"/user/{settings.sleeper_username.lstrip('@')}")).json()
+        user = (await client.get(f"/user/{username}")).json()
         if not user.get("user_id"):
             raise ValueError("Sleeper username was not found")
-        state = (await client.get("/state/nfl")).json()
-        season = str(state["league_season"])
-        leagues = (await client.get(f"/user/{user['user_id']}/leagues/nfl/{season}")).json()
-        for league in leagues:
-            league_id = league["league_id"]
-            await _upsert_league(db, league)
-            rosters = (await client.get(f"/league/{league_id}/rosters")).json()
-            await _upsert_rosters(db, league_id, rosters)
-            week = int(state.get("leg") or 1)
-            matchups = (await client.get(f"/league/{league_id}/matchups/{week}")).json()
-            transactions = (await client.get(f"/league/{league_id}/transactions/{week}")).json()
-            await _snapshot(db, league_id, week, "matchups", matchups)
-            await _snapshot(db, league_id, week, "transactions", transactions)
-            await _snapshot(db, league_id, week, "account", user)
-            projection_response = await client.get(
-                f"/projections/nfl/{season}/{week}", params={"season_type": state.get("season_type", "regular")}
-            )
-            projection_response.raise_for_status()
-            await _snapshot(db, league_id, week, "projections", projection_response.json())
+        for sport in settings.sleeper_sports:
+            results[sport] = await _sync_sport(db, client, user, sport)
         await db.commit()
-    return {"leagues": len(leagues), "season": int(season), "week": int(state.get("leg") or 1)}
+    return results
 
 
-async def _upsert_league(db: AsyncSession, league: dict) -> None:
-    values = {"league_id": league["league_id"], "name": league["name"], "season": league["season"], "status": league["status"], "roster_positions": league.get("roster_positions", []), "settings": league.get("settings", {}), "scoring_settings": league.get("scoring_settings", {}), "raw": league, "synced_at": datetime.now(timezone.utc)}
+async def _sync_sport(db: AsyncSession, client: httpx.AsyncClient, user: dict, sport: str) -> dict[str, int]:
+    state = (await client.get(f"/state/{sport}")).json()
+    season = str(state["league_season"])
+    leagues = (await client.get(f"/user/{user['user_id']}/leagues/{sport}/{season}")).json()
+    week = int(state.get("leg") or 1)
+
+    player_catalog: dict | None = None
+    external_projections = None
+    if sport == "nfl":
+        # A full catalog is also needed to safely map an external provider's
+        # player names back to Sleeper IDs; no name-only database joins.
+        if get_settings().sportsdataio_api_key:
+            player_catalog = (await client.get(f"/players/{sport}")).json()
+        external_projections = await weekly_projections(season, week, player_catalog or {})
+
+    for league in leagues:
+        league_id = league["league_id"]
+        await _upsert_league(db, league, sport)
+        rosters = (await client.get(f"/league/{league_id}/rosters")).json()
+        await _upsert_rosters(db, league_id, rosters)
+        metadata_exists = await db.scalar(
+            select(SleeperLeagueSnapshot.league_id).where(
+                SleeperLeagueSnapshot.league_id == league_id,
+                SleeperLeagueSnapshot.kind == "player_metadata",
+            ).limit(1)
+        )
+        if metadata_exists is None:
+            if player_catalog is None:
+                player_catalog = (await client.get(f"/players/{sport}")).json()
+            rostered_ids = {str(player_id) for roster in rosters for player_id in (roster.get("players") or [])}
+            await _snapshot(db, league_id, 0, "player_metadata", {
+                player_id: player_catalog[player_id]
+                for player_id in rostered_ids
+                if player_id in player_catalog
+            })
+        matchups = (await client.get(f"/league/{league_id}/matchups/{week}")).json()
+        transactions = (await client.get(f"/league/{league_id}/transactions/{week}")).json()
+        await _snapshot(db, league_id, week, "matchups", matchups)
+        await _snapshot(db, league_id, week, "transactions", transactions)
+        await _snapshot(db, league_id, week, "account", user)
+        projection_response = await client.get(
+            f"/projections/{sport}/{season}/{week}", params={"season_type": state.get("season_type", "regular")}
+        )
+        projection_response.raise_for_status()
+        await _snapshot(db, league_id, week, "projections", projection_response.json())
+        if external_projections is not None:
+            await _snapshot(db, league_id, week, "external_projections", external_projections)
+
+    return {"leagues": len(leagues), "season": int(season), "week": week}
+
+
+async def _upsert_league(db: AsyncSession, league: dict, sport: str) -> None:
+    values = {"league_id": league["league_id"], "sport": sport, "name": league["name"], "season": league["season"], "status": league["status"], "roster_positions": league.get("roster_positions", []), "settings": league.get("settings", {}), "scoring_settings": league.get("scoring_settings", {}), "raw": league, "synced_at": datetime.now(timezone.utc)}
     await db.execute(insert(SleeperLeague).values(**values).on_conflict_do_update(index_elements=["league_id"], set_=values))
 
 

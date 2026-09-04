@@ -27,10 +27,10 @@ from typing import Any
 
 import httpx
 from redis.asyncio import Redis
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import get_settings
+from src.ingest.games import find_game_by_teams
 from src.ingest.identity import resolve_team
 from src.ingest.lines import record_team_line
 from src.ingest.runs import record_run
@@ -114,7 +114,13 @@ async def poll_team_markets(db: AsyncSession, redis: Redis, sport: str = "nfl") 
 
 
 async def _match_game(db: AsyncSession, event: dict[str, Any], sport: str = "nfl") -> Game | None:
-    """The Odds API identifies teams by full display name, not abbreviation."""
+    """The Odds API identifies teams by full display name, not abbreviation.
+
+    Team-name parsing stays here (source-specific); the team-pair +
+    kickoff-window matching itself is shared with Pinnacle/Bovada via
+    src/ingest/games.py's find_game_by_teams - see that function's
+    docstring for the CONSTRAINT #2 reasoning this used to carry inline.
+    """
     home_name, away_name = event.get("home_team"), event.get("away_team")
     commence = event.get("commence_time")
     if not home_name or not away_name or not commence:
@@ -127,36 +133,7 @@ async def _match_game(db: AsyncSession, event: dict[str, Any], sport: str = "nfl
         return None
     kickoff = datetime.fromisoformat(str(commence).replace("Z", "+00:00"))
 
-    # CONSTRAINT #2: game_time is nullable, so a bare range comparison would
-    # silently drop fixtures published without a kickoff time. Match on the
-    # team pair first and only narrow by time when both sides have one.
-    candidates = list(
-        (
-            await db.execute(
-                select(Game).where(
-                    Game.home_team_id == home.id, Game.away_team_id == away.id
-                )
-            )
-        ).scalars()
-    )
-    if not candidates:
-        return None
-    timed = [
-        game
-        for game in candidates
-        if game.game_time is not None
-        and abs((game.game_time - kickoff).total_seconds()) < 86400
-    ]
-    if timed:
-        return timed[0]
-    # No candidate matched the time window. Only trust an unconditional
-    # single match when its game_time is unknown (None) - a known,
-    # mismatched kickoff means this candidate is almost certainly a
-    # different season's fixture for the same team pair (division rivals
-    # recur every season), and attaching current odds to it would silently
-    # corrupt that game's line history.
-    untimed = [game for game in candidates if game.game_time is None]
-    return untimed[0] if len(untimed) == 1 else None
+    return await find_game_by_teams(db, home_team_id=home.id, away_team_id=away.id, kickoff=kickoff)
 
 
 def _rows_for(event: dict[str, Any]) -> list[dict[str, Any]]:

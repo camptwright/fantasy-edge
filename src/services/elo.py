@@ -13,11 +13,16 @@ Deliberately stdlib-only (math.erf for the normal CDF, not scipy.stats):
 this runs inside sync_espn(), which is part of the serving path, and the
 architecture's own principle is that the serving image carries no offline
 modeling dependencies (see docs/superpowers/specs/2026-08-20-fantasy-edge-nfl-rebuild-design.md).
+
+update_ratings_after_game also maintains each team's running points-
+scored/allowed average on the same TeamRating row, at the same moment
+(idempotency and the was_final transition guard both already apply here
+unchanged) - see src/services/totals.py, which reads those averages for
+the totals-market baseline the Elo rating itself cannot provide.
 """
 
 from __future__ import annotations
 
-import math
 import uuid
 
 from sqlalchemy import select
@@ -25,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.facts import Game
 from src.models.ratings import STARTING_RATING, TeamRating
+from src.utils.odds_math import normal_cdf
 
 K_FACTOR = 20.0
 HOME_FIELD_ADVANTAGE = 65.0  # rating points added to the home side pre-game
@@ -38,10 +44,6 @@ RATING_POINTS_PER_MARGIN_POINT = 25.0
 # range of team quality and higher-possession games produce more spread in
 # final margins than the NFL's tighter competitive balance.
 MARGIN_STDDEV = {"nfl": 13.5, "ncaaf": 17.0}
-
-
-def _normal_cdf(x: float) -> float:
-    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
 async def _get_or_create_rating(db: AsyncSession, team_id: uuid.UUID, sport: str) -> TeamRating:
@@ -82,7 +84,23 @@ async def update_ratings_after_game(db: AsyncSession, game: Game) -> None:
     delta = K_FACTOR * (actual_home - expected_home)
     home.rating += delta
     away.rating -= delta
+
+    _update_scoring_average(home, scored=game.home_score, allowed=game.away_score)
+    _update_scoring_average(away, scored=game.away_score, allowed=game.home_score)
+
     await db.flush()
+
+
+def _update_scoring_average(rating: TeamRating, *, scored: int, allowed: int) -> None:
+    """Incremental (running) mean - avoids re-scanning every prior game's
+    score just to add one more, the same reason src/ingest/lines.py favours
+    an insert-on-change comparison over a full re-aggregation."""
+    n = rating.games_played
+    prior_scored = rating.avg_points_scored if rating.avg_points_scored is not None else float(scored)
+    prior_allowed = rating.avg_points_allowed if rating.avg_points_allowed is not None else float(allowed)
+    rating.avg_points_scored = prior_scored + (scored - prior_scored) / (n + 1)
+    rating.avg_points_allowed = prior_allowed + (allowed - prior_allowed) / (n + 1)
+    rating.games_played = n + 1
 
 
 def moneyline_probability(rating_home: float, rating_away: float) -> float:
@@ -106,4 +124,4 @@ def spread_cover_probability(rating_home: float, rating_away: float, home_line: 
     """
     margin = implied_margin(rating_home, rating_away)
     sigma = MARGIN_STDDEV.get(sport, MARGIN_STDDEV["nfl"])
-    return 1.0 - _normal_cdf((-home_line - margin) / sigma)
+    return 1.0 - normal_cdf((-home_line - margin) / sigma)

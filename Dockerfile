@@ -22,7 +22,7 @@ COPY src ./src
 COPY scripts ./scripts
 
 RUN useradd --create-home --uid 1001 fantasy \
- && mkdir -p /app/logs /mnt/data/fantasy-edge/models \
+ && mkdir -p /app/logs /mnt/data/fantasy-edge/models /mnt/data/fantasy-edge/raw \
  && chown -R fantasy:fantasy /app /mnt/data/fantasy-edge
 USER fantasy
 

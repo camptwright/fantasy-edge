@@ -12,6 +12,10 @@ from src.models.base import Base, utcnow
 class SleeperLeague(Base):
     __tablename__ = "sleeper_leagues"
     league_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    # Sleeper league IDs are unique platform-wide (no per-sport namespace),
+    # so this isn't needed for identity - only for filtering/display once
+    # more than one sport is synced (src/ingest/sleeper.py's SLEEPER_SPORTS).
+    sport: Mapped[str] = mapped_column(String(8), nullable=False, default="nfl")
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     season: Mapped[str] = mapped_column(String(8), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)

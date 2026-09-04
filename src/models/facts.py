@@ -64,6 +64,16 @@ class Game(Base, UUIDPrimaryKey, CreatedAt):
     sport: Mapped[str] = mapped_column(String(8), nullable=False, default="nfl")
     nflverse_game_id: Mapped[str | None] = mapped_column(String(32), unique=True)
     espn_event_id: Mapped[str | None] = mapped_column(String(32), unique=True)
+    # MLB Stats API's gamePk / NHL API's own game id - both MLB and NHL use
+    # their own official APIs as their primary schedule/score source, not
+    # ESPN (src/ingest/mlb.py, src/ingest/nhl.py), so each needs its own
+    # external-id column alongside the two above rather than reusing
+    # espn_event_id. A fifth sport reaching for a fifth dedicated column
+    # here is the trigger to refactor Game identity onto a generic
+    # crosswalk table the way PlayerExternalId already works for players -
+    # four was still cheaper than that surgery.
+    mlb_game_pk: Mapped[str | None] = mapped_column(String(16), unique=True)
+    nhl_game_id: Mapped[str | None] = mapped_column(String(16), unique=True)
 
     season: Mapped[int] = mapped_column(Integer, nullable=False)
     week: Mapped[int | None] = mapped_column(Integer)

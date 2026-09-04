@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,6 +34,16 @@ class TeamRating(Base, UUIDPrimaryKey):
     # /rankings/{sport} query filters directly rather than joining teams.
     sport: Mapped[str] = mapped_column(String(8), nullable=False)
     rating: Mapped[float] = mapped_column(Float, nullable=False, default=STARTING_RATING)
+    # Running averages of points scored/allowed, updated the same place and
+    # the same moment as `rating` (src/services/elo.py's
+    # update_ratings_after_game) - the totals baseline (src/services/
+    # totals.py) needs each team's own scoring level, which the win/loss-
+    # only Elo rating does not encode. Null until games_played > 0 rather
+    # than defaulting to 0.0, which would look like a real "shut out every
+    # game" scoring level instead of "no data yet".
+    avg_points_scored: Mapped[float | None] = mapped_column(Float)
+    avg_points_allowed: Mapped[float | None] = mapped_column(Float)
+    games_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )

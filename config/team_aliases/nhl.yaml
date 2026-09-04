@@ -1,0 +1,43 @@
+# NHL team identifiers -> ESPN canonical displayName/id. Keyed by the
+# NHL API's OWN abbreviation (api-web.nhle.com's teamAbbrev, the
+# primary NHL schedule source - src/ingest/nhl.py), not ESPN's shorter
+# codes - the two disagree for five teams (LAK/NJD/SJS/TBL/UTA here vs
+# ESPN's LA/NJ/SJ/TB/UTAH), the same reason nfl.yaml is keyed by
+# nflverse abbreviations rather than ESPN's. Matched to ESPN by
+# accent-stripped full team name (Montreal/Montréal is the one accent
+# mismatch) against a live /hockey/nhl/teams response, both fetched
+# 2026-09-04 - not from memory. Every key quoted per constraint #24
+# even though no current NHL abbreviation is a YAML boolean trap.
+aliases:
+  "ANA": {espn_name: "Anaheim Ducks", espn_id: "25"}
+  "BOS": {espn_name: "Boston Bruins", espn_id: "1"}
+  "BUF": {espn_name: "Buffalo Sabres", espn_id: "2"}
+  "CAR": {espn_name: "Carolina Hurricanes", espn_id: "7"}
+  "CBJ": {espn_name: "Columbus Blue Jackets", espn_id: "29"}
+  "CGY": {espn_name: "Calgary Flames", espn_id: "3"}
+  "CHI": {espn_name: "Chicago Blackhawks", espn_id: "4"}
+  "COL": {espn_name: "Colorado Avalanche", espn_id: "17"}
+  "DAL": {espn_name: "Dallas Stars", espn_id: "9"}
+  "DET": {espn_name: "Detroit Red Wings", espn_id: "5"}
+  "EDM": {espn_name: "Edmonton Oilers", espn_id: "6"}
+  "FLA": {espn_name: "Florida Panthers", espn_id: "26"}
+  "LAK": {espn_name: "Los Angeles Kings", espn_id: "8"}
+  "MIN": {espn_name: "Minnesota Wild", espn_id: "30"}
+  "MTL": {espn_name: "Montreal Canadiens", espn_id: "10"}
+  "NJD": {espn_name: "New Jersey Devils", espn_id: "11"}
+  "NSH": {espn_name: "Nashville Predators", espn_id: "27"}
+  "NYI": {espn_name: "New York Islanders", espn_id: "12"}
+  "NYR": {espn_name: "New York Rangers", espn_id: "13"}
+  "OTT": {espn_name: "Ottawa Senators", espn_id: "14"}
+  "PHI": {espn_name: "Philadelphia Flyers", espn_id: "15"}
+  "PIT": {espn_name: "Pittsburgh Penguins", espn_id: "16"}
+  "SEA": {espn_name: "Seattle Kraken", espn_id: "124292"}
+  "SJS": {espn_name: "San Jose Sharks", espn_id: "18"}
+  "STL": {espn_name: "St. Louis Blues", espn_id: "19"}
+  "TBL": {espn_name: "Tampa Bay Lightning", espn_id: "20"}
+  "TOR": {espn_name: "Toronto Maple Leafs", espn_id: "21"}
+  "UTA": {espn_name: "Utah Mammoth", espn_id: "129764"}
+  "VAN": {espn_name: "Vancouver Canucks", espn_id: "22"}
+  "VGK": {espn_name: "Vegas Golden Knights", espn_id: "37"}
+  "WPG": {espn_name: "Winnipeg Jets", espn_id: "28"}
+  "WSH": {espn_name: "Washington Capitals", espn_id: "23"}

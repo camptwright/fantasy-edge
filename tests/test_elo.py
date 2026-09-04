@@ -89,6 +89,66 @@ async def test_update_ratings_moves_winner_up_and_loser_down(db):
     )
 
 
+async def test_update_ratings_also_maintains_scoring_averages(db):
+    """The totals baseline (src/services/totals.py) reads
+    avg_points_scored/avg_points_allowed/games_played off the same
+    TeamRating row the Elo update already writes - this proves that side
+    of the update actually runs, not just the rating."""
+    home = await resolve_team(db, "Kansas City Chiefs")
+    away = await resolve_team(db, "Los Angeles Chargers")
+    game = Game(
+        sport="nfl", espn_event_id="elo-test-3", season=2026,
+        home_team_id=home.id, away_team_id=away.id,
+        home_score=30, away_score=10, status="final",
+    )
+    db.add(game)
+    await db.flush()
+
+    await update_ratings_after_game(db, game)
+    await db.commit()
+
+    home_rating = await db.scalar(select(TeamRating).where(TeamRating.team_id == home.id))
+    away_rating = await db.scalar(select(TeamRating).where(TeamRating.team_id == away.id))
+
+    assert home_rating.avg_points_scored == pytest.approx(30.0)
+    assert home_rating.avg_points_allowed == pytest.approx(10.0)
+    assert away_rating.avg_points_scored == pytest.approx(10.0)
+    assert away_rating.avg_points_allowed == pytest.approx(30.0)
+    assert home_rating.games_played == 1
+    assert away_rating.games_played == 1
+
+
+async def test_scoring_average_is_a_running_mean_across_games(db):
+    home = await resolve_team(db, "Kansas City Chiefs")
+    away = await resolve_team(db, "Los Angeles Chargers")
+    third = await resolve_team(db, "Denver Broncos")
+
+    game_one = Game(
+        sport="nfl", espn_event_id="elo-test-4a", season=2026,
+        home_team_id=home.id, away_team_id=away.id,
+        home_score=30, away_score=10, status="final",
+    )
+    db.add(game_one)
+    await db.flush()
+    await update_ratings_after_game(db, game_one)
+    await db.commit()
+
+    game_two = Game(
+        sport="nfl", espn_event_id="elo-test-4b", season=2026,
+        home_team_id=home.id, away_team_id=third.id,
+        home_score=20, away_score=17, status="final",
+    )
+    db.add(game_two)
+    await db.flush()
+    await update_ratings_after_game(db, game_two)
+    await db.commit()
+
+    home_rating = await db.scalar(select(TeamRating).where(TeamRating.team_id == home.id))
+    assert home_rating.games_played == 2
+    assert home_rating.avg_points_scored == pytest.approx((30 + 20) / 2)
+    assert home_rating.avg_points_allowed == pytest.approx((10 + 17) / 2)
+
+
 async def test_update_ratings_is_a_noop_without_both_scores(db):
     home = await resolve_team(db, "Kansas City Chiefs")
     away = await resolve_team(db, "Los Angeles Chargers")

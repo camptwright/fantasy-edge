@@ -9,6 +9,7 @@ volumes:
   pgdata:
   redisdata:
   modeldata:
+  rawdata:
 
 x-app: &app
   build:
@@ -17,7 +18,9 @@ x-app: &app
   restart: unless-stopped
   networks: [fantasy]
   env_file: [.env]
-  volumes: ["modeldata:/mnt/data/fantasy-edge/models"]
+  volumes:
+    - "modeldata:/mnt/data/fantasy-edge/models"
+    - "rawdata:/mnt/data/fantasy-edge/raw"
   logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}
   depends_on:
     postgres: {condition: service_healthy}
@@ -120,10 +123,7 @@ services:
     networks: [fantasy]
     command: ["--config", "/config/litellm.yaml", "--port", "4000"]
     environment:
-      # reekserver-1 cannot reach the LAN Ollama backend (different subnet,
-      # no route) - this sidecar calls Anthropic directly instead, same as
-      # every other app on that host.
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}"
+      OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:?set OLLAMA_BASE_URL in .env}"
       LITELLM_MASTER_KEY: "${LITELLM_API_KEY:?set LITELLM_API_KEY in .env}"
     volumes: ["./deploy/litellm.yaml:/config/litellm.yaml:ro"]
     read_only: true

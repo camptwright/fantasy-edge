@@ -3,6 +3,16 @@
 Data freshness and model calibration are separate questions. Recording runs
 here is what lets health reporting say "the odds feed is stale" without
 implying "the model is broken".
+
+Deliberately does NOT call src/utils/alerts.py itself: every ingester
+(existing and new) uses this same context manager, including inside tests
+that deliberately trigger a failure path (e.g. test_theodds_key_safety.py's
+401 case) - wiring a real ntfy POST in here would make a plain `pytest` run
+fire real push notifications the moment a developer's own .env has ntfy
+configured for production use, with no way to tell a genuine failure from
+an intentional test one. Scrapers that want a failure alert call notify()
+themselves from their Celery task wrapper (src/scheduler/tasks.py), a layer
+tests don't exercise the same way.
 """
 
 from __future__ import annotations
