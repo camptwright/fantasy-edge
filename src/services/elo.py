@@ -19,6 +19,17 @@ scored/allowed average on the same TeamRating row, at the same moment
 (idempotency and the was_final transition guard both already apply here
 unchanged) - see src/services/totals.py, which reads those averages for
 the totals-market baseline the Elo rating itself cannot provide.
+
+apply_result/update_scoring_average are pure functions with no DB access -
+factored out so src/services/backtest.py can replay a season's ratings
+in-memory using the EXACT same math production uses, without touching the
+live team_ratings table (a backtest must never disturb production state,
+and needs each game's true pre-game rating, not today's - see that
+module's own docstring on why signal_rows itself got this wrong once).
+update_scoring_average works on any object with the right three attributes,
+not specifically TeamRating (Python doesn't enforce the type hint) -
+backtest.py's own lightweight TeamState reuses it directly rather than
+duplicating the running-mean math a second time.
 """
 
 from __future__ import annotations
@@ -61,6 +72,23 @@ def expected_score(rating_a: float, rating_b: float) -> float:
     return 1.0 / (1.0 + 10.0 ** ((rating_b - rating_a) / 400.0))
 
 
+def apply_result(rating_home: float, rating_away: float, home_score: int, away_score: int) -> tuple[float, float]:
+    """Pure Elo update: returns (new_home_rating, new_away_rating). Zero-sum
+    by construction - the single source of truth for the rating-update
+    math, called by both update_ratings_after_game (production, DB-backed)
+    and src/services/backtest.py (walk-forward calibration, in-memory)."""
+    if home_score > away_score:
+        actual_home = 1.0
+    elif home_score < away_score:
+        actual_home = 0.0
+    else:
+        actual_home = 0.5
+
+    expected_home = expected_score(rating_home + HOME_FIELD_ADVANTAGE, rating_away)
+    delta = K_FACTOR * (actual_home - expected_home)
+    return rating_home + delta, rating_away - delta
+
+
 async def update_ratings_after_game(db: AsyncSession, game: Game) -> None:
     """Apply one Elo update for a just-finalized game. Idempotency (never
     double-applying to an already-final game) is the caller's
@@ -73,25 +101,14 @@ async def update_ratings_after_game(db: AsyncSession, game: Game) -> None:
     home = await _get_or_create_rating(db, game.home_team_id, game.sport)
     away = await _get_or_create_rating(db, game.away_team_id, game.sport)
 
-    if game.home_score > game.away_score:
-        actual_home = 1.0
-    elif game.home_score < game.away_score:
-        actual_home = 0.0
-    else:
-        actual_home = 0.5
-
-    expected_home = expected_score(home.rating + HOME_FIELD_ADVANTAGE, away.rating)
-    delta = K_FACTOR * (actual_home - expected_home)
-    home.rating += delta
-    away.rating -= delta
-
-    _update_scoring_average(home, scored=game.home_score, allowed=game.away_score)
-    _update_scoring_average(away, scored=game.away_score, allowed=game.home_score)
+    home.rating, away.rating = apply_result(home.rating, away.rating, game.home_score, game.away_score)
+    update_scoring_average(home, scored=game.home_score, allowed=game.away_score)
+    update_scoring_average(away, scored=game.away_score, allowed=game.home_score)
 
     await db.flush()
 
 
-def _update_scoring_average(rating: TeamRating, *, scored: int, allowed: int) -> None:
+def update_scoring_average(rating: TeamRating, *, scored: int, allowed: int) -> None:
     """Incremental (running) mean - avoids re-scanning every prior game's
     score just to add one more, the same reason src/ingest/lines.py favours
     an insert-on-change comparison over a full re-aggregation."""

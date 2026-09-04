@@ -99,3 +99,34 @@ class RecommendationSnapshot(Base, UUIDPrimaryKey):
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
+
+
+class CalibrationReport(Base, UUIDPrimaryKey):
+    """One walk-forward backtest run (src/services/backtest.py) for one
+    sport/market pair - deliberately its own table, not a repurposing of
+    ModelArtifact. ModelArtifact's artifact_path/kind/trained_at describe a
+    trained, serialized model file; the Elo/totals baseline is neither
+    trained nor serialized, so populating those columns for it would mean
+    inventing placeholder values - exactly the fabrication this
+    application's "honest baseline" ethos exists to avoid. Append-only like
+    every other observation table here: each run is kept, not upserted,
+    so passed_gate history is auditable over time as more games accumulate.
+    """
+
+    __tablename__ = "calibration_reports"
+
+    sport: Mapped[str] = mapped_column(String(8), nullable=False)
+    market: Mapped[str] = mapped_column(String(16), nullable=False)  # moneyline|spread|total
+    seasons_used: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    brier_score: Mapped[float | None] = mapped_column(Float)
+    log_loss: Mapped[float | None] = mapped_column(Float)
+    # True when brier_score beats the flat-50% reference point (0.25) by a
+    # meaningful margin - see scripts/run_calibration.py for the actual
+    # threshold and rationale. False, not null, when sample_size is too
+    # small to trust: an untrusted report must never look identical to a
+    # report that hasn't run yet.
+    passed_gate: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )

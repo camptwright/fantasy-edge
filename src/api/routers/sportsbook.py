@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.settings import get_settings
 from src.db.client import get_db
 from src.models.facts import Game, PlayerPropLine, TeamMarketLine
-from src.models.governance import RecommendationSnapshot
+from src.models.governance import CalibrationReport, RecommendationSnapshot
 from src.models.identity import Player, Team
 from src.models.ratings import TeamRating
 from src.services.elo import moneyline_probability, spread_cover_probability
@@ -580,3 +580,41 @@ async def recommendations(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     if snapshot is None:
         return {"narrative": None, "generated_at": None, "note": "no recommendation generated yet"}
     return {"narrative": snapshot.narrative, "generated_at": snapshot.generated_at.isoformat()}
+
+
+@router.get("/calibration")
+async def calibration(sport: str | None = None, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Latest walk-forward backtest result (src/services/backtest.py,
+    scripts/run_calibration.py) per sport/market pair - a manually-run,
+    occasional offline check, never computed live in this request. Returns
+    the newest CalibrationReport row for each distinct (sport, market),
+    not full history - a reader wants "is the model good right now," which
+    is the latest report, not every past run."""
+    stmt = select(CalibrationReport).order_by(desc(CalibrationReport.evaluated_at))
+    if sport is not None:
+        stmt = stmt.where(CalibrationReport.sport == sport)
+    reports = (await db.execute(stmt)).scalars().all()
+
+    latest_by_key: dict[tuple[str, str], CalibrationReport] = {}
+    for report in reports:
+        key = (report.sport, report.market)
+        latest_by_key.setdefault(key, report)
+
+    if not latest_by_key:
+        return {"reports": [], "note": "no calibration report generated yet"}
+
+    return {
+        "reports": [
+            {
+                "sport": r.sport,
+                "market": r.market,
+                "seasons_used": r.seasons_used,
+                "sample_size": r.sample_size,
+                "brier_score": r.brier_score,
+                "log_loss": r.log_loss,
+                "passed_gate": r.passed_gate,
+                "evaluated_at": r.evaluated_at.isoformat(),
+            }
+            for r in latest_by_key.values()
+        ]
+    }

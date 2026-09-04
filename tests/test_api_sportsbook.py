@@ -421,3 +421,57 @@ async def test_build_parlay_skips_an_unknown_leg_instead_of_erroring(db):
         assert body["combined_probability"] is None
     finally:
         app.dependency_overrides.clear()
+
+
+async def test_calibration_reports_the_gap_when_nothing_has_been_generated(db):
+    client = await _client(db)
+    try:
+        response = await client.get("/calibration")
+        body = response.json()
+        assert body["reports"] == []
+        assert "no calibration report generated yet" in body["note"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_calibration_returns_only_the_latest_report_per_sport_and_market(db):
+    from src.models.governance import CalibrationReport
+
+    db.add(
+        CalibrationReport(
+            sport="nfl", market="moneyline", seasons_used=[2020], sample_size=100,
+            brier_score=0.24, log_loss=0.68, passed_gate=False,
+            evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+    db.add(
+        CalibrationReport(
+            sport="nfl", market="moneyline", seasons_used=[2020, 2021], sample_size=200,
+            brier_score=0.21, log_loss=0.6, passed_gate=True,
+            evaluated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        )
+    )
+    db.add(
+        CalibrationReport(
+            sport="ncaaf", market="moneyline", seasons_used=[2025], sample_size=60,
+            brier_score=0.22, log_loss=0.62, passed_gate=True,
+            evaluated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+    await db.commit()
+
+    client = await _client(db)
+    try:
+        response = await client.get("/calibration")
+        body = response.json()
+        assert len(body["reports"]) == 2  # one per (sport, market) pair, latest only
+        nfl_report = next(r for r in body["reports"] if r["sport"] == "nfl")
+        assert nfl_report["sample_size"] == 200
+        assert nfl_report["passed_gate"] is True
+
+        filtered = await client.get("/calibration?sport=ncaaf")
+        filtered_body = filtered.json()
+        assert len(filtered_body["reports"]) == 1
+        assert filtered_body["reports"][0]["sport"] == "ncaaf"
+    finally:
+        app.dependency_overrides.clear()
