@@ -47,10 +47,20 @@ export function RecommendationsView({
   const [legs, setLegs] = useState<SelectedLeg[]>([]);
   const [result, setResult] = useState<BuildResult | null>(null);
   const [loading, setLoading] = useState(false);
+  // Below lg, the slip lives as a fixed bottom sheet, not a sidebar - the
+  // page is 5 sports of stacked tables tall, and a sidebar that only
+  // appears after all of them would mean scrolling past everything just to
+  // see what you've picked. Collapsed by default; a leg add auto-expands
+  // it once so a first-time mobile user notices it exists at all.
+  const [mobileSlipOpen, setMobileSlipOpen] = useState(false);
 
   function addLeg(leg: SelectedLeg) {
-    setLegs((prev) => (prev.some((l) => legKey(l) === legKey(leg)) ? prev : [...prev, leg]));
+    setLegs((prev) => {
+      if (prev.some((l) => legKey(l) === legKey(leg))) return prev;
+      return [...prev, leg];
+    });
     setResult(null);
+    setMobileSlipOpen(true);
   }
 
   function removeLeg(leg: SelectedLeg) {
@@ -221,56 +231,72 @@ export function RecommendationsView({
         })}
       </div>
 
-      <aside className="h-fit rounded-lg border border-slate-700 bg-slate-900/40 p-4 lg:sticky lg:top-6">
-        <h2 className="mb-3 text-sm uppercase text-slate-500">Parlay slip</h2>
-        {legs.length === 0 ? (
-          <p className="text-sm text-slate-500">Add signals or props to build a parlay.</p>
-        ) : (
-          <ul className="mb-4 space-y-2">
-            {legs.map((leg) => (
-              <li
-                key={legKey(leg)}
-                className="flex items-center justify-between gap-2 rounded-md border border-slate-800 p-2 text-sm"
-              >
-                <span className="text-slate-300">{leg.label}</span>
-                <button onClick={() => removeLeg(leg)} className="text-xs text-red-400 hover:text-red-300">
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+      <aside
+        className={`fixed inset-x-0 bottom-0 z-40 max-h-[75vh] overflow-y-auto rounded-t-2xl border-t border-slate-700 bg-slate-950 shadow-2xl transition-transform duration-200 lg:static lg:top-6 lg:h-fit lg:max-h-none lg:translate-y-0 lg:overflow-visible lg:rounded-lg lg:border lg:border-slate-700 lg:bg-slate-900/40 lg:shadow-none ${
+          mobileSlipOpen ? "translate-y-0" : "translate-y-[calc(100%-3.25rem)]"
+        }`}
+      >
         <button
-          onClick={calculate}
-          disabled={legs.length === 0 || loading}
-          className="w-full rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-500 disabled:opacity-30"
+          type="button"
+          onClick={() => setMobileSlipOpen((open) => !open)}
+          className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold text-slate-100 lg:hidden"
+          aria-expanded={mobileSlipOpen}
         >
-          {loading ? "Calculating…" : "Calculate parlay"}
+          <span>Parlay slip{legs.length > 0 ? ` · ${legs.length} leg${legs.length === 1 ? "" : "s"}` : ""}</span>
+          <span className="text-slate-500">{mobileSlipOpen ? "Hide ▾" : "Show ▴"}</span>
         </button>
-        {result && (
-          <div className="mt-4 space-y-2 border-t border-slate-800 pt-4 text-sm">
-            {result.combined_probability !== null ? (
-              <>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Combined probability</span>
-                  <span className="font-mono text-emerald-300">{formatPercent(result.combined_probability)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Combined price</span>
-                  <span className="font-mono text-emerald-300">{formatPrice(result.combined_price_american)}</span>
-                </div>
-              </>
-            ) : (
-              <p className="text-slate-500">{result.note}</p>
-            )}
-            {result.skipped_legs.length > 0 && (
-              <p className="text-xs text-amber-400">
-                {result.skipped_legs.length} leg(s) could not be priced and were skipped.
-              </p>
-            )}
-            <p className="text-xs text-slate-600">Legs assumed independent - not a correlated joint model.</p>
-          </div>
-        )}
+
+        <div className="px-4 pb-4 lg:sticky lg:top-6 lg:p-4">
+          <h2 className="mb-3 hidden text-sm uppercase text-slate-500 lg:block">Parlay slip</h2>
+          {legs.length === 0 ? (
+            <p className="text-sm text-slate-500">Add signals or props to build a parlay.</p>
+          ) : (
+            <ul className="mb-4 space-y-2">
+              {legs.map((leg) => (
+                <li
+                  key={legKey(leg)}
+                  className="flex items-center justify-between gap-2 rounded-md border border-slate-800 p-2 text-sm"
+                >
+                  <span className="text-slate-300">{leg.label}</span>
+                  <button onClick={() => removeLeg(leg)} className="text-xs text-red-400 hover:text-red-300">
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            onClick={calculate}
+            disabled={legs.length === 0 || loading}
+            className="w-full rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-500 disabled:opacity-30"
+          >
+            {loading ? "Calculating…" : "Calculate parlay"}
+          </button>
+          {result && (
+            <div className="mt-4 space-y-2 border-t border-slate-800 pt-4 text-sm">
+              {result.combined_probability !== null ? (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Combined probability</span>
+                    <span className="font-mono text-emerald-300">{formatPercent(result.combined_probability)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Combined price</span>
+                    <span className="font-mono text-emerald-300">{formatPrice(result.combined_price_american)}</span>
+                  </div>
+                </>
+              ) : (
+                <p className="text-slate-500">{result.note}</p>
+              )}
+              {result.skipped_legs.length > 0 && (
+                <p className="text-xs text-amber-400">
+                  {result.skipped_legs.length} leg(s) could not be priced and were skipped.
+                </p>
+              )}
+              <p className="text-xs text-slate-600">Legs assumed independent - not a correlated joint model.</p>
+            </div>
+          )}
+        </div>
       </aside>
     </div>
   );

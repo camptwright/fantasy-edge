@@ -1,4 +1,5 @@
 import { RecommendationsView } from "@/components/RecommendationsView";
+import { PageHeader } from "@/components/ui";
 
 // Static generation happens during the image build, before the API and its
 // database are available - same reasoning as the Fantasy/Board pages.
@@ -88,18 +89,12 @@ export default async function RecommendationsPage() {
   ]);
 
   return (
-    <main className="mx-auto max-w-6xl p-8">
-      <header className="mb-8">
-        <p className="text-sm text-emerald-400">
-          LLM narrative over a transparent Elo/totals/projection baseline - not calibrated, not
-          gambling advice
-        </p>
-        <h1 className="text-4xl font-bold">Recommendations</h1>
-        <p className="mt-2 text-slate-400">
-          Top signals and player props across every sport, narrated by the local model on a
-          30-minute refresh, plus a parlay builder for combining the picks you choose.
-        </p>
-      </header>
+    <main className="mx-auto max-w-6xl p-4 pb-24 sm:p-6 md:p-8 lg:pb-8">
+      <PageHeader
+        eyebrow="LLM narrative over a transparent baseline · not calibrated, not gambling advice"
+        title="Recommendations"
+        description="Top signals and player props across every sport, narrated by the local model on a 30-minute refresh, plus a parlay builder for combining the picks you choose."
+      />
 
       <RecommendationsView
         narrative={recommendation.narrative}

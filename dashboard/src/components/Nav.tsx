@@ -3,16 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// Only the two pages that actually exist post-rebuild. The rest of this
-// dashboard's pages (team odds, NFL predictions, games, parlays, model lab,
-// paper tracker, ...) were removed in the 2026-08-20 NFL-only clean slate
-// and never rebuilt - this list used to still reference all of them.
 const LINKS = [
   { href: "/", label: "Dashboard" },
   { href: "/fantasy", label: "Fantasy" },
   { href: "/fantasy/matchup", label: "Matchup" },
   { href: "/board", label: "Board" },
+  { href: "/best-bets", label: "Best Bets" },
   { href: "/recommendations", label: "Recommendations" },
+  { href: "/calibration", label: "Calibration" },
 ];
 
 export function Nav() {
@@ -48,7 +46,7 @@ export function Nav() {
         </div>
       </div>
       <div className="flex gap-1 overflow-x-auto px-4 pb-2 md:hidden" aria-label="Mobile navigation">
-        {LINKS.slice(0, 5).map((link) => {
+        {LINKS.map((link) => {
           const active = link.href === "/" ? pathname === "/" : pathname?.startsWith(link.href);
           return <Link key={link.href} href={link.href} className={`min-h-11 whitespace-nowrap rounded-md px-3 py-2 text-sm ${active ? "bg-accent/10 text-accent" : "text-gray-400"}`}>{link.label}</Link>;
         })}

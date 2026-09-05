@@ -1,0 +1,184 @@
+import Link from "next/link";
+import { MarketBadge, PageHeader, SportBadge, formatPrice } from "@/components/ui";
+
+// Very large edges are real numbers computed from real data, never
+// fabricated - but a player-prop projection is a rolling mean over as few
+// as 4 realized games (src/services/projections.py's
+// MIN_GAMES_FOR_PROJECTION) with no awareness of role changes, injuries,
+// or a book pricing a bigger role than the sample reflects. Only the
+// moneyline market currently has a real walk-forward calibration report
+// at all (see /calibration) - flagging that here rather than presenting
+// every ranked row with equal implied confidence.
+const EDGE_CAVEAT_THRESHOLD = 60;
+
+// Static generation happens during the image build, before the API and its
+// database are available - same reasoning as the Board/Recommendations pages.
+export const dynamic = "force-dynamic";
+
+const SPORTS = ["nfl", "ncaaf", "nba", "mlb", "nhl"] as const;
+const TOP_N = 30;
+
+type Signal = {
+  id: string;
+  sport: string;
+  market: string;
+  selection: string;
+  price_american: number | null;
+  matchup: string;
+  ev_percent: number;
+};
+
+type Prop = {
+  id: string;
+  sport: string;
+  player_name: string;
+  stat_type: string;
+  line: number;
+  over_price_american: number | null;
+  under_price_american: number | null;
+  edge_percent: number | null;
+  under_edge_percent: number | null;
+};
+
+type Opportunity = {
+  key: string;
+  sport: string;
+  market: string;
+  label: string;
+  detail: string;
+  price: number | null;
+  edgePercent: number;
+};
+
+function apiUrl(): string {
+  return process.env.FANTASY_API_URL || "http://api:8000";
+}
+
+async function fetchJson<T>(path: string, fallback: T): Promise<T> {
+  const res = await fetch(`${apiUrl()}${path}`, { cache: "no-store" });
+  return res.ok ? res.json() : fallback;
+}
+
+function signalToOpportunity(s: Signal): Opportunity {
+  return {
+    key: `signal:${s.id}`,
+    sport: s.sport,
+    market: s.market,
+    label: s.selection,
+    detail: s.matchup,
+    price: s.price_american,
+    edgePercent: s.ev_percent,
+  };
+}
+
+function propToOpportunities(p: Prop): Opportunity[] {
+  const out: Opportunity[] = [];
+  if (p.edge_percent !== null && p.over_price_american !== null) {
+    out.push({
+      key: `prop:${p.id}:over`,
+      sport: p.sport,
+      market: p.stat_type,
+      label: `${p.player_name} Over ${p.line}`,
+      detail: p.stat_type.replaceAll("_", " "),
+      price: p.over_price_american,
+      edgePercent: p.edge_percent,
+    });
+  }
+  if (p.under_edge_percent !== null && p.under_price_american !== null) {
+    out.push({
+      key: `prop:${p.id}:under`,
+      sport: p.sport,
+      market: p.stat_type,
+      label: `${p.player_name} Under ${p.line}`,
+      detail: p.stat_type.replaceAll("_", " "),
+      price: p.under_price_american,
+      edgePercent: p.under_edge_percent,
+    });
+  }
+  return out;
+}
+
+export default async function BestBetsPage() {
+  const perSport = await Promise.all(
+    SPORTS.map(async (sport) => {
+      const [signals, props] = await Promise.all([
+        fetchJson<Signal[]>(`/signals?sport=${sport}`, []),
+        fetchJson<Prop[]>(`/props?sport=${sport}`, []),
+      ]);
+      return { signals, props };
+    }),
+  );
+
+  const opportunities = perSport
+    .flatMap(({ signals, props }) => [
+      ...signals.filter((s) => s.price_american !== null).map(signalToOpportunity),
+      ...props.flatMap(propToOpportunities),
+    ])
+    .sort((a, b) => b.edgePercent - a.edgePercent)
+    .slice(0, TOP_N);
+
+  return (
+    <main className="mx-auto max-w-4xl p-4 sm:p-6 md:p-8">
+      <PageHeader
+        eyebrow="Live quantitative ranking · no LLM, nothing cached"
+        title="Best Bets"
+        description="Every priced signal and qualified player prop across all five sports, ranked by edge against the market price. Computed fresh on every request from the same Elo/totals/projection baseline as the Board and Recommendations pages - no narrative, just the numbers, sorted."
+      />
+
+      <p className="mb-6 rounded-lg border border-amber-800/60 bg-amber-950/20 p-4 text-xs text-amber-200/90 sm:text-sm">
+        A big edge here is a real number, not a fabricated one - but only the moneyline market has
+        a measured{" "}
+        <Link href="/calibration" className="underline hover:text-amber-100">
+          calibration report
+        </Link>{" "}
+        against real outcomes. Player-prop projections are a rolling average over as few as 4
+        realized games, with no awareness of role changes or injuries - treat very large edges as
+        a sign the model and the book disagree sharply, not as a guaranteed win.
+      </p>
+
+      {opportunities.length === 0 ? (
+        <p className="rounded-lg border border-slate-700 p-6 text-sm text-slate-400">
+          Nothing qualifies yet - check back once more games and props have real prices attached.
+        </p>
+      ) : (
+        <ol className="space-y-2">
+          {opportunities.map((opp, index) => (
+            <li
+              key={opp.key}
+              className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900/40 p-3 sm:gap-4 sm:p-4"
+            >
+              <span className="w-5 shrink-0 text-center font-mono text-sm text-slate-600">{index + 1}</span>
+              <div className="min-w-0 flex-1">
+                <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                  <SportBadge sport={opp.sport} />
+                  <MarketBadge market={opp.market} />
+                </div>
+                <p className="truncate text-sm font-medium text-slate-100 sm:text-base">{opp.label}</p>
+                <p className="truncate text-xs text-slate-500">{opp.detail}</p>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="font-mono text-sm text-slate-300">{formatPrice(opp.price)}</p>
+                <p className="font-mono text-sm font-semibold text-emerald-400">
+                  {opp.edgePercent > EDGE_CAVEAT_THRESHOLD && (
+                    <span className="mr-1 text-amber-400" title="Large edge - model and book disagree sharply">
+                      ⚠
+                    </span>
+                  )}
+                  +{opp.edgePercent.toFixed(1)}%
+                </p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+
+      <p className="mt-6 text-xs text-slate-600">
+        Want to combine a few of these into a parlay? Build it on the{" "}
+        <Link href="/recommendations" className="text-emerald-400 hover:underline">
+          Recommendations
+        </Link>{" "}
+        page, where the same signals and props carry a parlay slip.
+      </p>
+    </main>
+  );
+}

@@ -6,6 +6,54 @@ export function Card({ children, className = "" }: { children: React.ReactNode; 
   );
 }
 
+// Shared header shape for every data page (Board, Recommendations, Best
+// Bets, Calibration) - one responsive scale (smaller on phones, where a
+// 4xl headline eats the whole first screen) instead of each page picking
+// its own padding/heading size ad hoc.
+export function PageHeader({
+  eyebrow,
+  title,
+  description,
+}: {
+  eyebrow: string;
+  title: string;
+  description?: string;
+}) {
+  return (
+    <header className="mb-6 md:mb-8">
+      <p className="text-xs font-bold uppercase tracking-[.15em] text-emerald-400 sm:text-sm sm:tracking-[.2em]">
+        {eyebrow}
+      </p>
+      <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl md:text-4xl">{title}</h1>
+      {description && <p className="mt-2 max-w-2xl text-sm text-slate-400 md:text-base">{description}</p>}
+    </header>
+  );
+}
+
+const MARKET_STYLES: Record<string, string> = {
+  moneyline: "bg-blue-500/15 text-blue-300",
+  spread: "bg-purple-500/15 text-purple-300",
+  total: "bg-amber-500/15 text-amber-300",
+};
+
+export function MarketBadge({ market }: { market: string }) {
+  const style = MARKET_STYLES[market] ?? "bg-gray-500/15 text-gray-300";
+  return <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium uppercase ${style}`}>{market}</span>;
+}
+
+const SPORT_STYLES: Record<string, string> = {
+  nfl: "bg-emerald-500/15 text-emerald-300",
+  ncaaf: "bg-orange-500/15 text-orange-300",
+  nba: "bg-red-500/15 text-red-300",
+  mlb: "bg-sky-500/15 text-sky-300",
+  nhl: "bg-indigo-500/15 text-indigo-300",
+};
+
+export function SportBadge({ sport }: { sport: string }) {
+  const style = SPORT_STYLES[sport] ?? "bg-gray-500/15 text-gray-300";
+  return <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase ${style}`}>{sport}</span>;
+}
+
 const TIER_STYLES: Record<string, string> = {
   elite: "bg-yellow-500/15 text-yellow-400",
   strong: "bg-green-500/15 text-green-400",
