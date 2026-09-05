@@ -98,12 +98,16 @@ def sync_team_markets() -> dict[str, int]:
 
 
 @celery_app.task(name="fantasy.sync_sleeper")
-def sync_sleeper() -> dict[str, dict[str, int]]:
-    async def run() -> dict[str, dict[str, int]]:
+def sync_sleeper() -> dict[str, dict[str, int | str]]:
+    async def run() -> dict[str, dict[str, int | str]]:
         async with get_worker_db() as db:
             return await sync_sleeper_account(db)
 
-    return asyncio.run(run())
+    try:
+        return asyncio.run(run())
+    except Exception as exc:
+        asyncio.run(notify(f"Sleeper sync failed: {exc}", title="Fantasy Edge: Sleeper"))
+        raise
 
 
 @celery_app.task(name="fantasy.sync_pinnacle")

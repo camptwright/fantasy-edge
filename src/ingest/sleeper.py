@@ -13,6 +13,7 @@ is only ever called for sport == "nfl".
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 import httpx
@@ -24,27 +25,51 @@ from config.settings import get_settings
 from src.data.providers.sportsdataio import weekly_projections
 from src.models.sleeper import SleeperLeague, SleeperLeagueSnapshot, SleeperRoster
 
+logger = logging.getLogger(__name__)
 
-async def sync_sleeper_account(db: AsyncSession) -> dict[str, dict[str, int]]:
+
+async def sync_sleeper_account(db: AsyncSession) -> dict[str, dict[str, int | str]]:
     settings = get_settings()
     if not settings.sleeper_username:
         raise ValueError("SLEEPER_USERNAME is not configured")
     username = settings.sleeper_username.lstrip("@")
 
-    results: dict[str, dict[str, int]] = {}
+    results: dict[str, dict[str, int | str]] = {}
     async with httpx.AsyncClient(base_url=settings.sleeper_base_url, timeout=20) as client:
         user = (await client.get(f"/user/{username}")).json()
         if not user.get("user_id"):
             raise ValueError("Sleeper username was not found")
         for sport in settings.sleeper_sports:
-            results[sport] = await _sync_sport(db, client, user, sport)
+            # FOUND LIVE 2026-09-05: one sport's request failing (originally
+            # NHL/MLB's /state response lacking league_season - see below)
+            # raised out of the loop, and since this function commits once
+            # at the end rather than per sport, that discarded every
+            # already-fetched sport's data too - the real cause of "no
+            # leagues synced" even though NFL leagues were being fetched
+            # successfully every 15 minutes. A single sport's ingest should
+            # never take down every other sport's, matching this app's own
+            # "skip/park, don't raise" pattern for a single bad item
+            # elsewhere (identity.py's resolve_player, lines.py's parked
+            # props).
+            try:
+                results[sport] = await _sync_sport(db, client, user, sport)
+            except Exception as exc:
+                logger.warning("sleeper sync failed for sport=%s: %s", sport, exc)
+                results[sport] = {"error": str(exc)}
         await db.commit()
     return results
 
 
 async def _sync_sport(db: AsyncSession, client: httpx.AsyncClient, user: dict, sport: str) -> dict[str, int]:
     state = (await client.get(f"/state/{sport}")).json()
-    season = str(state["league_season"])
+    # FOUND LIVE 2026-09-05: verified against the real endpoint - NFL and
+    # NBA's /state response carries a league_season field, but MLB and
+    # NHL's genuinely do not (both still carry season, which is identical
+    # to league_season on the sports that have both). Not a transient gap -
+    # both fields exist purely because Sleeper's fantasy-league "season"
+    # can lag the real season for out-of-window sports; falling back to
+    # season is correct rather than papering over a real absence.
+    season = str(state.get("league_season") or state["season"])
     leagues = (await client.get(f"/user/{user['user_id']}/leagues/{sport}/{season}")).json()
     week = int(state.get("leg") or 1)
 
