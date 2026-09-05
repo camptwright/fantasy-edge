@@ -76,7 +76,7 @@ export default async function BoardPage() {
             )}
           </div>
           <div className="grid gap-6 lg:grid-cols-3">
-            <div className="lg:col-span-2">
+            <div className="min-w-0 lg:col-span-2">
               {sportSignals.length === 0 ? (
                 <p className="rounded-lg border border-slate-700 p-6 text-sm text-slate-400">
                   No priced signals yet for {sport}.

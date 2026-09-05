@@ -85,8 +85,8 @@ export function RecommendationsView({
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-      <div>
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="min-w-0">
         <section className="mb-8 rounded-lg border border-slate-700 bg-slate-900/40 p-5">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-sm uppercase text-slate-500">Market briefing</h2>
@@ -106,7 +106,7 @@ export function RecommendationsView({
             <section key={sport} className="mb-10">
               <h2 className="mb-3 text-2xl font-semibold uppercase">{sport}</h2>
               <div className="grid gap-6 lg:grid-cols-2">
-                <div>
+                <div className="min-w-0">
                   <h3 className="mb-2 text-sm uppercase text-slate-500">Game lines</h3>
                   {topSignals.length === 0 ? (
                     <p className="rounded-lg border border-slate-700 p-4 text-sm text-slate-400">
@@ -153,7 +153,7 @@ export function RecommendationsView({
                     </div>
                   )}
                 </div>
-                <div>
+                <div className="min-w-0">
                   <h3 className="mb-2 text-sm uppercase text-slate-500">Player props</h3>
                   {topProps.length === 0 ? (
                     <p className="rounded-lg border border-slate-700 p-4 text-sm text-slate-400">
