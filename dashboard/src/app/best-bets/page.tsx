@@ -98,9 +98,23 @@ function propToOpportunities(p: Prop): Opportunity[] {
   return out;
 }
 
-export default async function BestBetsPage() {
+type SportFilter = (typeof SPORTS)[number] | "all";
+
+function isSportFilter(value: string | undefined): value is SportFilter {
+  return value === "all" || (SPORTS as readonly string[]).includes(value ?? "");
+}
+
+export default async function BestBetsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ sport?: string }>;
+}) {
+  const query = await searchParams;
+  const filter: SportFilter = isSportFilter(query.sport) ? query.sport : "all";
+  const sportsToFetch = filter === "all" ? SPORTS : [filter];
+
   const perSport = await Promise.all(
-    SPORTS.map(async (sport) => {
+    sportsToFetch.map(async (sport) => {
       const [signals, props] = await Promise.all([
         fetchJson<Signal[]>(`/signals?sport=${sport}`, []),
         fetchJson<Prop[]>(`/props?sport=${sport}`, []),
@@ -109,6 +123,10 @@ export default async function BestBetsPage() {
     }),
   );
 
+  // Ranked within whatever's currently selected, not sliced from a
+  // global top-30 then filtered - a one-sport view should show that
+  // sport's own top 30, not however many of the global top 30 happened
+  // to belong to it.
   const opportunities = perSport
     .flatMap(({ signals, props }) => [
       ...signals.filter((s) => s.price_american !== null).map(signalToOpportunity),
@@ -122,8 +140,25 @@ export default async function BestBetsPage() {
       <PageHeader
         eyebrow="Live quantitative ranking · no LLM, nothing cached"
         title="Best Bets"
-        description="Every priced signal and qualified player prop across all five sports, ranked by edge against the market price. Computed fresh on every request from the same Elo/totals/projection baseline as the Board and Recommendations pages - no narrative, just the numbers, sorted."
+        description="Every priced signal and qualified player prop, ranked by edge against the market price. Computed fresh on every request from the same Elo/totals/projection baseline as the Board and Recommendations pages - no narrative, just the numbers, sorted."
       />
+
+      <nav className="mb-6 flex gap-1 overflow-x-auto" aria-label="Filter by sport">
+        {(["all", ...SPORTS] as const).map((option) => {
+          const active = option === filter;
+          return (
+            <Link
+              key={option}
+              href={option === "all" ? "/best-bets" : `/best-bets?sport=${option}`}
+              className={`whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium uppercase transition-colors ${
+                active ? "bg-emerald-500/15 text-emerald-300" : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+              }`}
+            >
+              {option === "all" ? "All sports" : option}
+            </Link>
+          );
+        })}
+      </nav>
 
       <p className="mb-6 rounded-lg border border-amber-800/60 bg-amber-950/20 p-4 text-xs text-amber-200/90 sm:text-sm">
         A big edge here is a real number, not a fabricated one - but only the moneyline market has
@@ -138,7 +173,9 @@ export default async function BestBetsPage() {
 
       {opportunities.length === 0 ? (
         <p className="rounded-lg border border-slate-700 p-6 text-sm text-slate-400">
-          Nothing qualifies yet - check back once more games and props have real prices attached.
+          {filter === "all"
+            ? "Nothing qualifies yet - check back once more games and props have real prices attached."
+            : `Nothing qualifies for ${filter.toUpperCase()} yet - check back once more games and props have real prices attached.`}
         </p>
       ) : (
         <ol className="space-y-2">
