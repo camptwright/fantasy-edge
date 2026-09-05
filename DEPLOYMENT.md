@@ -52,6 +52,49 @@ side either, but if `games` is empty, run
 does need `nflreadpy` (`pip install -e '.[offline]'`), which is
 deliberately not part of the serving image.
 
+## ntfy alerting
+
+`src/utils/alerts.py`'s `notify()` silently drops every alert until
+`NTFY_BASE_URL`/`NTFY_TOPIC`/`NTFY_TOKEN` are set in `.env` - by default
+this app has no working alerting at all, which is how a Sleeper sync could
+crash on every single scheduled run without anyone finding out (found live
+2026-09-05). The `ntfy` service in `docker-compose.yml` is self-hosted
+(not ntfy.sh) and defaults to `NTFY_AUTH_DEFAULT_ACCESS: deny-all`, so a
+fresh `ntfydata` volume has no users and every request 403s until this
+one-time setup runs:
+
+```bash
+docker compose up -d ntfy
+docker exec -e NTFY_PASSWORD='choose-a-real-password' fantasy-edge-ntfy-1 \
+  ntfy user add --role=user fantasyedge
+docker exec fantasy-edge-ntfy-1 ntfy access fantasyedge fantasy-edge-alerts read-write
+docker exec fantasy-edge-ntfy-1 ntfy token add fantasyedge
+```
+
+Put the printed token in `.env` as `NTFY_TOKEN`, `NTFY_TOPIC=fantasy-edge-alerts`,
+and `NTFY_BASE_URL=http://ntfy:80` (the container's internal address - the
+app publishes over the compose network, never through the host-published
+port), then `docker compose up -d --force-recreate api worker beat` so the
+new env vars actually load (they're read at container start, not
+hot-reloaded). Subscribe from the ntfy phone app at
+`http://<this-host's-LAN-IP>:8090` (the port `docker-compose.yml`'s `ntfy`
+service publishes), topic `fantasy-edge-alerts`, logging in as the same
+`fantasyedge` user/password - deny-all means an unauthenticated subscribe
+403s exactly like an unauthenticated publish does. This only reaches the
+phone on the same LAN/VPN as the host; reaching it from elsewhere needs a
+real Cloudflare Tunnel hostname (or similar) pointed at this port, which is
+a separate, not-yet-done step.
+
+Verify the whole path with a real publish, not just a healthcheck:
+```bash
+docker exec fantasy-edge-worker-1 python -c "
+import asyncio
+from src.utils.alerts import notify
+asyncio.run(notify('test', title='Fantasy Edge: Test'))
+"
+curl -u fantasyedge:<password> 'http://localhost:8090/fantasy-edge-alerts/json?poll=1&since=all'
+```
+
 ## Verify
 
 ```bash
