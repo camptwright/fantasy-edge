@@ -102,7 +102,34 @@ async def generate_narrative(db: AsyncSession) -> str:
                     {"role": "user", "content": str(evidence)},
                 ],
                 "temperature": 0.2,
+                # FOUND LIVE 2026-09-05: this model is a "thinking" model
+                # that emits its chain-of-thought as a separate
+                # `reasoning_content` field before ever writing the real
+                # answer into `content`. Verified live: a 1-signal prompt
+                # finished in ~2.4k total tokens with real content; the
+                # real 16-item, 5-sport evidence payload burns enough
+                # reasoning tokens that without headroom the response gets
+                # cut off while still "thinking" - content empty,
+                # reasoning_content populated, finish_reason cut short.
+                # No max_tokens was set before, so this rode whatever
+                # Ollama's own num_predict default is - too small for this
+                # model's reasoning overhead at real evidence size.
+                "max_tokens": 8000,
             },
         )
         response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"]
+    content = response.json()["choices"][0]["message"]["content"]
+    if not content.strip():
+        # FOUND LIVE 2026-09-05: the local Ollama model occasionally returns
+        # a real HTTP 200 with an empty completion (no error to catch, no
+        # exception to raise on its own). Without this check that empty
+        # string got written straight into a new RecommendationSnapshot row,
+        # silently replacing a real, useful cached narrative with nothing -
+        # /recommendations then serves "no narrative yet" even though a good
+        # one existed a cycle ago. Raising here routes through the Celery
+        # task's existing try/except+notify and, critically, means the
+        # failed generate_recommendations run never calls db.add() at all -
+        # the last good snapshot stays live instead of being overwritten by
+        # a worse one.
+        raise RuntimeError("LLM returned an empty narrative")
+    return content

@@ -3,6 +3,19 @@ model_list:
     litellm_params:
       model: ollama_chat/qwen3.5:9b
       api_base: os.environ/OLLAMA_BASE_URL
+      # FOUND LIVE 2026-09-05: qwen3.5 is a "thinking" model that emits its
+      # chain-of-thought as a separate reasoning_content field before ever
+      # writing the real answer into content. Ollama's default num_ctx
+      # (4096) is the TOTAL context window (prompt + completion combined) -
+      # verified live against the real 5-sport recommendations evidence
+      # payload (1216 prompt tokens): the response came back with
+      # finish_reason=length, total_tokens=4096 exactly, content empty,
+      # and 8004 chars of reasoning_content - the model was still mid-
+      # thought when the window ran out, so it never got to write an
+      # actual answer. src/services/recommendations.py's own max_tokens
+      # request parameter is irrelevant here since the context window,
+      # not the completion-length parameter, was the real ceiling.
+      num_ctx: 16384
   - model_name: fast
     litellm_params:
       model: ollama_chat/llama3.2:3b
