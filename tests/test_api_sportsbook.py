@@ -161,6 +161,37 @@ async def test_signals_exclude_games_that_have_already_finished(db):
         app.dependency_overrides.clear()
 
 
+async def test_signals_exclude_games_already_in_progress(db):
+    """FOUND LIVE 2026-09-05: excluding only "final" wasn't enough - a real
+    in-progress MLB game (Reds hosting the Brewers) was still priced with
+    the STATIC pre-game Elo rating while the market's own live moneyline
+    had already moved to +1139 to reflect the actual score, producing a
+    617% "EV". Elo/totals has no in-play adjustment, so an in-progress game
+    must be excluded exactly like a final one - signal_rows now requires
+    status == "scheduled" rather than merely status != "final"."""
+    home = await resolve_team(db, "Kansas City Chiefs")
+    away = await resolve_team(db, "Los Angeles Chargers")
+    db.add(TeamRating(team_id=home.id, sport="nfl", rating=1600.0))
+    db.add(TeamRating(team_id=away.id, sport="nfl", rating=1400.0))
+    game = Game(
+        sport="nfl", espn_event_id="signal-test-in-progress", season=2026,
+        home_team_id=home.id, away_team_id=away.id, status="in_progress",
+    )
+    db.add(game)
+    await db.flush()
+    now = datetime.now(timezone.utc)
+    db.add(TeamMarketLine(game_id=game.id, market="moneyline", side="home", price_american=-150, source="pinnacle", line_type="live", observed_at=now))
+    db.add(TeamMarketLine(game_id=game.id, market="moneyline", side="away", price_american=130, source="pinnacle", line_type="live", observed_at=now))
+    await db.commit()
+
+    client = await _client(db)
+    try:
+        response = await client.get("/signals?sport=nfl")
+        assert response.json() == [], "an in-progress game must never be priced with the static pre-game rating"
+    finally:
+        app.dependency_overrides.clear()
+
+
 async def test_rankings_rejects_an_unsupported_sport(db):
     client = await _client(db)
     try:

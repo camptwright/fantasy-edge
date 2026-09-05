@@ -223,23 +223,34 @@ async def props_best(sport: str | None = Query(default=None), db: AsyncSession =
 
 
 async def signal_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]]:
-    """Only games that haven't been decided yet are real, bettable signals.
+    """Only games that haven't started yet are real, bettable signals.
 
     FOUND LIVE 2026-09-04: nflverse's historical closing-line ingestion
     (src/ingest/nflverse.py, meant for backtesting - see that module's own
     "closing-line value" docstring) writes a TeamMarketLine row for every
-    game in a season, finished or not. Without this filter, a finalized
+    game in a season, finished or not. Without a status filter, a finalized
     January game got priced with TODAY's team rating - a rating that
     already includes that exact game's own outcome - producing a 235% "EV"
     on a highly-favored team's underdog opponent. That isn't miscalibration,
     it's lookahead bias: the model was shown the answer before "predicting"
-    it. Excluding final games fixes /signals, /parlays, /parlays/build, and
-    the recommendations narrative all at once, since they all call this.
+    it.
+
+    FOUND LIVE 2026-09-05: excluding only "final" wasn't enough - an
+    in-progress MLB game (Reds hosting the Brewers, well into the game) was
+    still being priced against the STATIC pre-game Elo rating, producing a
+    617% "EV" on a live moneyline that had already moved to +1139 because
+    the market (unlike this model) knows the live score. Elo/totals is a
+    pre-game-only baseline with no in-play win-probability adjustment, so
+    the fix is the same shape as the first bug: only "scheduled" games
+    (src/ingest/{espn,mlb,nhl}.py's only three status values are scheduled/
+    in_progress/final) get a real, honest signal. Excluding both fixes
+    /signals, /parlays, /parlays/build, and the recommendations narrative
+    all at once, since they all call this.
     """
     stmt = (
         select(TeamMarketLine, Game)
         .join(Game, TeamMarketLine.game_id == Game.id)
-        .where(TeamMarketLine.market.in_(_MODELED_MARKETS), Game.status != "final")
+        .where(TeamMarketLine.market.in_(_MODELED_MARKETS), Game.status == "scheduled")
     )
     if sport is not None:
         stmt = stmt.where(Game.sport == sport)
