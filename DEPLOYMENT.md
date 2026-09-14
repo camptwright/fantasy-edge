@@ -74,45 +74,51 @@ this app has no working alerting at all, which is how a Sleeper sync could
 crash on every single scheduled run without anyone finding out (found live
 2026-09-05).
 
-As of 2026-09-13, this app has **no ntfy container of its own** - it
+As of 2026-09-14, this app has **no ntfy container of its own** - it
 publishes to reekserver-1's shared ntfy instance (the standalone `ntfy`
-repo, already routed through that host's Cloudflare Tunnel at
-`https://ntfy.camptwright.com`), the same consolidation applied fleet-wide
-so there's one ntfy instance instead of three. That instance defaults to
-`NTFY_AUTH_DEFAULT_ACCESS: deny-all`, so a topic this app hasn't been
-granted access to 403s every publish until this one-time setup runs
-**against the shared instance** (from reekserver-1, or anywhere with a
-route to it - not from this Mac mini's own compose project, which no
-longer has an `ntfy` service to `exec` into):
+repo), the same consolidation applied fleet-wide so there's one ntfy
+instance instead of three. That instance defaults to
+`NTFY_AUTH_DEFAULT_ACCESS: deny-all`; the one-time grant for this app
+(`fantasyedge` user, read-write on topic `fantasy-edge-alerts`, an access
+token) is already done on the live instance - if setting this up again
+from scratch (e.g. a fresh ntfy volume), repeat it from reekserver-1:
 
 ```bash
 ssh reek@reekserver-1
-cd /home/reek/apps/ntfy   # or wherever that repo is checked out there
+cd /home/reek/apps/ntfy
 docker exec -e NTFY_PASSWORD='choose-a-real-password' ntfy-ntfy-1 \
   ntfy user add --role=user fantasyedge
 docker exec ntfy-ntfy-1 ntfy access fantasyedge fantasy-edge-alerts read-write
 docker exec ntfy-ntfy-1 ntfy token add fantasyedge
 ```
 
-Put the printed token in this app's `.env` as `NTFY_TOKEN`,
-`NTFY_TOPIC=fantasy-edge-alerts`, and
-`NTFY_BASE_URL=https://ntfy.camptwright.com`, then
-`docker compose up -d --force-recreate api worker beat` on the Mac mini so
-the new env vars actually load (they're read at container start, not
-hot-reloaded). Subscribe from the ntfy phone app at
-`https://ntfy.camptwright.com`, topic `fantasy-edge-alerts`, logging in as
-the same `fantasyedge` user/password - deny-all means an unauthenticated
-subscribe 403s exactly like an unauthenticated publish does. Because this
-now goes over the public tunnel instead of the LAN, it also means alerts
-keep working if the Mac mini's own network changes; the trade-off is that
-this app's alerting now depends on reekserver-1 being up, which it didn't
-before - worth knowing if reekserver-1 goes down during an incident this
-alerting exists to catch.
+**The intended path is the public hostname** (`NTFY_BASE_URL=
+https://ntfy.camptwright.com`), routed through reekserver-1's Cloudflare
+Tunnel same as every other app there. **As of 2026-09-14 that route 530s**
+(Cloudflare error 1033) for reasons unrelated to this consolidation -
+confirmed live while cutting this app over, cloudflared itself is healthy
+so it's specifically that hostname's route. Until it's fixed, this app
+points at the LAN port published for exactly that reason
+(`ntfy/docker-compose.yml`, `192.168.20.10:8095`) - verified reachable from
+this Mac mini across the 192.168.10.x/192.168.20.x subnet boundary,
+contrary to this workspace's older "no route between those subnets"
+assumption (see e.g. adjutant's DEPLOYMENT.md, homelab-monitoring's
+README - that assumption is stale, at least for this direction). Put the
+token in this app's `.env` as `NTFY_TOKEN`, `NTFY_TOPIC=fantasy-edge-alerts`,
+and `NTFY_BASE_URL=http://192.168.20.10:8095` (swap to the public hostname
+once it's confirmed working again), then `docker compose up -d
+--force-recreate --remove-orphans api worker beat` on the Mac mini - the
+`--remove-orphans` flag is what actually stops and removes the now-unused
+`ntfy` container from before this consolidation, since it's no longer in
+this project's compose file. Subscribe from the ntfy phone app at
+`http://192.168.20.10:8095` (LAN-only until the tunnel route is fixed),
+topic `fantasy-edge-alerts`, logging in as the same `fantasyedge`
+user/password - deny-all means an unauthenticated subscribe 403s exactly
+like an unauthenticated publish does.
 
-If reekserver-1's `docker volume ls` still shows this app's old
-`fantasy-edge_ntfydata` volume from before the consolidation, it's inert
-and safe to remove once you've confirmed the shared instance is working:
-`docker volume rm fantasy-edge_ntfydata`.
+The old `fantasy-edge_ntfydata` volume from before this consolidation has
+already been removed (`docker volume rm fantasy-edge_ntfydata`, done
+2026-09-14 after verifying the new path end-to-end).
 
 Verify the whole path with a real publish, not just a healthcheck:
 ```bash
@@ -121,7 +127,7 @@ import asyncio
 from src.utils.alerts import notify
 asyncio.run(notify('test', title='Fantasy Edge: Test'))
 "
-curl -u fantasyedge:<password> 'https://ntfy.camptwright.com/fantasy-edge-alerts/json?poll=1&since=all'
+curl -u fantasyedge:<password> 'http://192.168.20.10:8095/fantasy-edge-alerts/json?poll=1&since=all'
 ```
 
 ## Verify
