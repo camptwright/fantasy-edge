@@ -1,6 +1,13 @@
 from src.scheduler.celery_app import celery_app
 
 
+def test_live_scores_refresh_without_increasing_paid_odds_polling():
+    scheduled = celery_app.conf.beat_schedule
+    for name in ('sync-espn-scoreboard', 'sync-mlb-schedule', 'sync-nhl-schedule'):
+        assert scheduled[name]['schedule'] == 300.0
+    assert scheduled['sync-aggregate-props']['schedule'] == 300.0
+
+
 def test_celery_schedule_covers_every_ingestion_source():
     """Was "NFL only" before Sleeper's own scheduled sync existed - that
     scope no longer matches beat_schedule's real contents, which now also
@@ -10,17 +17,34 @@ def test_celery_schedule_covers_every_ingestion_source():
     API and Underdog as team-market/props sources."""
     scheduled = celery_app.conf.beat_schedule
     assert {item["task"] for item in scheduled.values()} == {
+        "fantasy.retry_team_ratings",
+        "fantasy.validate_active_slate",
         "fantasy.sync_espn",
-        "fantasy.sync_underdog",
+        "fantasy.sync_espn_fantasy",
+        "fantasy.sync_aggregate_props",
         "fantasy.sync_team_markets",
         "fantasy.sync_sleeper",
         "fantasy.sync_pinnacle",
         "fantasy.sync_bovada",
-        "fantasy.sync_prizepicks",
         "fantasy.check_data_health",
         "fantasy.sync_mlb",
         "fantasy.sync_nhl",
         "fantasy.generate_recommendations",
+        "fantasy.sync_nba_results",
+        "fantasy.sync_nhl_results",
+        "fantasy.sync_mlb_results",
+        "fantasy.sync_ncaaf_results",
+        "fantasy.sync_nfl_results",
+        "fantasy.expand_ncaaf_props",
+        "fantasy.capture_forecasts",
+        "fantasy.player_lab_prospective",
+        "fantasy.post_narrative_to_dashboard",
+        "fantasy.grade_forecasts",
+        "fantasy.evaluate_models",
+        "fantasy.archive_news",
+        "fantasy.archive_espn_injuries",
+        "fantasy.archive_mlb_availability",
+        "fantasy.archive_football_availability",
     }
 
 

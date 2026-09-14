@@ -34,7 +34,7 @@ services:
     networks: [fantasy]
     environment:
       POSTGRES_USER: "${POSTGRES_USER:-fantasy}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-changeme}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
       POSTGRES_DB: "${POSTGRES_DB:-fantasy_edge}"
     volumes: ["pgdata:/var/lib/postgresql/data"]
     mem_limit: 1024m
@@ -48,7 +48,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     networks: [fantasy]
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
     volumes: ["redisdata:/data"]
     mem_limit: 384m
     healthcheck:
@@ -92,6 +92,16 @@ services:
       redis: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
 
+  evaluation:
+    <<: *app
+    # Isolate historical evaluation from ingestion and recycle its process.
+    command: ["celery", "-A", "src.scheduler.celery_app", "worker", "--loglevel=info", "--concurrency=1", "-Q", "evaluation", "--max-tasks-per-child=1"]
+    mem_limit: 1536m
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+
   beat:
     <<: *app
     command: ["celery", "-A", "src.scheduler.celery_app", "beat", "--loglevel=info"]
@@ -115,6 +125,8 @@ services:
       NODE_ENV: production
       FANTASY_API_URL: http://api:8000
       FANTASY_API_TOKEN: "${FANTASY_API_TOKEN:?set FANTASY_API_TOKEN in .env}"
+      # Remote dashboard remains fail-closed in middleware when unset.
+      FANTASY_LOCAL_ONLY: "false"
       CF_ACCESS_TEAM_DOMAIN: "${CF_ACCESS_TEAM_DOMAIN:-}"
       CF_ACCESS_AUD: "${CF_ACCESS_AUD:-}"
     mem_limit: 512m
@@ -142,7 +154,7 @@ services:
     # another number.
 
   ntfy:
-    image: binwiederhier/ntfy:latest
+    image: binwiederhier/ntfy@sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da
     command: ["serve"]
     networks: [fantasy]
     restart: unless-stopped

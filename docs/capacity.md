@@ -1,5 +1,10 @@
 # CT100 capacity baseline: flower removal
 
+> Historical record of a 2026-08-22 capacity change on CT100, which is now
+> decommissioned along with the rest of Proxmox — Fantasy Edge runs via
+> plain `docker compose` directly on the Mac mini today. Kept as-is for the
+> methodology and evidence trail, not as current-state documentation.
+
 CT100 (Proxmox LXC 100, reached via `ssh root@192.168.8.109 "pct exec 100 -- <cmd>"`)
 runs the Fantasy Edge stack from its current `main`-based deployment. This
 records the memory impact of removing the `flower` Celery-monitoring

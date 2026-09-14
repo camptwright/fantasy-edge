@@ -51,6 +51,16 @@ from sqlalchemy.orm import Mapped, mapped_column
 from src.models.base import Base, CreatedAt, UUIDPrimaryKey, utcnow
 
 
+class QuoteAvailability(Base):
+    """Mutable liveness metadata; historical quote observations remain immutable."""
+    __tablename__ = "quote_availability"
+    kind: Mapped[str] = mapped_column(String(8), primary_key=True)
+    quote_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
 class Game(Base, UUIDPrimaryKey, CreatedAt):
     __tablename__ = "games"
     __table_args__ = (

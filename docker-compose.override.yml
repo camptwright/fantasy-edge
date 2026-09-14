@@ -22,6 +22,11 @@ services:
       - /home/reek/apps/fantasy-edge/models:/mnt/data/fantasy-edge/models
       - /home/reek/apps/fantasy-edge/logs:/app/logs
 
+  evaluation:
+    volumes:
+      - /home/reek/apps/fantasy-edge/models:/mnt/data/fantasy-edge/models
+      - /home/reek/apps/fantasy-edge/logs:/app/logs
+
   beat:
     volumes:
       - /home/reek/apps/fantasy-edge/logs:/app/logs

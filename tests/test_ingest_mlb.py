@@ -47,6 +47,15 @@ class _Run:
         self.detail = None
 
 
+async def test_cancelled_abstract_final_is_not_a_played_result(db):
+    payload = _fake_game(home_score=None, away_score=None)
+    payload['status'].update(codedGameState='C', detailedState='Cancelled')
+    await _upsert_game(db, payload, _Run())
+    game = await db.scalar(select(Game).where(Game.mlb_game_pk == str(payload['gamePk'])))
+    assert game.status == 'cancelled'
+    assert not (await db.scalars(select(TeamRating))).all()
+
+
 async def test_upsert_game_creates_a_final_game_with_scores(db):
     touched = await _upsert_game(db, _fake_game(), _Run())
     assert touched is True

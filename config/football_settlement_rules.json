@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-09-10",
+  "serving_enabled": false,
+  "research_context": {
+    "user_jurisdiction": "US-TX",
+    "reference_book": "draftkings",
+    "reference_product": "sportsbook",
+    "purpose": "research_comparison_only",
+    "selected_at": "2026-09-11",
+    "selection_reason": "Existing odds-feed integration and documented football rules; not a claim of Texas wagering availability.",
+    "wagering_eligibility": "not_established",
+    "apply_reference_rules_to_other_books": false,
+    "note": "User location and research preference do not establish a quote's product, jurisdiction-specific contract, or permission to wager.",
+    "jurisdiction_source": "https://www.sll.texas.gov/faqs/texas-gambling-laws/"
+  },
+  "rules": [
+    {
+      "id": "bovada_standard_football_20260910",
+      "book": "bovada",
+      "product": "standard_sportsbook",
+      "sports": ["nfl", "ncaaf"],
+      "source": "https://www.bovada.lv/help/common-faq/football-betting-rules",
+      "status": "partial_evidence",
+      "participation": "game_day_active_roster_even_if_did_not_play",
+      "quarter_four_overtime": false,
+      "second_half_overtime": true,
+      "passing_touchdown_counts_as_scorer": false,
+      "unresolved": ["exact_quote_product_identity", "scorer_no_touchdown_and_unlisted_selection_rules", "market_specific_exceptions"]
+    },
+    {
+      "id": "bovada_prop_builder_20260910",
+      "book": "bovada",
+      "product": "prop_builder",
+      "sports": ["nfl"],
+      "source": "https://www.bovada.lv/help/sports-faq/prop-builder-faq",
+      "status": "partial_evidence",
+      "participation": "official_game_book_participation",
+      "passing_touchdown_counts_as_scorer": false,
+      "unresolved": ["exact_quote_product_identity", "quarter_half_overtime", "scorer_no_touchdown_and_unlisted_selection_rules"]
+    },
+    {
+      "id": "draftkings_football_20260910",
+      "book": "draftkings",
+      "product": "sportsbook",
+      "sports": ["nfl", "ncaaf"],
+      "source": "https://sportsbook.draftkings.com/help/sport-rules/football?sf260608803=1",
+      "status": "partial_evidence",
+      "participation": "at_least_one_play_in_game_for_period_player_yards",
+      "passing_touchdown_counts_as_scorer": false,
+      "unresolved": ["jurisdiction_and_rule_effective_date", "quarter_half_overtime", "injury_void_exceptions", "scorer_no_touchdown_rules", "exact_quote_product_identity"]
+    }
+  ]
+}

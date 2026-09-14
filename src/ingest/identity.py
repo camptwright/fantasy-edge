@@ -19,7 +19,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import yaml
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.identity import Player, PlayerExternalId, Team
@@ -81,6 +81,32 @@ async def resolve_team(db: AsyncSession, identifier: str, sport: str = "nfl") ->
         espn_id=str(entry["espn_id"]),
         name=entry["espn_name"],
     )
+    db.add(team)
+    await db.flush()
+    return team
+
+
+async def resolve_verified_espn_team(db: AsyncSession, metadata: dict, sport: str) -> Team:
+    """Native identity from an ESPN schedule, for historical coverage only.
+
+    No name match, alias invention, current-rating initialization, or promotion.
+    Abbreviation collisions fail closed rather than reassigning an existing team.
+    """
+    external = str(metadata.get('id', ''))
+    name, abbreviation = metadata.get('displayName'), metadata.get('abbreviation')
+    if (sport not in ('nfl', 'ncaaf') or not external.isdigit() or len(external) > 16 or
+        not isinstance(name, str) or not 0 < len(name) <= 64 or
+        not isinstance(abbreviation, str) or not 0 < len(abbreviation) <= 8):
+        raise ValueError('invalid verified ESPN team identity')
+    await db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))'),
+                     {'key': f'espn-team:{sport}:{external}'})
+    existing = await db.scalar(select(Team).where(Team.sport == sport, Team.espn_id == external))
+    if existing:
+        return existing
+    collision = await db.scalar(select(Team).where(Team.sport == sport, Team.nflverse_abbr == abbreviation))
+    if collision:
+        raise ValueError('ESPN team abbreviation collision')
+    team = Team(sport=sport, espn_id=external, nflverse_abbr=abbreviation, name=name)
     db.add(team)
     await db.flush()
     return team

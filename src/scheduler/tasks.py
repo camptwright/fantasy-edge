@@ -13,15 +13,16 @@ from src.ingest.espn import sync_scoreboard
 from src.ingest.mlb import sync_schedule as sync_mlb_schedule
 from src.ingest.nhl import sync_schedule as sync_nhl_schedule
 from src.ingest.pinnacle import poll_team_markets as poll_pinnacle_markets
-from src.ingest.prizepicks import ingest_props as ingest_prizepicks_props
 from src.ingest.theodds import poll_team_markets
 from src.ingest.underdog import ingest_props
 from src.ingest.sleeper import sync_sleeper_account
+from src.ingest.espn_fantasy import sync_espn_fantasy_account
 from src.models.governance import RecommendationSnapshot
 from src.scheduler.celery_app import celery_app
 from src.services.reconciliation import run_health_checks
-from src.services.recommendations import generate_narrative
+from src.services.recommendations import generate_narrative, get_valid_narrative
 from src.utils.alerts import notify
+from src.utils.dashboard_ingest import post_article
 
 
 @celery_app.task(name="fantasy.sync_espn")
@@ -110,6 +111,29 @@ def sync_sleeper() -> dict[str, dict[str, int | str]]:
         raise
 
 
+@celery_app.task(name="fantasy.sync_espn_fantasy")
+def sync_espn_fantasy() -> dict[str, dict[str, int | str]]:
+    # Quiet no-op until ESPN_LEAGUE_IDS/ESPN_S2/ESPN_SWID are configured -
+    # same pattern as theodds.poll_team_markets' odds_api_key check, since
+    # this is an optional integration most deployments of this app will
+    # never turn on, and a raised ValueError on every 15-minute beat tick
+    # would otherwise fire a real ntfy alert for a deliberately-unset
+    # feature rather than a genuine failure.
+    settings = get_settings()
+    if not settings.espn_league_ids or not settings.espn_s2 or not settings.espn_swid:
+        return {}
+
+    async def run() -> dict[str, dict[str, int | str]]:
+        async with get_worker_db() as db:
+            return await sync_espn_fantasy_account(db)
+
+    try:
+        return asyncio.run(run())
+    except Exception as exc:
+        asyncio.run(notify(f"ESPN Fantasy sync failed: {exc}", title="Fantasy Edge: ESPN Fantasy"))
+        raise
+
+
 @celery_app.task(name="fantasy.sync_pinnacle")
 def sync_pinnacle() -> dict[str, int]:
     async def run() -> dict[str, int]:
@@ -147,16 +171,8 @@ def sync_bovada() -> dict[str, int]:
 
 @celery_app.task(name="fantasy.sync_prizepicks")
 def sync_prizepicks() -> dict[str, int]:
-    async def run() -> dict[str, int]:
-        async with get_worker_db() as db:
-            written, parked = await ingest_prizepicks_props(db)
-            return {"written": written, "parked": parked}
-
-    try:
-        return asyncio.run(run())
-    except Exception as exc:
-        asyncio.run(notify(f"PrizePicks sync failed: {exc}", title="Fantasy Edge: PrizePicks"))
-        raise
+    # Keep an inert handler for messages queued before the schedule removal.
+    return {"written": 0, "parked": 0, "disabled_by_policy": 1}
 
 
 @celery_app.task(name="fantasy.check_data_health")
@@ -185,8 +201,9 @@ def generate_recommendations() -> dict[str, int]:
 
     async def run() -> int:
         async with get_worker_db() as db:
-            narrative = await generate_narrative(db)
-            db.add(RecommendationSnapshot(narrative=narrative))
+            result = await generate_narrative(db, with_evidence=True)
+            narrative = result['narrative']
+            db.add(RecommendationSnapshot(narrative=narrative, quote_ids=result['quote_ids']))
             await db.commit()
             return len(narrative)
 
@@ -197,3 +214,35 @@ def generate_recommendations() -> dict[str, int]:
             notify(f"Recommendation generation failed: {exc}", title="Fantasy Edge: Recommendations")
         )
         raise
+
+
+@celery_app.task(name="fantasy.post_narrative_to_dashboard")
+def post_narrative_to_dashboard() -> dict[str, bool]:
+    """Pushes the latest *valid* narrative (src/services/recommendations.py's
+    get_valid_narrative - same freshness/quote-evidence gate GET
+    /recommendations applies) to homelab-dashboard as a source=fantasy-agent
+    article, via src/utils/dashboard_ingest.py.
+
+    Deliberately on a much slower cadence than generate_recommendations'
+    30-minute cycle (see beat_schedule in celery_app.py) - the dashboard's
+    Fantasy tile only ever shows the single newest fantasy-agent article,
+    so posting one every 30 minutes would just spam its /content archive
+    with near-duplicate rows for no one to read; a daily digest is enough
+    for a "check in once a day" summary.
+
+    A None narrative (nothing generated yet, or the latest one expired/its
+    evidence moved on) is not an error - it just means there's nothing
+    worth posting this cycle, so this returns cleanly without calling
+    post_article at all."""
+
+    async def run() -> bool:
+        async with get_worker_db() as db:
+            result = await get_valid_narrative(db)
+            narrative = result["narrative"]
+            if narrative is None:
+                return False
+            generated_at = result["generated_at"]
+            title = f"Fantasy Edge recap — {generated_at[:10]}"
+            return await post_article(title, narrative, tags=["fantasy-edge", "recap"])
+
+    return {"posted": asyncio.run(run())}

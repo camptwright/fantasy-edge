@@ -33,6 +33,7 @@ from src.ingest.runs import record_run
 from src.models.facts import Game
 from src.models.governance import IngestionRun
 from src.services.elo import update_ratings_after_game
+from src.services.team_rating_repair import lock_sport, repair_changed_score
 
 SOURCE = "nhl"
 
@@ -104,9 +105,11 @@ async def _upsert_game(db: AsyncSession, game: dict[str, Any], run: IngestionRun
         run.detail = f"nhl game {game_id}: no alias for {home_abbrev!r}/{away_abbrev!r}"[:2000]
         return False
 
+    await lock_sport(db, "nhl")
     existing = await db.scalar(select(Game).where(Game.nhl_game_id == game_id))
     is_new = existing is None
     was_final = (not is_new) and existing.status == "final"
+    old_score = (existing.home_score, existing.away_score) if was_final else None
 
     kickoff = _kickoff(game)
     if is_new:
@@ -140,6 +143,8 @@ async def _upsert_game(db: AsyncSession, game: dict[str, Any], run: IngestionRun
     await db.flush()
     if not was_final and record.status == "final":
         await update_ratings_after_game(db, record)
+    elif was_final:
+        await repair_changed_score(db, record, old_score)
     return True
 
 

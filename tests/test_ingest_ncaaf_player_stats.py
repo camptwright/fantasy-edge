@@ -75,7 +75,7 @@ async def test_ingest_category_writes_split_compound_and_mapped_stats(db):
         "passing_attempts": 31.0,
         "passing_yards": 278.0,
         "passing_touchdowns": 1.0,
-        "ints_thrown": 0.0,
+        "passing_interceptions": 0.0,
     }
 
 

@@ -1,0 +1,336 @@
+{
+  "schema_version": 1,
+  "candidate_id": "ncaaf-distributions-20260905-v2",
+  "created_at": "2026-09-05T14:27:51.548056+00:00",
+  "sport": "ncaaf",
+  "approval": "User authorized experimental spread/player-prop deployment with baselines retained.",
+  "validation_passed": false,
+  "spread": {
+    "status": "experimental_holdout",
+    "parameters": {
+      "slope": 5.662019040308,
+      "intercept": -8.948031239628756,
+      "sigma": 19.05059599646209
+    },
+    "fit_samples": 603,
+    "fit_through": "2025-11-23",
+    "holdout_from": "2025-11-29",
+    "holdout_through": "2026-09-05",
+    "baseline": {
+      "samples": 82,
+      "independent_games": 82,
+      "rmse": 19.91016059754549,
+      "gaussian_nll": 4.437990103939181
+    },
+    "candidate": {
+      "samples": 82,
+      "independent_games": 82,
+      "rmse": 17.543035771911175,
+      "gaussian_nll": 4.290033514342171
+    },
+    "deployable_experimental": true,
+    "validation_passed": false,
+    "note": "Selected only when holdout distribution loss improves without worse RMSE; not betting calibration approval."
+  },
+  "player_props": {
+    "longest_reception": {
+      "status": "experimental_holdout",
+      "parameters": {
+        "bias_stddev": 0.2560200418580566,
+        "scale_stddev": 2.5280825453587004
+      },
+      "fit_samples": 1831,
+      "fit_through": "2025-11-30",
+      "holdout_from": "2025-12-06",
+      "holdout_through": "2026-09-05",
+      "baseline": {
+        "samples": 170,
+        "independent_games": 30,
+        "rmse": 14.278175288951479,
+        "gaussian_nll": 4.9651291504279556
+      },
+      "candidate": {
+        "samples": 170,
+        "independent_games": 30,
+        "rmse": 14.959270621979766,
+        "gaussian_nll": 4.431791384638513
+      },
+      "deployable_experimental": false,
+      "validation_passed": false,
+      "note": "Selected only when holdout distribution loss improves without worse RMSE; not betting calibration approval."
+    },
+    "longest_rush": {
+      "status": "experimental_holdout",
+      "parameters": {
+        "bias_stddev": 0.4014615875092489,
+        "scale_stddev": 2.7610589606240503
+      },
+      "fit_samples": 1497,
+      "fit_through": "2025-12-06",
+      "holdout_from": "2025-12-07",
+      "holdout_through": "2026-09-05",
+      "baseline": {
+        "samples": 120,
+        "independent_games": 27,
+        "rmse": 15.392479754325874,
+        "gaussian_nll": 4.843888791623189
+      },
+      "candidate": {
+        "samples": 120,
+        "independent_games": 27,
+        "rmse": 16.687197601957763,
+        "gaussian_nll": 4.332730878798418
+      },
+      "deployable_experimental": false,
+      "validation_passed": false,
+      "note": "Selected only when holdout distribution loss improves without worse RMSE; not betting calibration approval."
+    },
+    "passing_attempts": {
+      "status": "insufficient_history",
+      "deployable_experimental": false
+    },
+    "passing_completions": {
+      "status": "insufficient_history",
+      "deployable_experimental": false
+    },
+    "passing_interceptions": {
+      "status": "insufficient_history",
+      "deployable_experimental": false
+    },
+    "passing_touchdowns": {
+      "status": "insufficient_history",
+      "deployable_experimental": false
+    },
+    "passing_yards": {
+      "status": "experimental_holdout",
+      "parameters": {
+        "bias_stddev": -0.08505967169408664,
+        "scale_stddev": 2.0166954010499722
+      },
+      "fit_samples": 285,
+      "fit_through": "2025-11-20",
+      "holdout_from": "2025-11-22",
+      "holdout_through": "2026-09-05",
+      "baseline": {
+        "samples": 169,
+        "independent_games": 111,
+        "rmse": 89.44957045190513,
+        "gaussian_nll": 6.403681946291084
+      },
+      "candidate": {
+        "samples": 169,
+        "independent_games": 111,
+        "rmse": 89.32187707093745,
+        "gaussian_nll": 6.063253875080792
+      },
+      "deployable_experimental": true,
+      "validation_passed": false,
+      "note": "Selected only when holdout distribution loss improves without worse RMSE; not betting calibration approval.",
+      "source_report_at": "2026-09-05T22:18:37.533203+00:00",
+      "source_candidate_id": "ncaaf-distributions-v2-research"
+    },
+    "receiving_touchdowns": {
+      "status": "experimental_holdout",
+      "parameters": {
+        "bias_stddev": -0.036076663807510304,
+        "scale_stddev": 1.303984107327169
+      },
+      "fit_samples": 964,
+      "fit_through": "2025-11-22",
+      "holdout_from": "2025-11-23",
+      "holdout_through": "2026-09-05",
+      "baseline": {
+        "samples": 428,
+        "independent_games": 103,
+        "rmse": 0.555184488930197,
+        "gaussian_nll": 0.8616644907541182
+      },
+      "candidate": {
+        "samples": 428,
+        "independent_games": 103,
+        "rmse": 0.5526162772961039,
+        "gaussian_nll": 0.8492581210122423
+      },
+      "deployable_experimental": true,
+      "validation_passed": false,
+      "note": "Selected only when holdout distribution loss improves without worse RMSE; not betting calibration approval.",
+      "source_report_at": "2026-09-05T22:18:37.533203+00:00",
+      "source_candidate_id": "ncaaf-distributions-v2-research"
+    },
+    "receiving_yards": {
+      "status": "experimental_holdout",
+      "parameters": {
+        "bias_stddev": 0.2561913410394547,
+        "scale_stddev": 2.1815546007034774
+      },
+      "fit_samples": 1831,
+      "fit_through": "2025-11-30",
+      "holdout_from": "2025-12-06",
+      "holdout_through": "2026-09-05",
+      "baseline": {
+        "samples": 170,
+        "independent_games": 30,
+        "rmse": 34.00460172014798,
+        "gaussian_nll": 5.876310034007305
+      },
+      "candidate": {
+        "samples": 170,
+        "independent_games": 30,
+        "rmse": 34.401241525928015,
+        "gaussian_nll": 5.063261643922284
+      },
+      "deployable_experimental": false,
+      "validation_passed": false,
+      "note": "Selected only when holdout distribution loss improves without worse RMSE; not betting calibration approval."
+    },
+    "receptions": {
+      "status": "experimental_holdout",
+      "parameters": {
+        "bias_stddev": 0.19160393936719683,
+        "scale_stddev": 1.775299252407623
+      },
+      "fit_samples": 1793,
+      "fit_through": "2025-11-30",
+      "holdout_from": "2025-12-06",
+      "holdout_through": "2026-09-05",
+      "baseline": {
+        "samples": 170,
+        "independent_games": 30,
+        "rmse": 2.0228047020100934,
+        "gaussian_nll": 2.899007637813443
+      },
+      "candidate": {
+        "samples": 170,
+        "independent_games": 30,
+        "rmse": 2.018613416436229,
+        "gaussian_nll": 2.2366811574166143
+      },
+      "deployable_experimental": true,
+      "validation_passed": false,
+      "note": "Selected only when holdout distribution loss improves without worse RMSE; not betting calibration approval."
+    },
+    "rushing_attempts": {
+      "status": "experimental_holdout",
+      "parameters": {
+        "bias_stddev": 0.28318824112368507,
+        "scale_stddev": 2.2012435718548025
+      },
+      "fit_samples": 1027,
+      "fit_through": "2025-11-20",
+      "holdout_from": "2025-11-22",
+      "holdout_through": "2026-09-05",
+      "baseline": {
+        "samples": 621,
+        "independent_games": 141,
+        "rmse": 5.087262651000364,
+        "gaussian_nll": 3.270705831078414
+      },
+      "candidate": {
+        "samples": 621,
+        "independent_games": 141,
+        "rmse": 5.077243649472724,
+        "gaussian_nll": 3.057055055135853
+      },
+      "deployable_experimental": true,
+      "validation_passed": false,
+      "note": "Selected only when holdout distribution loss improves without worse RMSE; not betting calibration approval.",
+      "source_report_at": "2026-09-05T22:18:37.533203+00:00",
+      "source_candidate_id": "ncaaf-distributions-v2-research"
+    },
+    "rushing_touchdowns": {
+      "status": "experimental_holdout",
+      "parameters": {
+        "bias_stddev": -0.012618506219080802,
+        "scale_stddev": 1.315093862626801
+      },
+      "fit_samples": 761,
+      "fit_through": "2025-11-20",
+      "holdout_from": "2025-11-22",
+      "holdout_through": "2026-09-05",
+      "baseline": {
+        "samples": 495,
+        "independent_games": 140,
+        "rmse": 0.7398438057632317,
+        "gaussian_nll": 1.276265972376768
+      },
+      "candidate": {
+        "samples": 495,
+        "independent_games": 140,
+        "rmse": 0.7393548022884616,
+        "gaussian_nll": 1.144057714263141
+      },
+      "deployable_experimental": true,
+      "validation_passed": false,
+      "note": "Selected only when holdout distribution loss improves without worse RMSE; not betting calibration approval.",
+      "source_report_at": "2026-09-05T22:18:37.533203+00:00",
+      "source_candidate_id": "ncaaf-distributions-v2-research"
+    },
+    "rushing_yards": {
+      "status": "experimental_holdout",
+      "parameters": {
+        "bias_stddev": 0.3224900978692616,
+        "scale_stddev": 2.537539227079401
+      },
+      "fit_samples": 1497,
+      "fit_through": "2025-12-06",
+      "holdout_from": "2025-12-07",
+      "holdout_through": "2026-09-05",
+      "baseline": {
+        "samples": 120,
+        "independent_games": 27,
+        "rmse": 40.39177546511535,
+        "gaussian_nll": 6.884697093892689
+      },
+      "candidate": {
+        "samples": 120,
+        "independent_games": 27,
+        "rmse": 42.54745358220691,
+        "gaussian_nll": 5.427979244717073
+      },
+      "deployable_experimental": false,
+      "validation_passed": false,
+      "note": "Selected only when holdout distribution loss improves without worse RMSE; not betting calibration approval."
+    },
+    "pass_rush_yards": {
+      "status": "experimental_holdout",
+      "parameters": {
+        "bias_stddev": -0.11448475252269066,
+        "scale_stddev": 1.6745320972193316
+      },
+      "fit_samples": 269,
+      "fit_through": "2025-11-20",
+      "holdout_from": "2025-11-22",
+      "holdout_through": "2026-09-05",
+      "baseline": {
+        "samples": 150,
+        "independent_games": 106,
+        "rmse": 92.33015215775985,
+        "gaussian_nll": 7.435562250653595
+      },
+      "candidate": {
+        "samples": 150,
+        "independent_games": 106,
+        "rmse": 92.20757323424185,
+        "gaussian_nll": 6.467571454508918
+      },
+      "deployable_experimental": true,
+      "validation_passed": false,
+      "note": "Selected only when holdout distribution loss improves without worse RMSE; not betting calibration approval.",
+      "source_report_at": "2026-09-05T22:18:37.533203+00:00",
+      "source_candidate_id": "ncaaf-distributions-v2-research"
+    }
+  },
+  "limitations": [
+    "No actual-quote holdout for props; distribution loss is not Brier/ROI.",
+    "Historical publication timestamps unavailable; prior-day cutoff is provisional.",
+    "No bookmaker-specific settlement, injury/news features, or automatic parameter replacement.",
+    "Holdout reused for deployment selection; future prospective evidence is required.",
+    "New v2 families use chronological sample-count split; spread/receptions retain their original v1 fit and coefficients.",
+    "Composite observed-only histories may be selection-biased."
+  ],
+  "expanded_at": "2026-09-05T22:18:37.533203+00:00",
+  "retained_v1_markets": [
+    "spread",
+    "receptions"
+  ]
+}

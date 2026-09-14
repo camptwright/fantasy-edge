@@ -14,6 +14,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.facts import PlayerPropLine, TeamMarketLine
+from src.services.quote_eligibility import confirm_quote
 
 
 async def record_team_line(
@@ -64,10 +65,10 @@ async def record_team_line(
         and latest.line == line
         and latest.price_american == price_american
     ):
+        await confirm_quote(db, 'team', latest)
         return False
 
-    db.add(
-        TeamMarketLine(
+    quote = TeamMarketLine(
             game_id=game_id,
             market=market,
             side=side,
@@ -76,8 +77,9 @@ async def record_team_line(
             source=source,
             line_type=line_type,
         )
-    )
+    db.add(quote)
     await db.flush()
+    await confirm_quote(db, 'team', quote)
     return True
 
 
@@ -99,6 +101,7 @@ async def record_prop_line(
             PlayerPropLine.player_id == player_id,
             PlayerPropLine.stat_type == stat_type,
             PlayerPropLine.source == source,
+            PlayerPropLine.game_id == game_id,
         )
         # Same deterministic-tiebreak requirement as record_team_line()
         # above: `observed_at` is a Python-side `datetime.now()` call, not
@@ -114,10 +117,10 @@ async def record_prop_line(
         and latest.over_price_american == over_price_american
         and latest.under_price_american == under_price_american
     ):
+        await confirm_quote(db, 'prop', latest)
         return False
 
-    db.add(
-        PlayerPropLine(
+    quote = PlayerPropLine(
             player_id=player_id,
             game_id=game_id,
             stat_type=stat_type,
@@ -126,6 +129,7 @@ async def record_prop_line(
             under_price_american=under_price_american,
             source=source,
         )
-    )
+    db.add(quote)
     await db.flush()
+    await confirm_quote(db, 'prop', quote)
     return True

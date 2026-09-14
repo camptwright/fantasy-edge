@@ -28,6 +28,9 @@ from src.models.governance import IngestionRun
 
 @asynccontextmanager
 async def record_run(db: AsyncSession, source: str) -> AsyncIterator[IngestionRun]:
+    # Fail before any database mutation; never truncate distinct audit keys.
+    if not isinstance(source, str) or not source or len(source) > 32:
+        raise ValueError('Ingestion source must contain 1 to 32 characters')
     run = IngestionRun(source=source, status="running")
     db.add(run)
     await db.flush()

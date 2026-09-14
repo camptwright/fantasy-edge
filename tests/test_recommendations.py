@@ -8,7 +8,9 @@ generate_narrative is never called from a request/response cycle.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import select
+from src.services.quote_eligibility import confirm_quote
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -25,6 +27,13 @@ FAKE_SETTINGS = SimpleNamespace(
     litellm_base_url="http://litellm:4000/v1",
     fantasy_model_alias="worker",
 )
+
+
+def test_prop_ranking_includes_under_only_edges():
+    from src.services.recommendations import prop_edge
+    assert prop_edge({'edge_percent': -20, 'under_edge_percent': 15}) == 15
+    assert prop_edge({'edge_percent': None, 'under_edge_percent': 8}) == 8
+    assert prop_edge({'edge_percent': 0, 'under_edge_percent': -2}) == 0
 
 
 def _mock_client(content: str) -> AsyncMock:
@@ -69,6 +78,7 @@ async def test_calls_the_llm_with_real_signal_and_prop_evidence_when_qualified(d
     db.add(TeamRating(team_id=away.id, sport="nfl", rating=1350.0))
     game = Game(
         sport="nfl", espn_event_id="rec-test-1", season=2026,
+        game_time=datetime.now(timezone.utc)+timedelta(days=1),
         home_team_id=home.id, away_team_id=away.id, status="scheduled",
     )
     db.add(game)
@@ -83,6 +93,7 @@ async def test_calls_the_llm_with_real_signal_and_prop_evidence_when_qualified(d
     for i, value in enumerate([250.0, 275.0, 300.0, 225.0]):
         stat_game = Game(
             sport="nfl", espn_event_id=f"rec-test-stat-{i}", season=2026,
+            game_time=now-timedelta(days=i+1),
             home_team_id=home.id, away_team_id=away.id, status="final",
         )
         db.add(stat_game)
@@ -90,7 +101,7 @@ async def test_calls_the_llm_with_real_signal_and_prop_evidence_when_qualified(d
         db.add(PlayerGameStat(player_id=player.id, game_id=stat_game.id, stat_type="passing_yards", value=value))
     db.add(
         PlayerPropLine(
-            player_id=player.id, stat_type="passing_yards", line=200.0,
+            player_id=player.id, game_id=game.id, stat_type="passing_yards", line=200.0,
             over_price_american=-110, under_price_american=-110,
             source="underdog", observed_at=now,
         )
@@ -98,6 +109,10 @@ async def test_calls_the_llm_with_real_signal_and_prop_evidence_when_qualified(d
     await db.commit()
 
     mock_client = _mock_client("Real narrative text.")
+    for kind, model in [('team', TeamMarketLine), ('prop', PlayerPropLine)]:
+        for quote in (await db.scalars(select(model))).all():
+            await confirm_quote(db, kind, quote)
+    await db.commit()
     with (
         patch("src.services.recommendations.get_settings", return_value=FAKE_SETTINGS),
         patch("src.services.recommendations.httpx.AsyncClient", return_value=mock_client),
@@ -129,6 +144,7 @@ async def test_raises_on_a_blank_completion_instead_of_returning_it(db):
     db.add(TeamRating(team_id=away.id, sport="nfl", rating=1350.0))
     game = Game(
         sport="nfl", espn_event_id="rec-test-blank", season=2026,
+        game_time=datetime.now(timezone.utc)+timedelta(days=1),
         home_team_id=home.id, away_team_id=away.id, status="scheduled",
     )
     db.add(game)
@@ -139,6 +155,9 @@ async def test_raises_on_a_blank_completion_instead_of_returning_it(db):
     await db.commit()
 
     for blank in ("", "   \n"):
+        for quote in (await db.scalars(select(TeamMarketLine))).all():
+            await confirm_quote(db, 'team', quote)
+        await db.commit()
         mock_client = _mock_client(blank)
         with (
             patch("src.services.recommendations.get_settings", return_value=FAKE_SETTINGS),

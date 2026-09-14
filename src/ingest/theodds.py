@@ -35,6 +35,7 @@ from src.ingest.identity import resolve_team
 from src.ingest.lines import record_team_line
 from src.ingest.runs import record_run
 from src.models.facts import Game
+from src.services.odds_pacing import reserve, record_headers
 
 SOURCE = "theodds"
 QUOTA_KEY = "odds_api:quota_exhausted"
@@ -62,9 +63,16 @@ async def poll_team_markets(db: AsyncSession, redis: Redis, sport: str = "nfl") 
     stay unscoped even though this function now takes a sport argument.
     """
     settings = get_settings()
+    if getattr(settings, 'odds_api_nfl_props_priority', False):
+        if sport != 'nfl':
+            return 0
+        from src.ingest.theodds_props import poll_nfl_props
+        return await poll_nfl_props(db, redis)
     if not settings.odds_api_key:
         return 0
     if await is_quota_exhausted(redis):
+        return 0
+    if not await reserve(redis, settings, sport):
         return 0
 
     sport_key = settings.odds_api_sport_keys[sport]
@@ -79,8 +87,9 @@ async def poll_team_markets(db: AsyncSession, redis: Redis, sport: str = "nfl") 
                     "oddsFormat": "american",
                 },
             )
-            remaining = response.headers.get("x-requests-remaining")
-            if remaining is not None and int(remaining) < settings.odds_api_quota_floor:
+            telemetry = await record_headers(redis, response.headers, response.status_code)
+            remaining = telemetry['remaining']
+            if response.status_code == 429 or (remaining is not None and remaining <= settings.odds_api_quota_floor):
                 await set_quota_exhausted(redis)
                 run.detail = f"quota guard tripped at {remaining} remaining"
             try:

@@ -1,15 +1,12 @@
 import { RecommendationsView } from "@/components/RecommendationsView";
 import { PageHeader } from "@/components/ui";
+import { createApiLoader } from "@/lib/resilient-api";
 
 // Static generation happens during the image build, before the API and its
 // database are available - same reasoning as the Fantasy/Board pages.
 export const dynamic = "force-dynamic";
 
 const SPORTS = ["nfl", "ncaaf", "nba", "mlb", "nhl"] as const;
-
-function apiUrl(): string {
-  return process.env.FANTASY_API_URL || "http://api:8000";
-}
 
 export type Signal = {
   id: string;
@@ -43,11 +40,6 @@ export type Prop = {
 
 type Recommendation = { narrative: string | null; generated_at: string | null; note?: string };
 
-async function fetchJson<T>(path: string, fallback: T): Promise<T> {
-  const res = await fetch(`${apiUrl()}${path}`, { cache: "no-store" });
-  return res.ok ? res.json() : fallback;
-}
-
 function timeAgo(iso: string | null): string {
   if (!iso) return "never";
   const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -57,13 +49,14 @@ function timeAgo(iso: string | null): string {
 }
 
 export default async function RecommendationsPage() {
+  const { fetchJson, failures } = createApiLoader();
   const [recommendation, bySport] = await Promise.all([
     fetchJson<Recommendation>("/recommendations", { narrative: null, generated_at: null }),
     Promise.all(
       SPORTS.map(async (sport) => {
         const [signals, props] = await Promise.all([
           fetchJson<Signal[]>(`/signals?sport=${sport}`, []),
-          fetchJson<Prop[]>(`/props?sport=${sport}`, []),
+          fetchJson<Prop[]>(`/props/live?sport=${sport}&limit=200`, []),
         ]);
         // Filtered/limited here, server-side, before this ever reaches the
         // client component - /signals?sport=nfl alone can return ~2,000
@@ -90,6 +83,12 @@ export default async function RecommendationsPage() {
 
   return (
     <main className="mx-auto max-w-6xl p-4 pb-24 sm:p-6 md:p-8 lg:pb-8">
+      {failures.length > 0 && (
+        <p role="alert" className="mb-6 rounded-lg border border-amber-700 p-4 text-sm text-amber-200">
+          Some live data is temporarily unavailable. Recommendations may be incomplete; unavailable feeds are not shown. Refresh to retry.
+          <span className="mt-2 block text-xs">Affected feeds: {failures.slice().sort().join(", ")}</span>
+        </p>
+      )}
       <PageHeader
         eyebrow="LLM narrative over a transparent baseline · not calibrated, not gambling advice"
         title="Recommendations"

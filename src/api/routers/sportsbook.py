@@ -20,21 +20,26 @@ client.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import get_settings
 from src.db.client import get_db
-from src.models.facts import Game, PlayerPropLine, TeamMarketLine
-from src.models.governance import CalibrationReport, RecommendationSnapshot
+from src.models.facts import Game, PlayerPropLine, TeamMarketLine, PlayerGameStat, QuoteAvailability
+from src.models.governance import CalibrationReport
 from src.models.identity import Player, Team
 from src.models.ratings import TeamRating
-from src.services.elo import moneyline_probability, spread_cover_probability
+from src.services.elo import moneyline_probability, spread_cover_probability, implied_margin
+from src.services.serving_calibration import calibrate_home_probability, deployment_status
+from src.services.serving_distributions import prop_parameters, spread_probability, distribution_status
 from src.services.projections import MIN_GAMES_FOR_PROJECTION, over_probability, project_stats
+from src.services.quote_eligibility import availability, exclusion
+from src.services.stat_identity import canonical_stat
 from src.services.totals import expected_total_points, is_qualified, total_over_probability
 from src.utils.normalize import normalize_player_name
 from src.utils.odds_math import (
@@ -98,12 +103,15 @@ def _emit_pair_rows(
         out.append(
             {
                 "id": str(line.id),
+                "game_id": str(game.id),
+                "actionable": True,
                 "sport": game.sport,
                 "market": market,
                 "selection": selection,
                 "bookmaker": source,
                 "price_american": line.price_american,
                 "model_probability": round(model_prob, 4),
+                "baseline_model_probability": round(model_prob, 4),
                 "fair_probability": round(fair_prob, 4) if fair_prob is not None else None,
                 "implied_probability": round(implied_prob, 4) if implied_prob is not None else None,
                 "ev_percent": round(ev_percent, 2) if ev_percent is not None else 0.0,
@@ -124,39 +132,95 @@ def _emit_pair_rows(
         )
 
 
-async def prop_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]]:
+async def prop_rows(db: AsyncSession, sport: str | None, *, live_only: bool = False,
+                    quote_ids: set[uuid.UUID] | None = None,
+                    history_page: tuple[int, int] | None = None) -> list[dict[str, Any]]:
     stmt = select(PlayerPropLine, Player).join(Player, PlayerPropLine.player_id == Player.id)
     if sport is not None:
         stmt = stmt.where(Player.sport == sport)
     stmt = stmt.distinct(
-        PlayerPropLine.player_id, PlayerPropLine.stat_type, PlayerPropLine.source
+        PlayerPropLine.player_id, PlayerPropLine.stat_type, PlayerPropLine.source, PlayerPropLine.game_id
     ).order_by(
         PlayerPropLine.player_id,
         PlayerPropLine.stat_type,
         PlayerPropLine.source,
+        PlayerPropLine.game_id,
         PlayerPropLine.observed_at.desc(),
+        PlayerPropLine.id.desc(),
     )
+    if live_only or quote_ids is not None or history_page is not None:
+        # Select latest BEFORE filtering IDs/freshness: an old offer must
+        # never reappear when its replacement is withdrawn or unpriced.
+        latest = stmt.with_only_columns(PlayerPropLine.id).subquery()
+        stmt = select(PlayerPropLine, Player).join(Player, Player.id == PlayerPropLine.player_id).where(
+            PlayerPropLine.id.in_(select(latest.c.id)))
+        if quote_ids is not None:
+            stmt = stmt.where(PlayerPropLine.id.in_(quote_ids))
+        if live_only:
+            now = datetime.now(timezone.utc)
+            stmt = stmt.join(Game, Game.id == PlayerPropLine.game_id).join(QuoteAvailability,
+                (QuoteAvailability.quote_id == PlayerPropLine.id) & (QuoteAvailability.kind == 'prop')).where(
+                Game.status == 'scheduled', Game.game_time.is_not(None), Game.game_time > now,
+                QuoteAvailability.available.is_(True), QuoteAvailability.seen_at <= now,
+                QuoteAvailability.seen_at >= now-timedelta(seconds=2700),
+                PlayerPropLine.observed_at <= now,
+                (PlayerPropLine.over_price_american.is_not(None) | PlayerPropLine.under_price_american.is_not(None)))
+        if history_page is not None:
+            offset, limit = history_page
+            stmt = stmt.order_by(PlayerPropLine.id).offset(offset).limit(limit)
     rows = (await db.execute(stmt)).all()
+    if not rows:
+        return []
 
     team_ids = {row.Player.current_team_id for row in rows if row.Player.current_team_id}
     teams = await _team_lookup(db, team_ids)
     projections = await project_stats(db, {(player.id, prop.stat_type) for prop, player in rows})
+    game_ids = {prop.game_id for prop, player in rows if prop.game_id}
+    games = {g.id: g for g in (await db.scalars(select(Game).where(Game.id.in_(game_ids)))).all()} if game_ids else {}
+    seen = await availability(db, 'prop', [prop.id for prop, _ in rows])
+    from pathlib import Path
+    from src.services.injury_evidence import snapshots as injury_snapshots, unavailable, for_game, game_snapshots
+    context_time = datetime.now(timezone.utc)
+    injury_context = await injury_snapshots(db, [{'player_id': str(player.id)} for _, player in rows],
+        Path(get_settings().raw_archive_dir) / 'espn_injuries', context_time)
+    event_injuries = game_snapshots(Path(get_settings().raw_archive_dir) / 'football_availability', context_time)
 
     out = []
     for prop, player in rows:
+        game = games.get(prop.game_id)
+        reason = exclusion(game, prop, seen.get(prop.id))
+        from src.services.prop_requirements import requirement
+        reason = reason or requirement(prop.stat_type)
+        context = injury_context.get(str(player.id))
+        context = for_game(context, game, (context or {}).get('provider_athlete_ids', []), event_injuries, context_time)
+        if reason is None and context.get('game_availability', {}).get('hold_recommendation'):
+            reason = 'game_availability_review_required'
+        if reason is None and game and game.game_time and 0 <= (game.game_time-context_time).total_seconds() <= 86400 and unavailable(context):
+            reason = 'official_injured_list'
+        market_probability = None
+        if prop.over_price_american is not None and prop.under_price_american is not None:
+            market_probability, _ = remove_vig_two_way(prop.over_price_american, prop.under_price_american)
         projected = projections.get((player.id, prop.stat_type))
         projection_value = projected[0] if projected is not None else None
         model_probability = None
         under_model_probability = None
         edge_percent = None
         under_edge_percent = None
+        baseline_probability = None
+        calibration_id = None
+        served_mean = served_stddev = None
         if projected is not None:
             mean, stddev = projected
+            baseline_probability = over_probability(mean, stddev, prop.line)
+            mean, stddev, calibration_id = prop_parameters(mean, stddev, player.sport,
+                canonical_stat(prop.stat_type), reason is None)
+            served_mean, served_stddev = mean, stddev
+            projection_value = mean
             model_probability = over_probability(mean, stddev, prop.line)
             under_model_probability = 1.0 - model_probability
-            if prop.over_price_american is not None:
+            if reason is None and prop.over_price_american is not None:
                 edge_percent = round(expected_value_percent(model_probability, prop.over_price_american), 2)
-            if prop.under_price_american is not None:
+            if reason is None and prop.under_price_american is not None:
                 under_edge_percent = round(
                     expected_value_percent(under_model_probability, prop.under_price_american), 2
                 )
@@ -164,11 +228,19 @@ async def prop_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]]
         out.append(
             {
                 "id": str(prop.id),
+                "actionable": reason is None and projected is not None and
+                    (prop.over_price_american is not None or prop.under_price_american is not None),
+                "exclusion_reason": reason or ('insufficient_history' if projected is None else
+                    'unpriced' if prop.over_price_american is None and prop.under_price_american is None else None),
+                "game_time": game.game_time.isoformat() if game and game.game_time else None,
+                "game_status": game.status if game else None,
+                "last_seen_at": seen[prop.id].seen_at.isoformat() if prop.id in seen else None,
                 "sport": player.sport,
                 "source": prop.source,
                 "player_name": player.full_name,
                 "normalized_name": normalize_player_name(player.full_name),
                 "player_id": str(player.id),
+                "injury_context": context,
                 # Underdog's payload carries no team array (constraint #17),
                 # so game_id is never resolved at ingest time - always null
                 # today, not a bug in this endpoint.
@@ -176,6 +248,8 @@ async def prop_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]]
                 "team_name": teams[player.current_team_id].name if player.current_team_id in teams else None,
                 "opponent_name": None,
                 "stat_type": prop.stat_type,
+                "canonical_stat_type": canonical_stat(prop.stat_type),
+                "market_fair_probability": market_probability,
                 "line": prop.line,
                 "over_price_american": prop.over_price_american,
                 "under_price_american": prop.under_price_american,
@@ -192,6 +266,12 @@ async def prop_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]]
                 "model_probability": round(model_probability, 4) if model_probability is not None else None,
                 "under_model_probability": round(under_model_probability, 4) if under_model_probability is not None else None,
                 "under_edge_percent": under_edge_percent,
+                "baseline_model_probability": round(baseline_probability, 4) if baseline_probability is not None else None,
+                "baseline_projection": round(projected[0], 2) if projected is not None else None,
+                "served_projection_mean": served_mean,
+                "served_projection_stddev": served_stddev,
+                "calibration_candidate_id": calibration_id,
+                "calibration_status": 'experimental_user_override' if calibration_id else 'baseline',
                 "captured_at": prop.observed_at.isoformat(),
             }
         )
@@ -203,26 +283,54 @@ async def props(sport: str | None = Query(default=None), db: AsyncSession = Depe
     return await prop_rows(db, sport)
 
 
+def compact_prop(row):
+    # Keep view-model fields, not repeated archives or redundant model inputs.
+    keys = ('id', 'sport', 'source', 'player_name', 'player_id', 'game_id', 'team_name',
+            'stat_type', 'line', 'over_price_american', 'under_price_american', 'projection',
+            'edge_percent', 'under_edge_percent', 'model_probability', 'under_model_probability',
+            'game_time', 'game_status', 'last_seen_at', 'actionable', 'exclusion_reason')
+    result = {k: row.get(k) for k in keys}
+    context = row.get('injury_context') or {}
+    result['injury_context'] = {'status': context.get('status'),
+        'game_availability': {'status': (context.get('game_availability') or {}).get('status')}}
+    return result
+
+
+@router.get('/props/live')
+async def live_props(sport: str | None = None, limit: int = Query(200, ge=1, le=200),
+                     offset: int = Query(0, ge=0), db: AsyncSession = Depends(get_db)):
+    rows = [r for r in await prop_rows(db, sport, live_only=True) if r['actionable']]
+    rows.sort(key=lambda r: (-max(r['edge_percent'] if r['edge_percent'] is not None else -1e9,
+                                  r['under_edge_percent'] if r['under_edge_percent'] is not None else -1e9), r['id']))
+    return [compact_prop(r) for r in rows[offset:offset+limit]]
+
+
+@router.get('/props/history')
+async def prop_history(sport: str | None = None, limit: int = Query(100, ge=1, le=200),
+                       offset: int = Query(0, ge=0), db: AsyncSession = Depends(get_db)):
+    return await prop_rows(db, sport, history_page=(offset,limit))
+
+
 @router.get("/props/best")
 async def props_best(sport: str | None = Query(default=None), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """Ranked by edge_percent - only props with a qualified projection
     (src/services/projections.py) carry one; the rest are excluded rather
     than sorted in as an implicit zero edge."""
     qualified = sorted(
-        (row for row in await prop_rows(db, sport) if row["edge_percent"] is not None),
+        (row for row in await prop_rows(db, sport, live_only=True) if row.get('actionable') and row["edge_percent"] is not None),
         key=lambda row: row["edge_percent"],
         reverse=True,
     )[:20]
     if not qualified:
         return {
             "items": [],
-            "note": "no props have a qualified projection yet - each needs "
-            f"{MIN_GAMES_FOR_PROJECTION} realized games for that player/stat_type",
+            "note": "No actionable qualified projection: each offer needs a verified future event, "
+            f"fresh source confirmation, a price, and {MIN_GAMES_FOR_PROJECTION} variable historical results.",
         }
     return {"items": qualified}
 
 
-async def signal_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any]]:
+async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uuid.UUID] | None = None) -> list[dict[str, Any]]:
     """Only games that haven't started yet are real, bettable signals.
 
     FOUND LIVE 2026-09-04: nflverse's historical closing-line ingestion
@@ -254,6 +362,9 @@ async def signal_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any
     )
     if sport is not None:
         stmt = stmt.where(Game.sport == sport)
+    if quote_ids is not None:
+        # Retain opposing legs for vig removal, but only referenced games.
+        stmt = stmt.where(Game.id.in_(select(TeamMarketLine.game_id).where(TeamMarketLine.id.in_(quote_ids))))
     stmt = stmt.distinct(
         TeamMarketLine.game_id, TeamMarketLine.market, TeamMarketLine.side, TeamMarketLine.source
     ).order_by(
@@ -264,6 +375,11 @@ async def signal_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any
         TeamMarketLine.observed_at.desc(),
     )
     rows = (await db.execute(stmt)).all()
+
+    seen = await availability(db, 'team', [line.id for line, _ in rows])
+    # Preserve unknown-time fixtures in storage; they are explicitly not
+    # actionable until a known future start and fresh source confirmation.
+    rows = [(line, game) for line, game in rows if exclusion(game, line, seen.get(line.id)) is None]
 
     team_ids = {g.home_team_id for _, g in rows if g.home_team_id} | {
         g.away_team_id for _, g in rows if g.away_team_id
@@ -346,13 +462,18 @@ async def signal_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any
         away_name = teams[game.away_team_id].name if game.away_team_id in teams else "Away"
         matchup = f"{away_name} @ {home_name}"
 
+        distribution_id = None
         if market == "moneyline":
-            home_model_prob = moneyline_probability(home_rating, away_rating)
+            baseline_home_prob = moneyline_probability(home_rating, away_rating)
+            home_model_prob = calibrate_home_probability(baseline_home_prob, game.sport, market)
             home_selection, away_selection = f"{home_name} ML", f"{away_name} ML"
         else:  # spread
-            home_model_prob = spread_cover_probability(
+            baseline_home_prob = spread_cover_probability(
                 home_rating, away_rating, home_line.line or 0.0, game.sport
             )
+            pregame = game.game_time is not None and game.game_time > datetime.now(timezone.utc)
+            home_model_prob, distribution_id = spread_probability(implied_margin(home_rating, away_rating),
+                home_line.line or 0.0, baseline_home_prob, game.sport, pregame)
             home_selection = f"{home_name} {home_line.line:+.1f}" if home_line.line is not None else home_name
             away_selection = f"{away_name} {away_line.line:+.1f}" if away_line.line is not None else away_name
 
@@ -368,6 +489,19 @@ async def signal_rows(db: AsyncSession, sport: str | None) -> list[dict[str, Any
             ),
             market=market, source=source, matchup=matchup, game=game,
         )
+        if market == 'moneyline' and game.sport == 'ncaaf':
+            status = deployment_status()
+            for row, baseline in zip(out[-2:], (baseline_home_prob, 1.0-baseline_home_prob)):
+                row['baseline_model_probability'] = round(baseline, 4)
+                row['calibration_status'] = status['status']
+                row['calibration_candidate_id'] = status['candidate_id'] if status['enabled'] else None
+        if market == 'spread' and game.sport == 'ncaaf':
+            for row, baseline in zip(out[-2:], (baseline_home_prob, 1.0-baseline_home_prob)):
+                row['baseline_model_probability'] = round(baseline, 4)
+                row['calibration_status'] = 'experimental_user_override' if distribution_id else 'baseline'
+                row['calibration_candidate_id'] = distribution_id
+    for row in out:
+        row['last_seen_at'] = seen[uuid.UUID(row['id'])].seen_at.isoformat()
     return out
 
 
@@ -456,11 +590,19 @@ async def parlays(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     having it yet.
     """
     all_signals = await signal_rows(db, sport=None)
-    legs = sorted(
+    candidates = sorted(
         (s for s in all_signals if s["price_american"] is not None),
         key=lambda s: s["ev_percent"],
         reverse=True,
-    )[:3]
+    )
+    legs, games = [], set()
+    for row in candidates:
+        if row['game_id'] in games:
+            continue
+        legs.append(row)
+        games.add(row['game_id'])
+        if len(legs) == 3:
+            break
     if not legs:
         return {"legs": [], "combined_probability": None, "note": "no priced signals available yet"}
 
@@ -502,6 +644,20 @@ async def build_parlay(request: ParlayBuildRequest, db: AsyncSession = Depends(g
     """
     signals_by_id = {row["id"]: row for row in await signal_rows(db, sport=None)}
     props_by_id = {row["id"]: row for row in await prop_rows(db, sport=None)}
+
+    # No joint model exists yet: reject repeated events entirely, including
+    # duplicate/opposite legs and same-game props across different sources.
+    events = set()
+    for leg in request.legs:
+        row = (signals_by_id if leg.kind == 'signal' else props_by_id).get(str(leg.id))
+        if row is None:
+            continue  # Unknown IDs retain the documented skipped_legs contract.
+        if not row.get('actionable'):
+            raise HTTPException(422, 'Every parlay leg must be a fresh, priced pregame offer with a projection')
+        event = row.get('game_id')
+        if event is None or event in events:
+            raise HTTPException(422, 'Duplicate, contradictory, and same-game legs require a joint model and are not supported')
+        events.add(event)
 
     resolved: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -584,13 +740,140 @@ async def recommendations(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     generated on a Celery schedule - never computed live in this request. A
     real generation call through this stack's local Ollama model takes
     ~78s, so this is always a fast read of the most recent
-    RecommendationSnapshot row, not an LLM call."""
-    snapshot = await db.scalar(
-        select(RecommendationSnapshot).order_by(desc(RecommendationSnapshot.generated_at)).limit(1)
-    )
-    if snapshot is None:
-        return {"narrative": None, "generated_at": None, "note": "no recommendation generated yet"}
-    return {"narrative": snapshot.narrative, "generated_at": snapshot.generated_at.isoformat()}
+    RecommendationSnapshot row, not an LLM call.
+
+    The freshness/quote-evidence gate itself lives in
+    recommendations.get_valid_narrative - shared with
+    src/scheduler/tasks.py's post_narrative_to_dashboard so both call sites
+    apply the exact same staleness rule."""
+    from src.services.recommendations import get_valid_narrative
+
+    return await get_valid_narrative(db)
+
+
+@router.get("/calibration/live")
+def live_calibration() -> dict[str, Any]:
+    from pathlib import Path
+    from src.services.forecast_grading import latest_report
+    return latest_report(Path(get_settings().raw_archive_dir) / 'grading')
+
+
+@router.get("/calibration/deployment")
+def calibration_deployment() -> dict[str, Any]:
+    return {**deployment_status(), 'distributions': distribution_status()}
+
+
+@router.get('/calibration/prop-readiness')
+async def ncaaf_prop_readiness(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    from src.services.prop_readiness import latest_research, readiness
+    from starlette.concurrency import run_in_threadpool
+    rows = (await db.execute(select(PlayerGameStat.stat_type, func.count(PlayerGameStat.id),
+        func.count(func.distinct(PlayerGameStat.game_id))).join(Game, Game.id == PlayerGameStat.game_id)
+        .where(Game.sport == 'ncaaf', Game.status == 'final').group_by(PlayerGameStat.stat_type))).all()
+    facts = {stat: {'rows': count, 'games': games} for stat, count, games in rows}
+    research = await run_in_threadpool(latest_research)
+    return readiness(await prop_rows(db, 'ncaaf'), facts, research)
+
+
+@router.get('/calibration/coverage')
+async def all_sport_coverage(db: AsyncSession = Depends(get_db)):
+    from src.services.model_coverage import coverage
+    return await coverage(db, await prop_rows(db, None))
+
+
+@router.get('/calibration/odds-status')
+async def odds_status(db: AsyncSession = Depends(get_db)):
+    from redis.asyncio import Redis
+    from src.services.odds_pacing import status, apply_nfl_window
+    settings = get_settings()
+    async with Redis.from_url(settings.redis_url, decode_responses=True) as redis:
+        report = await status(redis, settings)
+    if settings.odds_api_nfl_props_priority:
+        now = datetime.now(timezone.utc)
+        # Paid pregame collection intentionally requires a known kickoff.
+        kickoff = await db.scalar(select(Game.game_time).where(
+            Game.sport == 'nfl', Game.status == 'scheduled',
+            Game.game_time.is_not(None), Game.game_time > now
+        ).order_by(Game.game_time).limit(1))
+        apply_nfl_window(report, kickoff, now)
+    return report
+
+
+@router.get('/calibration/prop-provider-status')
+async def prop_provider_status():
+    import json
+    from redis.asyncio import Redis
+    from src.ingest.aggregate_props import BOOKS
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    providers = {}
+    async with Redis.from_url(settings.redis_url, decode_responses=True) as redis:
+        for provider in ('sgo', 'parlay'):
+            raw = await redis.get(f'aggregate:{provider}:status')
+            providers[provider] = {
+                'configured': bool(settings.sportsgameodds_api_key if provider == 'sgo' else settings.parlay_api_key),
+                'bookmakers': sorted(BOOKS[provider]),
+                'daily_limit': settings.sportsgameodds_daily_objects if provider == 'sgo' else settings.parlay_daily_credits,
+                'reserved_today': int(await redis.get(f'aggregate:{provider}:spent:{now:%Y-%m-%d}') or 0),
+                'unit': 'event_objects' if provider == 'sgo' else 'credits',
+                'blocked_seconds': max(0, await redis.ttl(f'aggregate:{provider}:blocked')),
+                'last_response': json.loads(raw) if raw else None,
+            }
+    return {'enabled': settings.aggregate_props_enabled, 'providers': providers,
+            'dfs_actionable': False, 'direct_underdog_scheduled': False,
+            'note': 'Initial limited bookmaker/market coverage. Source timestamps control freshness. The Odds API budget is independent.'}
+
+
+@router.get('/calibration/result-repair')
+async def result_repair_status(db: AsyncSession = Depends(get_db)):
+    from src.services.result_repair_status import status
+    return await status(db)
+
+
+@router.get('/calibration/result-completeness')
+async def result_completeness(sport: str | None = None, offset: int = Query(0, ge=0),
+                              db: AsyncSession = Depends(get_db)):
+    from src.services.result_completeness import status
+    return await status(db, sport=sport, offset=offset)
+
+
+@router.get('/calibration/context-readiness')
+def context_readiness() -> dict[str, Any]:
+    from pathlib import Path
+    from src.services.context_readiness import readiness
+    settings = get_settings()
+    return readiness(Path(settings.raw_archive_dir), bool(settings.fantasy_news_rss_urls.strip()))
+
+
+@router.get('/calibration/evaluation-status')
+def evaluation_status():
+    from pathlib import Path
+    from src.services.evaluation_status import status
+    from src.services.model_version import manifest
+    settings = get_settings()
+    return {**status(Path(settings.raw_archive_dir), settings.supported_sports), 'serving_versions': manifest()}
+
+
+@router.get('/calibration/active-slate')
+def active_slate_validation():
+    from pathlib import Path
+    from src.services.evaluation_status import latest
+    report, _ = latest(Path(get_settings().raw_archive_dir) / 'active-slate-validation')
+    if not report:
+        return {'status': 'not_yet_checked', 'stale': True}
+    try:
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(report['checked_at'])).total_seconds()
+        stale = not 0 <= age <= 3600
+    except (KeyError, ValueError, TypeError):
+        stale = True
+    return {**report, 'stale': stale, 'schedule_seconds': 1800}
+
+
+@router.get('/calibration/research')
+def shadow_research_scorecards():
+    report = live_calibration()
+    return {'status': report.get('status'), 'graded_at': report.get('graded_at'),
+        'shadow_reports': report.get('shadow_reports', []), 'automatic_deployment': False}
 
 
 @router.get("/calibration")

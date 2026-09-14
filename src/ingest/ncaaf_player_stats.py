@@ -17,17 +17,15 @@ rostered player, so a boxscore's own athlete.id hits that crosswalk
 directly - the same mechanism Underdog/PrizePicks props already rely on,
 just fed from the same ESPN id space instead of a name match.
 
-Only the primitive box-score counting stats worth a market are ingested
-(mirrors NFL's own STAT_COLUMNS curation - "anything not listed is ignored
-rather than stored blindly"), not composite markets real NCAAF props also
-reference (rush_rec_yards, pass_rush_yards, total_tds, first_td_scorer) -
-those would need to be derived by summing rows across categories, the same
-gap NFL's own player_game_stats already has for its own composite props.
+This parser stores curated primitive stats, including kicking. The NCAAF
+results/backfill jobs separately derive complete-component composites through
+ncaaf_composites.py. Ambiguous total_tds and play-order markets remain unsupported.
 """
 
 from __future__ import annotations
 
 from typing import Any
+import math
 
 import httpx
 from sqlalchemy import select
@@ -53,10 +51,13 @@ SOURCE = "espn_ncaaf"
 # this module doesn't ingest at all) in a way a generic normalizer can't
 # disambiguate without knowing the category.
 _STAT_MAP: dict[str, dict[str, str]] = {
+    "fumbles": {
+        "fumblesLost": "fumbles_lost",
+    },
     "passing": {
         "passingYards": "passing_yards",
         "passingTouchdowns": "passing_touchdowns",
-        "interceptions": "ints_thrown",
+        "interceptions": "passing_interceptions",
     },
     "rushing": {
         "rushingAttempts": "rushing_attempts",
@@ -70,17 +71,31 @@ _STAT_MAP: dict[str, dict[str, str]] = {
         "receivingTouchdowns": "receiving_touchdowns",
         "longReception": "longest_reception",
     },
+    "kicking": {
+        "totalKickingPoints": "kicking_points",
+    },
 }
 # The one compound field ESPN emits ("16/31") - split into the two
 # canonical stat_types real props actually use separately.
 _COMPOUND_KEY = "completions/passingAttempts"
 
 
+def made_attempts(value):
+    parts = str(value).split('/')
+    if len(parts) != 2:
+        return None
+    made, attempts = (_number(part) for part in parts)
+    if made is None or attempts is None or not 0 <= made <= attempts or not made.is_integer() or not attempts.is_integer():
+        return None
+    return made, attempts
+
+
 def _number(value: Any) -> float | None:
     if value in (None, "", "--"):
         return None
     try:
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         return None
 
@@ -125,15 +140,29 @@ async def _ingest_category(db: AsyncSession, game_id: Any, category: dict[str, A
         athlete = entry.get("athlete") or {}
         external_id = str(athlete.get("id") or "")
         full_name = athlete.get("displayName")
-        if not external_id or not full_name:
+        if not external_id or not full_name or entry.get('didNotPlay') is True:
             continue
-        values = dict(zip(keys, entry.get("stats") or []))
+        raw_stats = entry.get('stats') or []
+        # ESPN sometimes omits only the trailing, unconsumed adjQBR value.
+        # Do not accept arbitrary short rows: an interior omission could shift
+        # outcomes into the wrong columns.
+        omitted_qbr = (category_name == 'passing' and keys and keys[-1] == 'adjQBR'
+                       and len(raw_stats) == len(keys)-1)
+        if len(keys) != len(raw_stats) and not omitted_qbr:
+            continue
+        values = dict(zip(keys, raw_stats))
 
         pairs: list[tuple[str, Any]] = []
         if category_name == "passing" and _COMPOUND_KEY in values:
-            completions, _, attempts = str(values[_COMPOUND_KEY]).partition("/")
-            pairs.append(("passing_completions", completions))
-            pairs.append(("passing_attempts", attempts))
+            pair = made_attempts(values[_COMPOUND_KEY])
+            if pair is not None:
+                pairs.extend(zip(('passing_completions', 'passing_attempts'), pair))
+        if category_name == 'kicking':
+            for key, stat in [('fieldGoalsMade/fieldGoalAttempts', 'fg_made'),
+                              ('extraPointsMade/extraPointAttempts', 'xp_made')]:
+                pair = made_attempts(values.get(key))
+                if pair is not None:
+                    pairs.append((stat, pair[0]))
         if stat_map:
             for key, canonical in stat_map.items():
                 if key in values:
@@ -149,7 +178,7 @@ async def _ingest_category(db: AsyncSession, game_id: Any, category: dict[str, A
 
         for stat_type, raw_value in pairs:
             number = _number(raw_value)
-            if number is None:
+            if number is None or (category_name == 'kicking' and (number < 0 or not number.is_integer())):
                 continue
             result = await db.execute(
                 insert(PlayerGameStat)

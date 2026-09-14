@@ -32,6 +32,7 @@ TEST_DB_URL = os.environ.get(
 )
 
 _TABLES = (
+    "quote_availability",
     "teams", "players", "player_external_ids", "games",
     "team_market_lines", "player_prop_lines", "player_game_stats",
     "model_artifacts", "model_predictions", "ingestion_runs",

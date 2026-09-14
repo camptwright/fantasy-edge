@@ -9,7 +9,9 @@ never touched by these tests at all.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import select
+from src.services.quote_eligibility import confirm_quote
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -23,6 +25,12 @@ from src.models.ratings import TeamRating
 
 
 async def _client(db):
+    # These existing contract fixtures represent a successful current poll.
+    # Negative availability cases are covered separately without this helper.
+    for kind, model in [('team', TeamMarketLine), ('prop', PlayerPropLine)]:
+        for quote in (await db.scalars(select(model))).all():
+            await confirm_quote(db, kind, quote)
+    await db.commit()
     async def _override_get_db():
         yield db
 
@@ -103,6 +111,7 @@ async def test_signals_and_rankings_reflect_elo_ratings(db):
     db.add(TeamRating(team_id=away.id, sport="nfl", rating=1400.0))
     game = Game(
         sport="nfl", espn_event_id="signal-test-1", season=2026,
+        game_time=datetime.now(timezone.utc)+timedelta(days=1),
         home_team_id=home.id, away_team_id=away.id, status="scheduled",
     )
     db.add(game)
@@ -237,6 +246,7 @@ async def test_totals_are_priced_once_both_teams_are_qualified(db):
     db.add(TeamRating(team_id=away.id, sport="nfl", rating=1400.0, avg_points_scored=22.0, avg_points_allowed=24.0, games_played=5))
     game = Game(
         sport="nfl", espn_event_id="signal-test-total-2", season=2026,
+        game_time=datetime.now(timezone.utc)+timedelta(days=1),
         home_team_id=home.id, away_team_id=away.id, status="scheduled",
     )
     db.add(game)
@@ -297,15 +307,20 @@ async def test_props_carries_a_real_projection_once_qualified(db):
     for i, value in enumerate([250.0, 275.0, 300.0, 225.0]):
         game = Game(
             sport="nfl", espn_event_id=f"props-test-{i}", season=2026,
+            game_time=datetime.now(timezone.utc) - timedelta(days=i + 1),
             home_team_id=home.id, away_team_id=away.id, status="final",
         )
         db.add(game)
         await db.flush()
         db.add(PlayerGameStat(player_id=player.id, game_id=game.id, stat_type="passing_yards", value=value))
 
+    upcoming = Game(sport='nfl', season=2026, status='scheduled',
+                    game_time=datetime.now(timezone.utc)+timedelta(days=1))
+    db.add(upcoming)
+    await db.flush()
     db.add(
         PlayerPropLine(
-            player_id=player.id, stat_type="passing_yards", line=200.0,
+            player_id=player.id, game_id=upcoming.id, stat_type="passing_yards", line=200.0,
             over_price_american=-110, under_price_american=-110,
             source="underdog", observed_at=datetime.now(timezone.utc),
         )
@@ -340,7 +355,7 @@ async def test_props_best_reports_the_gap_when_nothing_is_qualified(db):
         response = await client.get("/props/best")
         body = response.json()
         assert body["items"] == []
-        assert "no props have a qualified projection" in body["note"]
+        assert "No actionable qualified projection" in body["note"]
     finally:
         app.dependency_overrides.clear()
 
@@ -370,7 +385,7 @@ async def test_recommendations_returns_the_latest_snapshot(db):
     from src.models.governance import RecommendationSnapshot
 
     db.add(RecommendationSnapshot(narrative="Older narrative.", generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc)))
-    db.add(RecommendationSnapshot(narrative="Newest narrative.", generated_at=datetime(2026, 1, 2, tzinfo=timezone.utc)))
+    db.add(RecommendationSnapshot(narrative="Newest narrative.", quote_ids=[], generated_at=datetime.now(timezone.utc)))
     await db.commit()
 
     client = await _client(db)
@@ -389,6 +404,7 @@ async def test_build_parlay_combines_a_signal_and_a_prop_leg(db):
     db.add(TeamRating(team_id=away.id, sport="nfl", rating=1400.0))
     game = Game(
         sport="nfl", espn_event_id="parlay-test-1", season=2026,
+        game_time=datetime.now(timezone.utc)+timedelta(days=1),
         home_team_id=home.id, away_team_id=away.id, status="scheduled",
     )
     db.add(game)
@@ -403,13 +419,17 @@ async def test_build_parlay_combines_a_signal_and_a_prop_leg(db):
     for i, value in enumerate([250.0, 275.0, 300.0, 225.0]):
         stat_game = Game(
             sport="nfl", espn_event_id=f"parlay-test-stat-{i}", season=2026,
+            game_time=datetime.now(timezone.utc) - timedelta(days=i + 1),
             home_team_id=home.id, away_team_id=away.id, status="final",
         )
         db.add(stat_game)
         await db.flush()
         db.add(PlayerGameStat(player_id=player.id, game_id=stat_game.id, stat_type="passing_yards", value=value))
+    other_game = Game(sport='nfl', season=2026, status='scheduled', game_time=now+timedelta(days=2))
+    db.add(other_game)
+    await db.flush()
     prop = PlayerPropLine(
-        player_id=player.id, stat_type="passing_yards", line=200.0,
+        player_id=player.id, game_id=other_game.id, stat_type="passing_yards", line=200.0,
         over_price_american=-110, under_price_american=-110,
         source="underdog", observed_at=now,
     )

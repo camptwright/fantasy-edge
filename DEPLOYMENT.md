@@ -1,33 +1,45 @@
-# reekserver-1 deployment
+# Mac mini deployment
 
 Supersedes `PROXMOX.md` (CT100/Proxmox is retired as this app's deployment
 target; that doc is kept only as historical record of its RAM-budget and
-backup-cron lessons).
+backup-cron lessons). As of 2026-09, this also supersedes this file's own
+2026-08-29 reekserver-1 plan below in one respect: the app actually runs on
+the **Mac mini** (`192.168.10.10`), not reekserver-1 — confirmed live during
+the 2026-09-09/10 homelab security audit. The rest of this file (compose
+build steps, ntfy setup, NCAAF bootstrap) is host-agnostic and still
+accurate; only the tunnel/Access section below has changed.
 
-Clone this repository to `/home/reek/apps/fantasy-edge` (no sudo — `reek`
-has no `/opt`/`/srv` access on this host, unlike the old CT100 LXC), create
-a mode-0600 `.env` from `.env.example`, then run
-`docker compose up -d --build postgres redis litellm migrate api worker beat dashboard`.
-This project owns its Postgres and Redis volumes, LiteLLM key, and model
-routing — it has no `cloudflared` service of its own. Public routing goes
-through reekserver-1's shared Cloudflare Tunnel (id
-`af0c35fc-ec30-407e-8f9c-56c76e4e8e22`, the same one serving OpenWebUI at
-chat.camptwright.com):
+Clone this repository, create a mode-0600 `.env` from `.env.example`, then
+run `docker compose up -d --build postgres redis litellm migrate api worker
+beat dashboard`. This project owns its Postgres and Redis volumes, LiteLLM
+key, and model routing, and — unlike the original reekserver-1 plan — runs
+its **own dedicated** `cloudflared` container rather than joining a shared
+tunnel:
 
-1. `docker network connect fantasy-edge_fantasy cloudflared` so the shared
-   tunnel container can reach this stack.
-2. In the Zero Trust dashboard, add Public Hostname routes on that tunnel
-   pointing at `http://fantasy-edge-api-1:8000` (the sportsbook/Sleeper API)
-   and `http://fantasy-edge-dashboard-1:3000` (the dashboard) — container
-   names, not compose service aliases, since they're reachable only because
-   step 1 put `cloudflared` on the same Docker network.
-3. Protect the dashboard hostname with an Access application (it has no
-   login page of its own). The API's `/props`, `/signals`, `/rankings/
-   {sport}`, `/parlays` routes are deliberately unauthenticated — that's the
-   contract homelab-dashboard's Fantasy tile already expects
-   (`src/tiles/fantasy/client.ts` there) — while `/api/v1/fantasy/*` stays
-   gated behind `FANTASY_API_TOKEN` regardless of any Access layer on the
-   hostname.
+1. The `cloudflared` service in `docker-compose.yml` runs its own
+   token-authenticated tunnel (not the reekserver-1 shared one). Its live
+   ingress rules route `sports.camptwright.com` → `dashboard:3000`,
+   `sports-api.camptwright.com` → `api:8000`, and (unrelated to this app,
+   but sharing the same tunnel) `ollama-mac.camptwright.com` → the host's
+   native Ollama. Manage ingress in the Cloudflare Zero Trust dashboard
+   under this tunnel, not a local `config.yml`.
+2. The dashboard is protected by the same shared Cloudflare Access
+   application ("chat" in the Zero Trust dashboard) that covers
+   dashboard.camptwright.com/fitness.camptwright.com/chat.camptwright.com —
+   `sports.camptwright.com` was added as a destination on that app 2026-09.
+   `CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD` in `.env` must be that app's real
+   values (both are hard-required by `docker-compose.yml`'s `:?` guard as of
+   2026-09; previously optional, which let the dashboard silently serve
+   unauthenticated when unset — see the 2026-09-09/10 audit).
+3. **The API is no longer "deliberately unauthenticated."** As of 2026-09,
+   every route — including `/props`, `/signals`, `/rankings/{sport}`,
+   `/parlays` — requires the `FANTASY_API_TOKEN` bearer token, same as
+   `/api/v1/fantasy/*` always did. homelab-dashboard's Fantasy tile
+   (`src/tiles/fantasy/client.ts`) sends it via `FANTASY_EDGE_API_TOKEN`,
+   which must match this app's `FANTASY_API_TOKEN` — set it in
+   homelab-dashboard's `.env` too, or the tile degrades to its normal
+   "offline" empty state (a 401 looks like "unreachable" to that client, it
+   won't error loudly).
 
 ## litellm memory
 

@@ -7,8 +7,10 @@ const LINKS = [
   { href: "/", label: "Dashboard" },
   { href: "/fantasy", label: "Fantasy" },
   { href: "/fantasy/matchup", label: "Matchup" },
+  { href: "/fantasy/trade", label: "Trade" },
   { href: "/board", label: "Board" },
   { href: "/best-bets", label: "Best Bets" },
+  { href: "/experimental", label: "Experimental" },
   { href: "/recommendations", label: "Recommendations" },
   { href: "/calibration", label: "Calibration" },
 ];

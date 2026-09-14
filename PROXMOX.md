@@ -1,7 +1,12 @@
-> **Superseded 2026-08-29.** Deployment moved to reekserver-1 (plain
-> Debian host, not an LXC) — see `DEPLOYMENT.md`. Kept here only as the
-> historical record of the RAM-budget and backup-cron lessons learned on
-> CT100; none of the `pct exec`/Proxmox-specific steps below apply anymore.
+> **Superseded 2026-08-29, deployment target corrected 2026-09-10.**
+> Proxmox and CT100 are fully decommissioned. Deployment briefly moved to
+> reekserver-1 per `DEPLOYMENT.md`, but as of the 2026-09-10 homelab audit
+> actually runs via plain `docker compose` directly on the Mac mini
+> (192.168.10.10) — `DEPLOYMENT.md`'s reekserver-1-specific steps (shared
+> tunnel, `/home/reek/apps/...` path) are themselves now stale; see that
+> file's own note. This file is kept only as the historical record of the
+> RAM-budget and backup-cron lessons learned on CT100; none of the
+> `pct exec`/Proxmox-specific steps below apply anymore.
 
 # Fantasy Edge — Proxmox deployment runbook
 

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { createApiLoader } from "@/lib/resilient-api";
 import { MarketBadge, PageHeader, SportBadge, formatPrice } from "@/components/ui";
 
 // Very large edges are real numbers computed from real data, never
@@ -32,6 +33,7 @@ type Prop = {
   id: string;
   sport: string;
   player_name: string;
+  injury_context?: { status?: string; game_availability?: {status?: string} };
   stat_type: string;
   line: number;
   over_price_american: number | null;
@@ -50,15 +52,6 @@ type Opportunity = {
   edgePercent: number;
 };
 
-function apiUrl(): string {
-  return process.env.FANTASY_API_URL || "http://api:8000";
-}
-
-async function fetchJson<T>(path: string, fallback: T): Promise<T> {
-  const res = await fetch(`${apiUrl()}${path}`, { cache: "no-store" });
-  return res.ok ? res.json() : fallback;
-}
-
 function signalToOpportunity(s: Signal): Opportunity {
   return {
     key: `signal:${s.id}`,
@@ -73,13 +66,18 @@ function signalToOpportunity(s: Signal): Opportunity {
 
 function propToOpportunities(p: Prop): Opportunity[] {
   const out: Opportunity[] = [];
+  const status = p.injury_context?.game_availability?.status || p.injury_context?.status || "unknown";
+  const labels: Record<string, string> = {not_provided: "No event injury feed", no_player_report: "No report (availability unconfirmed)",
+    reported_questionable: "Questionable (ESPN)", coverage_not_supported: "Coverage unsupported",
+    no_current_player_report: "No current report (availability unconfirmed)"};
+  const availability = labels[status] || status.replaceAll("_", " ");
   if (p.edge_percent !== null && p.over_price_american !== null) {
     out.push({
       key: `prop:${p.id}:over`,
       sport: p.sport,
       market: p.stat_type,
       label: `${p.player_name} Over ${p.line}`,
-      detail: p.stat_type.replaceAll("_", " "),
+      detail: `${p.stat_type.replaceAll("_", " ")} · Availability: ${availability}`,
       price: p.over_price_american,
       edgePercent: p.edge_percent,
     });
@@ -90,7 +88,7 @@ function propToOpportunities(p: Prop): Opportunity[] {
       sport: p.sport,
       market: p.stat_type,
       label: `${p.player_name} Under ${p.line}`,
-      detail: p.stat_type.replaceAll("_", " "),
+      detail: `${p.stat_type.replaceAll("_", " ")} · Availability: ${availability}`,
       price: p.under_price_american,
       edgePercent: p.under_edge_percent,
     });
@@ -107,17 +105,19 @@ function isSportFilter(value: string | undefined): value is SportFilter {
 export default async function BestBetsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sport?: string }>;
+  searchParams: Promise<{ sport?: string; kind?: string }>;
 }) {
   const query = await searchParams;
   const filter: SportFilter = isSportFilter(query.sport) ? query.sport : "all";
+  const kind = query.kind === "player" || query.kind === "team" ? query.kind : "both";
   const sportsToFetch = filter === "all" ? SPORTS : [filter];
+  const { fetchJson, failures } = createApiLoader();
 
   const perSport = await Promise.all(
     sportsToFetch.map(async (sport) => {
       const [signals, props] = await Promise.all([
-        fetchJson<Signal[]>(`/signals?sport=${sport}`, []),
-        fetchJson<Prop[]>(`/props?sport=${sport}`, []),
+        kind === "player" ? Promise.resolve([] as Signal[]) : fetchJson<Signal[]>(`/signals?sport=${sport}`, []),
+        kind === "team" ? Promise.resolve([] as Prop[]) : fetchJson<Prop[]>(`/props/live?sport=${sport}&limit=30`, []),
       ]);
       return { signals, props };
     }),
@@ -129,8 +129,8 @@ export default async function BestBetsPage({
   // to belong to it.
   const opportunities = perSport
     .flatMap(({ signals, props }) => [
-      ...signals.filter((s) => s.price_american !== null).map(signalToOpportunity),
-      ...props.flatMap(propToOpportunities),
+      ...(kind === "player" ? [] : signals.filter((s) => s.price_american !== null).map(signalToOpportunity)),
+      ...(kind === "team" ? [] : props.flatMap(propToOpportunities)),
     ])
     .sort((a, b) => b.edgePercent - a.edgePercent)
     .slice(0, TOP_N);
@@ -149,7 +149,7 @@ export default async function BestBetsPage({
           return (
             <Link
               key={option}
-              href={option === "all" ? "/best-bets" : `/best-bets?sport=${option}`}
+              href={`/best-bets?sport=${option}&kind=${kind}`}
               className={`whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium uppercase transition-colors ${
                 active ? "bg-emerald-500/15 text-emerald-300" : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
               }`}
@@ -160,20 +160,35 @@ export default async function BestBetsPage({
         })}
       </nav>
 
+      <nav className="mb-6 flex gap-2" aria-label="Filter by bet type">
+        {(["both", "player", "team"] as const).map(option => <Link
+          key={option} href={`/best-bets?sport=${filter}&kind=${option}`}
+          aria-current={kind === option ? "page" : undefined}
+          className={`rounded-md px-3 py-1.5 text-sm font-medium ${kind === option ? "bg-emerald-500/15 text-emerald-300" : "text-slate-400 hover:bg-white/5"}`}>
+          {option === "both" ? "Both" : option === "player" ? "Player props" : "Team props"}
+        </Link>)}
+      </nav>
+
       <p className="mb-6 rounded-lg border border-amber-800/60 bg-amber-950/20 p-4 text-xs text-amber-200/90 sm:text-sm">
         A big edge here is a real number, not a fabricated one - but only the moneyline market has
         a measured{" "}
         <Link href="/calibration" className="underline hover:text-amber-100">
           calibration report
         </Link>{" "}
-        against real outcomes. Player-prop projections are a rolling average over as few as 4
-        realized games, with no awareness of role changes or injuries - treat very large edges as
+        against real outcomes. Player-prop projections average all eligible prior history, requiring at least 4
+        realized games. Availability evidence is labeled and selected risk cases are held out, but injuries and role changes do not numerically adjust projections. Treat very large edges as
         a sign the model and the book disagree sharply, not as a guaranteed win.
       </p>
 
+      {failures.length > 0 && (
+        <p role="alert" className="mb-6 rounded-lg border border-amber-700 p-4 text-sm text-amber-200">
+          Some live data is temporarily unavailable. Rankings may be incomplete; unavailable feeds are not shown. Refresh to retry.
+          <span className="mt-2 block text-xs">Affected feeds: {failures.slice().sort().join(", ")}</span>
+        </p>
+      )}
       {opportunities.length === 0 ? (
         <p className="rounded-lg border border-slate-700 p-6 text-sm text-slate-400">
-          {filter === "all"
+          {failures.length > 0 ? "Unable to load enough live data to show bets. This does not mean no bets qualify. Please refresh shortly." : filter === "all"
             ? "Nothing qualifies yet - check back once more games and props have real prices attached."
             : `Nothing qualifies for ${filter.toUpperCase()} yet - check back once more games and props have real prices attached.`}
         </p>

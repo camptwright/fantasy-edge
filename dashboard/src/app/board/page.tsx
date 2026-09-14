@@ -1,4 +1,9 @@
 import { MarketBadge, PageHeader, formatPercent, formatPrice } from "@/components/ui";
+import { createApiLoader } from "@/lib/resilient-api";
+
+type Prop = { id: string; player_name: string; stat_type: string; source: string;
+  line: number; over_price_american: number | null; under_price_american: number | null;
+  edge_percent: number | null; under_edge_percent: number | null };
 
 type Signal = {
   id: string;
@@ -29,30 +34,22 @@ const MAX_SIGNALS_PER_SPORT = 40;
 // database are available - same reasoning as the Fantasy page.
 export const dynamic = "force-dynamic";
 
-function apiUrl(): string {
-  return process.env.FANTASY_API_URL || "http://api:8000";
-}
-
-async function signals(sport: string): Promise<Signal[]> {
-  const res = await fetch(`${apiUrl()}/signals?sport=${sport}`, { cache: "no-store" });
-  return res.ok ? res.json() : [];
-}
-
-async function rankings(sport: string): Promise<Ranking[]> {
-  const res = await fetch(`${apiUrl()}/rankings/${sport}`, { cache: "no-store" });
-  return res.ok ? res.json() : [];
-}
-
 export default async function BoardPage() {
+  const { fetchJson, failures } = createApiLoader();
   const results = await Promise.all(
     SPORTS.map(async (sport) => {
-      const [allSignals, sportRankings] = await Promise.all([signals(sport), rankings(sport)]);
+      const [allSignals, sportRankings, props] = await Promise.all([
+        fetchJson<Signal[]>(`/signals?sport=${sport}`, []),
+        fetchJson<Ranking[]>(`/rankings/${sport}`, []),
+        fetchJson<Prop[]>(`/props/live?sport=${sport}&limit=40`, []),
+      ]);
       const sorted = [...allSignals].sort((a, b) => b.ev_percent - a.ev_percent);
       return {
         sport,
         signals: sorted.slice(0, MAX_SIGNALS_PER_SPORT),
         totalSignals: allSignals.length,
         rankings: sportRankings,
+        props,
       };
     }),
   );
@@ -62,10 +59,11 @@ export default async function BoardPage() {
       <PageHeader
         eyebrow="Elo baseline · not calibrated, not a claim of accuracy"
         title="Board"
-        description="Moneyline, spread, and total signals from a transparent team-rating and scoring-average model, plus current rankings, across every sport this app tracks."
+        description="Team signals, fresh model-qualified player props, and current rankings across every sport this app tracks."
       />
 
-      {results.map(({ sport, signals: sportSignals, totalSignals, rankings: sportRankings }) => (
+      {failures.length > 0 && <p role="alert" className="mb-4 text-amber-300">Some board feeds are unavailable. Refresh to retry.</p>}
+      {results.map(({ sport, signals: sportSignals, totalSignals, rankings: sportRankings, props }) => (
         <section key={sport} className="mb-10">
           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="text-xl font-semibold uppercase sm:text-2xl">{sport}</h2>
@@ -136,6 +134,20 @@ export default async function BoardPage() {
               )}
             </div>
           </div>
+          <h3 className="mb-2 mt-6 text-sm uppercase text-slate-400">Player props · up to 40 qualified offers by edge</h3>
+          {props.length === 0 ? <p className="text-sm text-slate-400">No fresh, model-qualified pregame props. Offers expire when stale; ingestion alone does not qualify a bet.</p> : (
+            <div className="overflow-x-auto rounded-lg border border-slate-700">
+              <table className="w-full text-left text-sm">
+                <thead><tr><th className="p-3">Player / market</th><th className="p-3">Book / feed</th><th className="p-3">Line</th><th className="p-3">Over price / edge</th><th className="p-3">Under price / edge</th></tr></thead>
+                <tbody>{props.map(p => <tr key={p.id} className="border-t border-slate-800">
+                  <td className="p-3">{p.player_name} · {p.stat_type.replaceAll('_', ' ')}</td>
+                  <td className="p-3">{p.source}</td><td className="p-3">{p.line}</td>
+                  <td className="p-3">{formatPrice(p.over_price_american)} / {formatPercent(p.edge_percent)}</td>
+                  <td className="p-3">{formatPrice(p.under_price_american)} / {formatPercent(p.under_edge_percent)}</td>
+                </tr>)}</tbody>
+              </table>
+            </div>
+          )}
         </section>
       ))}
     </main>

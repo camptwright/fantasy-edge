@@ -16,6 +16,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # User-authorized experimental override, 2026-09-05. False restores Elo.
+    ncaaf_moneyline_calibration_enabled: bool = True
+    ncaaf_spread_calibration_enabled: bool = True
+    ncaaf_prop_calibration_enabled: bool = True
+
     postgres_user: str = "fantasy"
     postgres_password: str = "changeme"
     postgres_host: str = "postgres"
@@ -53,6 +58,12 @@ class Settings(BaseSettings):
     nhl_api_base_url: str = "https://api-web.nhle.com/v1"
 
     odds_api_key: str = ""
+    sportsgameodds_api_key: str = ""
+    parlay_api_key: str = ""
+    aggregate_props_enabled: bool = True
+    # Conservative free-tier ceilings, independent of The Odds API quota.
+    parlay_daily_credits: int = 24
+    sportsgameodds_daily_objects: int = 60
     odds_api_base_url: str = "https://api.the-odds-api.com/v4"
     # nba/mlb/nhl keys are The Odds API's documented sport keys, not
     # independently verified live like the scraped sources below (no
@@ -67,6 +78,12 @@ class Settings(BaseSettings):
         "nhl": "icehockey_nhl",
     }
     odds_api_quota_floor: int = 50
+    odds_api_nfl_props_priority: bool = False
+    odds_api_poll_seconds: dict[str, int] = {sport: 86400 for sport in ('nfl', 'ncaaf', 'nba', 'mlb', 'nhl')}
+    odds_api_season_months: dict[str, list[int]] = {
+        'nfl': [1, 2, 8, 9, 10, 11, 12], 'ncaaf': [1, 8, 9, 10, 11, 12],
+        'mlb': list(range(3, 12)), 'nba': [1, 2, 3, 4, 5, 6, 10, 11, 12],
+        'nhl': [1, 2, 3, 4, 5, 6, 10, 11, 12]}
 
     # guest.api.arcadia.pinnacle.com - the public site's own consumer API,
     # not Pinnacle's (now-closed-to-the-public, per its own docs since
@@ -123,8 +140,6 @@ class Settings(BaseSettings):
     # Optional licensed weekly fantasy-projection feed. This is deliberately
     # separate from Sleeper: the public Sleeper projection payload is often
     # empty before kickoff even while its consumer app shows preview values.
-    sportsdataio_api_key: str = ""
-    sportsdataio_projection_base_url: str = "https://api.sportsdata.io/v3/nfl/projections/json"
     fantasy_api_token: str = ""
 
     # Canary/anomaly alerting - the homelab's own self-hosted ntfy instance
@@ -146,9 +161,40 @@ class Settings(BaseSettings):
     fantasy_model_alias: str = "worker"
     fantasy_news_rss_urls: str = ""
 
+    # ESPN Fantasy Football has no public API and no account-wide "list my
+    # leagues" call the way Sleeper does - private-league access requires
+    # the two cookie values (espn_s2, SWID) from an already-logged-in
+    # browser session, and each league to sync must be listed explicitly
+    # by id. Comma-separated to match fantasy_news_rss_urls' own convention
+    # (split at the point of use in src/ingest/espn_fantasy.py, not here).
+    espn_league_ids: str = ""
+    espn_s2: str = ""
+    espn_swid: str = ""
+    espn_fantasy_season: int = 2026
+    # lm-api-reads.fantasy.espn.com, NOT fantasy.espn.com - verified live
+    # 2026-09-09: the real cookies/league both check out fine against the
+    # read-API host (a plain curl with the same espn_s2/SWID returned a
+    # real 200 JSON payload), but the same request against
+    # fantasy.espn.com (that host is the web app frontend, not an API)
+    # 302-redirects to the generic https://www.espn.com/fantasy/ page
+    # regardless of credentials - it isn't an auth failure, it's the
+    # wrong host. Confirmed against the cwendt94/espn-api community
+    # package's own request layer (espn_api/requests/constant.py), which
+    # uses this exact host.
+    espn_fantasy_base_url: str = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl"
+
     # Fractional-Kelly multiplier applied to /signals' full-Kelly stake
     # suggestion - standard bankroll-risk reduction, not a fitted value.
     kelly_fraction_cap: float = 0.25
+
+    # homelab-dashboard's /api/ingest/articles - same bearer-token ingest
+    # path OpenClaw/Adjutant already use, see src/utils/dashboard_ingest.py.
+    # dashboard_ingest_token must match homelab-dashboard's own
+    # ARTICLE_INGEST_TOKEN or every push gets a 403 (that route bypasses
+    # Cloudflare Access in favor of this token, same as ARTICLE_INGEST_TOKEN
+    # everywhere else in the homelab).
+    dashboard_ingest_url: str = ""
+    dashboard_ingest_token: str = ""
 
     @property
     def database_url(self) -> str:

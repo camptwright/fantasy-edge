@@ -2,6 +2,7 @@
 from __future__ import annotations
 import xml.etree.ElementTree as ET
 import httpx
+from datetime import datetime, timezone
 
 
 async def fetch_rss_headlines(urls: str) -> list[dict[str, str]]:
@@ -21,11 +22,15 @@ async def fetch_rss_headlines(urls: str) -> list[dict[str, str]]:
                 title = item.findtext("title")
                 link = item.findtext("link")
                 if title and link:
-                    headlines.append({"title": title.strip(), "url": link.strip(), "source": url})
+                    headlines.append({"title": title.strip(), "url": link.strip(), "source": url,
+                        "published_at_raw": item.findtext('pubDate') or '',
+                        "observed_at": datetime.now(timezone.utc).isoformat()})
             # Reddit and many modern publications serve Atom rather than RSS.
             for entry in root.findall(".//{http://www.w3.org/2005/Atom}entry")[:10]:
                 title = entry.findtext("{http://www.w3.org/2005/Atom}title")
                 link_node = entry.find("{http://www.w3.org/2005/Atom}link[@href]")
                 if title and link_node is not None and link_node.get("href"):
-                    headlines.append({"title": title.strip(), "url": link_node.get("href", ""), "source": url})
+                    headlines.append({"title": title.strip(), "url": link_node.get("href", ""), "source": url,
+                        "published_at_raw": entry.findtext('{http://www.w3.org/2005/Atom}published') or '',
+                        "observed_at": datetime.now(timezone.utc).isoformat()})
     return headlines[:30]

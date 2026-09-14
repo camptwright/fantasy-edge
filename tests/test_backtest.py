@@ -74,7 +74,7 @@ async def _seed_final_game(
         home_score=home_score,
         away_score=away_score,
         status="final",
-        game_time=game_time,
+        game_time=game_time or datetime(season, 9, 1, tzinfo=timezone.utc),
     )
     db.add(game)
     await db.flush()
@@ -132,11 +132,11 @@ async def test_run_backtest_prices_spread_and_total_when_closing_lines_exist(db)
     game = await _seed_final_game(db, "nfl", 2020, "Green Bay Packers", "Chicago Bears", 24, 17, "bt-5")
     db.add(TeamMarketLine(
         game_id=game.id, market="spread", side="home", line=-3.0,
-        source="test", line_type="closing",
+        source="test", line_type="closing", observed_at=game.game_time,
     ))
     db.add(TeamMarketLine(
         game_id=game.id, market="total", side="over", line=40.5,
-        source="test", line_type="closing",
+        source="test", line_type="closing", observed_at=game.game_time,
     ))
     await db.commit()
 

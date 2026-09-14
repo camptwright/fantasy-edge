@@ -21,6 +21,7 @@ from src.ingest.runs import record_run
 from src.models.facts import Game
 from src.models.governance import IngestionRun
 from src.services.elo import update_ratings_after_game
+from src.services.team_rating_repair import lock_sport, repair_changed_score
 
 SOURCE = "espn"
 
@@ -71,8 +72,8 @@ async def sync_scoreboard(
     settings = get_settings()
     if dates is None:
         today = datetime.now(timezone.utc).date()
-        dates = f"{today:%Y%m%d}-{today + timedelta(days=days_ahead):%Y%m%d}"
-    params = {"dates": dates, **_ESPN_SCOREBOARD_PARAMS.get(sport, {})}
+        dates = f"{today - timedelta(days=1):%Y%m%d}-{today + timedelta(days=days_ahead):%Y%m%d}"
+    params = {"dates": dates, "limit": "1000", **_ESPN_SCOREBOARD_PARAMS.get(sport, {})}
 
     async with record_run(db, f"{SOURCE}_{sport}") as run:
         async with httpx.AsyncClient(timeout=20.0) as client:
@@ -141,6 +142,7 @@ async def _upsert_event(
         return None
     competition = competitions[0]
 
+    await lock_sport(db, sport)
     game = await db.scalar(select(Game).where(Game.espn_event_id == event_id))
     is_new = game is None
     # Elo must update exactly once per game, the moment it first becomes
@@ -148,6 +150,7 @@ async def _upsert_event(
     # update_ratings_after_game's own docstring on this being the caller's
     # responsibility).
     was_final = (not is_new) and game.status == "final"
+    old_score = (game.home_score, game.away_score) if was_final else None
 
     home = away = None
     home_score = away_score = None
@@ -202,6 +205,8 @@ async def _upsert_event(
         await db.flush()
         if not was_final and game.status == "final":
             await update_ratings_after_game(db, game)
+        elif was_final:
+            await repair_changed_score(db, game, old_score)
         return game
 
     if is_new:
@@ -220,6 +225,8 @@ async def _upsert_event(
     await db.flush()
     if not was_final and game.status == "final":
         await update_ratings_after_game(db, game)
+    elif was_final:
+        await repair_changed_score(db, game, old_score)
     return game
 
 

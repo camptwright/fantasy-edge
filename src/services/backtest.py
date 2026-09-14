@@ -52,23 +52,28 @@ class BacktestPrediction:
 
 
 async def _closing_lines_by_game(db: AsyncSession, game_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict[str, float]]:
-    """The home side's own spread/total number per game, from whichever
-    line was recorded first (append-only observation history - the
-    opening/earliest number is the closest thing to "the market's honest
-    pre-game view" this schema has short of a dedicated closing-line
-    column). Only used to know WHAT number the market posted, never to
-    decide who is favored - that stays the model's own job."""
+    """Latest available pregame home spread / over total per game.
+
+    Quotes after kickoff and games with unknown kickoff are ineligible.
+    Observed timestamps are trusted provider provenance; imported historical
+    closes require a separate availability audit before promotion.
+    """
     if not game_ids:
         return {}
     rows = (
         await db.execute(
             select(TeamMarketLine)
+            .join(Game, Game.id == TeamMarketLine.game_id)
             .where(
                 TeamMarketLine.game_id.in_(game_ids),
                 TeamMarketLine.market.in_(("spread", "total")),
                 TeamMarketLine.side.in_(("home", "over")),
+                # Unknown event times cannot establish a pregame quote.
+                # Keep nullable fixtures in ingestion; exclude explicitly here.
+                Game.game_time.isnot(None),
+                TeamMarketLine.observed_at <= Game.game_time,
             )
-            .order_by(TeamMarketLine.observed_at.asc())
+            .order_by(TeamMarketLine.observed_at.desc(), TeamMarketLine.id.desc())
         )
     ).scalars()
 
@@ -102,6 +107,9 @@ async def run_backtest(db: AsyncSession, sport: str, seasons: list[int]) -> list
     predictions: list[BacktestPrediction] = []
 
     for game in games:
+        # Untimed games cannot be placed in a chronological evaluation.
+        if game.game_time is None:
+            continue
         if game.home_team_id is None or game.away_team_id is None:
             continue
         home = states.setdefault(game.home_team_id, TeamState())

@@ -113,8 +113,10 @@ STAT_ALIASES: dict[str, str] = {
     # "attempts", a third spelling alongside "pass_attempts"-style joins
     # from other sources. CONSTRAINT #8.
     "attempts": "passing_attempts",
-    "interceptions thrown": "interceptions_thrown",
-    "int": "interceptions_thrown",
+    "interceptions thrown": "passing_interceptions",
+    "ints thrown": "passing_interceptions",
+    "passing interceptions": "passing_interceptions",
+    "int": "passing_interceptions",
     "rush yds": "rushing_yards",
     "rush yards": "rushing_yards",
     "rushing yards": "rushing_yards",

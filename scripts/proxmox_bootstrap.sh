@@ -1,6 +1,12 @@
 #!/bin/bash
+# SUPERSEDED — Proxmox and CT 100 are fully decommissioned; this script
+# targets infrastructure that no longer exists. Do not run it. Current
+# deployment runs via plain `docker compose` directly on the Mac mini — see
+# DEPLOYMENT.md for the real, current steps. Kept only as historical record.
+#
 # Idempotent host bootstrap for CT 100 (fantasy-edge). Run as root ON the
 # container: `ssh root@10.51.24.34 "pct exec 100 -- bash -s" < scripts/proxmox_bootstrap.sh`.
+# (10.51.24.34 is itself a stale, pre-192.168.8.0/24 IP scheme.)
 #
 # Every step here is written to be safe to re-run: `apt-get install` on an
 # already-installed package is a no-op, `systemctl enable` on an already-

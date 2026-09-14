@@ -71,6 +71,7 @@ def raw_lines_to_props(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """
     appearances_by_id = {a["id"]: a for a in payload.get("appearances", [])}
     players_by_id = {p["id"]: p for p in payload.get("players", [])}
+    games_by_id = {str(g['id']): g for g in payload.get('games', [])}
 
     rows: list[dict[str, Any]] = []
     for line in payload.get("over_under_lines", []):
@@ -89,6 +90,9 @@ def raw_lines_to_props(payload: dict[str, Any]) -> list[dict[str, Any]]:
         sport = _SPORT_ID_MAP.get(player.get("sport_id"))
         if sport is None:
             continue
+        event = games_by_id.get(str(appearance.get('match_id'))) if appearance.get('match_type') == 'Game' else None
+        if event and _SPORT_ID_MAP.get(event.get('sport_id')) != sport:
+            event = None
 
         stat_display = appearance_stat.get("display_stat")
         stat_value = line.get("stat_value")
@@ -117,6 +121,7 @@ def raw_lines_to_props(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 # not unique (two active Josh Allens), so this is what
                 # resolve_player keys on.
                 "underdog_player_id": str(player.get("id") or ""),
+                "event": event,
                 # No `teams` array in this payload - team_id can't be
                 # resolved to a name here, so game_id matching in
                 # props_agent falls back to player-only resolution.
