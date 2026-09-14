@@ -10,7 +10,6 @@ volumes:
   redisdata:
   modeldata:
   rawdata:
-  ntfydata:
 
 x-app: &app
   build:
@@ -153,33 +152,11 @@ services:
     # unconstrained; matching that working pattern rather than guessing at
     # another number.
 
-  ntfy:
-    image: binwiederhier/ntfy@sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da
-    command: ["serve"]
-    networks: [fantasy]
-    restart: unless-stopped
-    # Host-published (not just `expose`) on purpose: unlike every other
-    # sidecar in this file, a phone's ntfy app needs to reach this directly
-    # over the LAN to subscribe - it never goes through the Next.js
-    # dashboard's /api rewrite. Only this app's own worker/beat containers
-    # publish to it, over the internal `fantasy` network (NTFY_BASE_URL in
-    # .env points at http://ntfy:80, never this host port).
-    ports: ["8090:80"]
-    environment:
-      NTFY_BASE_URL: "http://192.168.10.10:8090"
-      NTFY_CACHE_FILE: /var/lib/ntfy/cache.db
-      NTFY_AUTH_FILE: /var/lib/ntfy/auth.db
-      # Deny-all default: an ntfy instance with no auth is a topic name
-      # away from anyone on the LAN reading or spoofing alerts. Explicit
-      # per-topic grants (set up once via `ntfy user add`/`ntfy access`
-      # after first start - see DEPLOYMENT notes) are required for both
-      # this app's publish token and the phone's subscribing user.
-      NTFY_AUTH_DEFAULT_ACCESS: deny-all
-      NTFY_BEHIND_PROXY: "false"
-    volumes: ["ntfydata:/var/lib/ntfy"]
-    mem_limit: 128m
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--tries=1", "-O", "-", "http://localhost:80/v1/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+  # No dedicated ntfy service as of 2026-09: alerts now publish to the
+  # shared reekserver-1 ntfy instance (see the standalone `ntfy` repo) at
+  # NTFY_BASE_URL=https://ntfy.camptwright.com, topic fantasy-edge-alerts,
+  # over the public internet rather than the LAN. Retired the per-app
+  # container (and its `ntfydata` volume) to stop running three separate
+  # ntfy deployments fleet-wide for one notification bus. See .env.example
+  # and DEPLOYMENT.md's "ntfy alerting" section for the token setup this
+  # needs on the shared instance.

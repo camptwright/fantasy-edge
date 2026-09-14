@@ -6,8 +6,10 @@ backup-cron lessons). As of 2026-09, this also supersedes this file's own
 2026-08-29 reekserver-1 plan below in one respect: the app actually runs on
 the **Mac mini** (`192.168.10.10`), not reekserver-1 — confirmed live during
 the 2026-09-09/10 homelab security audit. The rest of this file (compose
-build steps, ntfy setup, NCAAF bootstrap) is host-agnostic and still
-accurate; only the tunnel/Access section below has changed.
+build steps, NCAAF bootstrap) is host-agnostic and still accurate; the
+tunnel/Access section below has changed, and the ntfy section was rewritten
+2026-09-13 for the fleet-wide ntfy consolidation (this app no longer runs
+its own ntfy container).
 
 Clone this repository, create a mode-0600 `.env` from `.env.example`, then
 run `docker compose up -d --build postgres redis litellm migrate api worker
@@ -70,32 +72,47 @@ deliberately not part of the serving image.
 `NTFY_BASE_URL`/`NTFY_TOPIC`/`NTFY_TOKEN` are set in `.env` - by default
 this app has no working alerting at all, which is how a Sleeper sync could
 crash on every single scheduled run without anyone finding out (found live
-2026-09-05). The `ntfy` service in `docker-compose.yml` is self-hosted
-(not ntfy.sh) and defaults to `NTFY_AUTH_DEFAULT_ACCESS: deny-all`, so a
-fresh `ntfydata` volume has no users and every request 403s until this
-one-time setup runs:
+2026-09-05).
+
+As of 2026-09-13, this app has **no ntfy container of its own** - it
+publishes to reekserver-1's shared ntfy instance (the standalone `ntfy`
+repo, already routed through that host's Cloudflare Tunnel at
+`https://ntfy.camptwright.com`), the same consolidation applied fleet-wide
+so there's one ntfy instance instead of three. That instance defaults to
+`NTFY_AUTH_DEFAULT_ACCESS: deny-all`, so a topic this app hasn't been
+granted access to 403s every publish until this one-time setup runs
+**against the shared instance** (from reekserver-1, or anywhere with a
+route to it - not from this Mac mini's own compose project, which no
+longer has an `ntfy` service to `exec` into):
 
 ```bash
-docker compose up -d ntfy
-docker exec -e NTFY_PASSWORD='choose-a-real-password' fantasy-edge-ntfy-1 \
+ssh reek@reekserver-1
+cd /home/reek/apps/ntfy   # or wherever that repo is checked out there
+docker exec -e NTFY_PASSWORD='choose-a-real-password' ntfy-ntfy-1 \
   ntfy user add --role=user fantasyedge
-docker exec fantasy-edge-ntfy-1 ntfy access fantasyedge fantasy-edge-alerts read-write
-docker exec fantasy-edge-ntfy-1 ntfy token add fantasyedge
+docker exec ntfy-ntfy-1 ntfy access fantasyedge fantasy-edge-alerts read-write
+docker exec ntfy-ntfy-1 ntfy token add fantasyedge
 ```
 
-Put the printed token in `.env` as `NTFY_TOKEN`, `NTFY_TOPIC=fantasy-edge-alerts`,
-and `NTFY_BASE_URL=http://ntfy:80` (the container's internal address - the
-app publishes over the compose network, never through the host-published
-port), then `docker compose up -d --force-recreate api worker beat` so the
-new env vars actually load (they're read at container start, not
+Put the printed token in this app's `.env` as `NTFY_TOKEN`,
+`NTFY_TOPIC=fantasy-edge-alerts`, and
+`NTFY_BASE_URL=https://ntfy.camptwright.com`, then
+`docker compose up -d --force-recreate api worker beat` on the Mac mini so
+the new env vars actually load (they're read at container start, not
 hot-reloaded). Subscribe from the ntfy phone app at
-`http://<this-host's-LAN-IP>:8090` (the port `docker-compose.yml`'s `ntfy`
-service publishes), topic `fantasy-edge-alerts`, logging in as the same
-`fantasyedge` user/password - deny-all means an unauthenticated subscribe
-403s exactly like an unauthenticated publish does. This only reaches the
-phone on the same LAN/VPN as the host; reaching it from elsewhere needs a
-real Cloudflare Tunnel hostname (or similar) pointed at this port, which is
-a separate, not-yet-done step.
+`https://ntfy.camptwright.com`, topic `fantasy-edge-alerts`, logging in as
+the same `fantasyedge` user/password - deny-all means an unauthenticated
+subscribe 403s exactly like an unauthenticated publish does. Because this
+now goes over the public tunnel instead of the LAN, it also means alerts
+keep working if the Mac mini's own network changes; the trade-off is that
+this app's alerting now depends on reekserver-1 being up, which it didn't
+before - worth knowing if reekserver-1 goes down during an incident this
+alerting exists to catch.
+
+If reekserver-1's `docker volume ls` still shows this app's old
+`fantasy-edge_ntfydata` volume from before the consolidation, it's inert
+and safe to remove once you've confirmed the shared instance is working:
+`docker volume rm fantasy-edge_ntfydata`.
 
 Verify the whole path with a real publish, not just a healthcheck:
 ```bash
@@ -104,7 +121,7 @@ import asyncio
 from src.utils.alerts import notify
 asyncio.run(notify('test', title='Fantasy Edge: Test'))
 "
-curl -u fantasyedge:<password> 'http://localhost:8090/fantasy-edge-alerts/json?poll=1&since=all'
+curl -u fantasyedge:<password> 'https://ntfy.camptwright.com/fantasy-edge-alerts/json?poll=1&since=all'
 ```
 
 ## Verify
