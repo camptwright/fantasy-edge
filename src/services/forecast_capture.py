@@ -45,7 +45,7 @@ async def capture(db):
     lines = {str(line.id): line for line in (await db.scalars(select(TeamMarketLine).where(
         TeamMarketLine.id.in_(ids)))).all()} if ids else {}
     ratings = {r.team_id: r for r in (await db.scalars(select(TeamRating))).all()}
-    linked = [p for p in props if p.get('game_id') in games and p.get('actionable') and p.get('model_probability') is not None]
+    linked = [p for p in props if p.get('game_id') in games and p.get('research_capture_eligible', p.get('actionable')) and p.get('model_probability') is not None]
     projected = await project_stats(db, {(uuid.UUID(p['player_id']), p['stat_type']) for p in linked})
     features = await snapshots(db, linked, started)
     from src.services.market_shadow import forecasts as market_forecasts

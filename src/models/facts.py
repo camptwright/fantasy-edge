@@ -45,7 +45,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base, CreatedAt, UUIDPrimaryKey, utcnow
@@ -59,6 +59,7 @@ class QuoteAvailability(Base):
     source: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    event_binding: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
 class Game(Base, UUIDPrimaryKey, CreatedAt):

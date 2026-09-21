@@ -14,7 +14,8 @@ from sqlalchemy import select, text, update
 from config.settings import get_settings
 from src.ingest.lines import record_prop_line
 from src.ingest.runs import record_run
-from src.ingest.theodds import _match_game, is_quota_exhausted, set_quota_exhausted
+from src.ingest.theodds import is_quota_exhausted, set_quota_exhausted
+from src.ingest.prop_events import match_priced_event as _match_game, event_binding
 from src.models.facts import Game, PlayerPropLine, QuoteAvailability
 from src.models.identity import Player
 from src.services.odds_pacing import record_headers, reserve
@@ -143,7 +144,7 @@ async def poll_nfl_props(db, redis, *, horizon_hours=2):
                             continue
                         if await record_prop_line(db, player_id=player.id, game_id=game.id,
                             stat_type=stat, line=point, over_price_american=over,
-                            under_price_american=under, source=SOURCE):
+                            under_price_american=under, source=SOURCE, event_binding=event_binding(game)):
                             run.rows_written += 1
                     run.detail = f'Four-market NFL poll; {parked} identities parked; {remaining} credits remaining'
                     return run.rows_written

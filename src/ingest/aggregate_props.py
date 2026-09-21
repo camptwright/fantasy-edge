@@ -17,7 +17,7 @@ from config.settings import get_settings
 from src.db.client import get_worker_db
 from src.ingest.lines import record_prop_line
 from src.ingest.runs import record_run
-from src.ingest.theodds import _match_game
+from src.ingest.prop_events import match_priced_event as _match_game, event_binding
 from src.ingest.theodds_props import select_player
 from src.models.facts import Game, PlayerPropLine, QuoteAvailability
 from src.models.identity import Player
@@ -244,7 +244,7 @@ async def ingest(db, provider, sport, payload, now):
                 continue
         if await record_prop_line(db, player_id=player.id, game_id=game.id,
             stat_type=row['stat'], line=row['line'], over_price_american=row['over'],
-            under_price_american=row['under'], source=source):
+            under_price_american=row['under'], source=source, event_binding=event_binding(game)):
             written += 1
         current = await db.scalar(select(PlayerPropLine).where(PlayerPropLine.player_id == player.id,
             PlayerPropLine.game_id == game.id, PlayerPropLine.source == source,

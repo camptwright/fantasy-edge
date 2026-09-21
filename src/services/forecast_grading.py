@@ -161,7 +161,7 @@ async def grade(db, directory):
             'market_key': canonical_stat(record['market'])+':'+str(record.get('player_id', 'team')),
             'probability': prediction.get('model_probability'), 'baseline': prediction.get('baseline_model_probability'),
             'market_probability': prediction.get('market_fair_probability', prediction.get('fair_probability')),
-            'outcome': result, 'status': status, 'protocol_verified': prediction.get('actionable') is True}
+            'outcome': result, 'status': status, 'protocol_verified': prediction.get('forecast_eligible', prediction.get('actionable')) is True}
         group['evaluation'].append(evaluation)
         if result is not None:
             group['scores'].append((p, result))
@@ -189,7 +189,7 @@ async def grade(db, directory):
             'baseline': prediction.get('baseline_model_probability') if shadow.get('comparison_baseline') == 'retained_baseline'
                 else prediction.get('model_probability'),
             'market_probability': prediction.get('market_fair_probability', prediction.get('fair_probability')),
-            'outcome': result, 'status': state, 'protocol_verified': prediction.get('actionable') is True})
+            'outcome': result, 'status': state, 'protocol_verified': prediction.get('forecast_eligible', prediction.get('actionable')) is True})
     reports = []
     for (sport, kind, market, version), group in sorted(groups.items()):
         scores = group['scores']

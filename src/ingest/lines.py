@@ -93,6 +93,7 @@ async def record_prop_line(
     over_price_american: int | None,
     under_price_american: int | None,
     source: str,
+    event_binding: dict | None = None,
 ) -> bool:
     """Write a prop observation only if it differs from the most recent one."""
     latest = await db.scalar(
@@ -117,7 +118,7 @@ async def record_prop_line(
         and latest.over_price_american == over_price_american
         and latest.under_price_american == under_price_american
     ):
-        await confirm_quote(db, 'prop', latest)
+        await confirm_quote(db, 'prop', latest, event_binding)
         return False
 
     quote = PlayerPropLine(
@@ -131,5 +132,5 @@ async def record_prop_line(
         )
     db.add(quote)
     await db.flush()
-    await confirm_quote(db, 'prop', quote)
+    await confirm_quote(db, 'prop', quote, event_binding)
     return True

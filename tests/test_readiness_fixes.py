@@ -56,7 +56,8 @@ async def test_unchanged_offer_refreshes_metadata_not_history(db):
         stat_type=quote.stat_type, line=quote.line, over_price_american=-110, under_price_american=-110, source=quote.source)
     assert await db.scalar(select(func.count()).select_from(PlayerPropLine)) == 1
     assert quote.observed_at == original_time
-    assert (await prop_rows(db, 'ncaaf'))[0]['actionable']
+    row = (await prop_rows(db, 'ncaaf'))[0]
+    assert row['research_capture_eligible'] and not row['actionable']
     await withdraw_absent_props(db, quote.source, datetime.now(timezone.utc)+timedelta(seconds=1))
     await db.commit()
     row = (await prop_rows(db, 'ncaaf'))[0]
@@ -95,7 +96,9 @@ async def test_latest_props_keep_separate_events(db):
     assert len(await prop_rows(db, 'ncaaf')) == 2
 
 
-async def test_cached_narrative_is_withheld_when_event_starts(db):
+async def test_cached_narrative_is_withheld_when_event_starts(db, monkeypatch):
+    # Isolate the event-start cache gate from the model-approval gate.
+    monkeypatch.setattr('src.services.prop_validation.assess', lambda *args: [])
     from src.services.recommendations import generate_narrative
     game, quote = await offer(db)
     quote.line = .5  # Positive-EV quote, not the original 50/50 line at -110.

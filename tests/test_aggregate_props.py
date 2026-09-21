@@ -103,6 +103,8 @@ async def test_provider_snapshot_time_not_poll_time(db, monkeypatch):
     quote = await db.scalar(select(PlayerPropLine))
     seen = await db.get(QuoteAvailability, ('prop', quote.id))
     assert seen.seen_at == updated
+    assert seen.event_binding['game_id'] == str(game.id)
+    assert seen.event_binding['kickoff'] == game.game_time.isoformat()
     assert quote.observed_at > updated
     repeated = await module.ingest(db, 'parlay', 'nfl', [row], now+timedelta(minutes=1))
     assert repeated['written'] == 0

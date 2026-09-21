@@ -45,7 +45,9 @@ async def snapshots(db, props, as_of):
     needed |= {alias for alias, canonical in ALIASES.items() if canonical in needed}
     rows = (await db.execute(select(PlayerGameStat.player_id, PlayerGameStat.game_id,
         PlayerGameStat.stat_type, PlayerGameStat.value, Game.game_time).join(Game, Game.id == PlayerGameStat.game_id)
+        .join(Player, Player.id == PlayerGameStat.player_id)
         .where(PlayerGameStat.player_id.in_([uuid.UUID(x) for x in ids]), Game.status == 'final',
+               Game.sport == Player.sport,
                PlayerGameStat.stat_type.in_(needed),
                no_pending_correction(),
                or_(Game.game_type.is_(None), Game.game_type != 'PRE'),

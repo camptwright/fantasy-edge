@@ -336,17 +336,19 @@ async def test_props_carries_a_real_projection_once_qualified(db):
         assert row["projection"] == pytest.approx(262.5, abs=0.01)
         # Line (200) is well below the 262.5 mean - the over should carry a
         # positive edge.
-        assert row["edge_percent"] > 0
+        assert row["research_edge_percent"] > 0
+        assert row["edge_percent"] is None and not row['actionable']
+        assert 'missing_version_bound_prop_validation' in row['recommendation_blockers']
         # The under's own probability/edge (added for the parlay builder,
         # POST /parlays/build) must be the complement, not a repeat of the
         # over side's numbers.
         assert row["model_probability"] + row["under_model_probability"] == pytest.approx(1.0)
-        assert row["under_edge_percent"] < 0
+        assert row["research_under_edge_percent"] < 0
+        assert row["under_edge_percent"] is None
 
         best_response = await client.get("/props/best?sport=nfl")
         best = best_response.json()
-        assert len(best["items"]) == 1
-        assert best["items"][0]["player_name"] == "Qualified Player"
+        assert best["items"] == []
     finally:
         app.dependency_overrides.clear()
 

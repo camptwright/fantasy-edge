@@ -51,7 +51,9 @@ def manifest():
         'moneyline': {k: moneyline[k] for k in ('enabled', 'slope', 'intercept')},
         'distribution': active}
     policy = {name: semantic_hash((root/name).read_text()) for name in
-              ('services/quote_eligibility.py', 'services/injury_evidence.py', 'services/prop_requirements.py')}
+              ('services/quote_eligibility.py', 'services/injury_evidence.py', 'services/prop_requirements.py',
+               'services/prop_validation.py', 'ingest/prop_events.py',
+               'services/prospective_review.py', 'services/model_review.py', 'services/forecast_grading.py')}
     model_version, policy_version = digest(model), digest(policy)
     return {'schema_version': 2, 'model': model, 'policy': policy,
         'model_version': model_version, 'policy_version': policy_version,

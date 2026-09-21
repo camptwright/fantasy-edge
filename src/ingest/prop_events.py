@@ -11,6 +11,29 @@ from src.models.identity import Team
 from src.ingest.identity import _aliases
 
 
+def event_binding(game):
+    """Call only after exact provider matchup/time resolution, never a guess."""
+    return {'method': 'exact_matchup_kickoff_v1', 'game_id': str(game.id),
+            'sport': game.sport, 'home_team_id': str(game.home_team_id),
+            'away_team_id': str(game.away_team_id), 'kickoff': game.game_time.isoformat()}
+
+
+async def match_priced_event(db, event, sport):
+    """Props require an exact unique kickoff, not a 24-hour team-pair window.
+
+    Doubleheaders, duplicate fixtures and schedule disagreement remain parked.
+    Do not use current roster membership to guess the provider's event.
+    """
+    home, away = event.get('home_team'), event.get('away_team')
+    if not isinstance(home, str) or not isinstance(away, str):
+        return None
+    game_id = await resolve_prop_event(db, sport, {
+        'full_team_names_title': f'{away} @ {home}',
+        'scheduled_at': event.get('commence_time'),
+    })
+    return await db.get(Game, game_id) if game_id else None
+
+
 async def resolve_prop_event(db, sport, event):
     if not event:
         return None
@@ -19,7 +42,7 @@ async def resolve_prop_event(db, sport, event):
         return None
     try:
         kickoff = datetime.fromisoformat(event['scheduled_at'].replace('Z', '+00:00'))
-    except (KeyError, ValueError, TypeError):
+    except (KeyError, ValueError, TypeError, AttributeError):
         return None
     if kickoff.tzinfo is None:
         return None

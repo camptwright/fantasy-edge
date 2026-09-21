@@ -61,12 +61,15 @@ The complete prior tree and the supplied audit were committed and pushed as
 
 ## Still open
 
-Deterministic arithmetic does not validate model quality. Live prop estimates
-still include unusually large modeled edges (one observed near +80% EV); these
-are not evidence of profitability. Version-bound prop validation, historical
-coverage and prop/game linkage still need the subsequent audit work.
+The player-prop follow-up is implemented in
+[the dedicated remediation report](2026-09-21-player-prop-validation.md):
+version-bound approval gates, exact provider-event bindings, research-only
+large-edge holds, and a validation dashboard. No current prop model qualified
+for approval. Roster/participation evidence, prospective validation and a
+preregistered season-aware evaluation protocol remain substantive data/model
+work; deterministic arithmetic does not establish profitability.
 
-Next: persist version-bound promotion evidence and prop/game linkage. Paper
+Next: collect corroborated player/roster evidence and prospective results. Paper
 logging, sharp-market reference pricing, distribution/ROS models and retention
 remain later audit work. Published benchmark comparisons and the audit's model
 promotion recommendation are not sufficient evidence to bypass the real gate.

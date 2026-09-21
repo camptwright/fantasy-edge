@@ -52,7 +52,9 @@ async def fixture(db, sport='nfl'):
 
 
 @pytest.mark.parametrize('sport', ['nfl', 'ncaaf', 'mlb'])
-async def test_populated_slate_crosses_player_batches_and_pages(db, sport):
+async def test_populated_slate_crosses_player_batches_and_pages(db, sport, monkeypatch):
+    # This exercises paging, not the separately tested approval policy.
+    monkeypatch.setattr('src.services.prop_validation.assess', lambda *args: [])
     for _ in range(30):
         await fixture(db, sport)
     legacy = [row for row in await sportsbook.prop_rows(db, sport) if row['actionable']]
@@ -74,7 +76,8 @@ def test_validation_rejects_invalid_nonempty_offers():
     assert 'ineligible_live_prop' in validate_rows([{'id': 'a', 'actionable': False}], 'props')
 
 
-async def test_live_matches_legacy_and_projection_batch(db):
+async def test_live_matches_legacy_and_projection_batch(db, monkeypatch):
+    monkeypatch.setattr('src.services.prop_validation.assess', lambda *args: [])
     player,_,quote = await fixture(db)
     legacy = await sportsbook.prop_rows(db,'nfl')
     live = await sportsbook.prop_rows(db,'nfl',live_only=True)

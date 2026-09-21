@@ -186,6 +186,10 @@ async def prop_rows(db: AsyncSession, sport: str | None, *, live_only: bool = Fa
     injury_context = await injury_snapshots(db, [{'player_id': str(player.id)} for _, player in rows],
         Path(get_settings().raw_archive_dir) / 'espn_injuries', context_time)
     event_injuries = game_snapshots(Path(get_settings().raw_archive_dir) / 'football_availability', context_time)
+    from src.services.model_version import manifest
+    from src.services.prop_validation import load_evidence, assess, linkage, binding_reason
+    versions = manifest()
+    validation = load_evidence(Path(get_settings().raw_archive_dir) / 'grading', versions, context_time)
 
     out = []
     for prop, player in rows:
@@ -277,6 +281,27 @@ async def prop_rows(db: AsyncSession, sport: str | None, *, live_only: bool = Fa
                 "captured_at": prop.observed_at.isoformat(),
             }
         )
+        row = out[-1]
+        # Preserve research estimates and capture eligibility separately from
+        # recommendation approval, so the evaluation pipeline does not deadlock.
+        row['research_capture_eligible'] = row['actionable']
+        row['event_binding'] = seen[prop.id].event_binding if prop.id in seen else None
+        row['forecast_eligible'] = (row['actionable'] and linkage(player, game) is None
+                                   and binding_reason(row['event_binding'], game) is None)
+        row['model_version'] = versions['model_version']
+        row['cohort_version'] = versions['cohort_version']
+        evidence = validation.get((player.sport, canonical_stat(prop.stat_type)))
+        row['validation_evidence'] = evidence or {'status': 'unvalidated'}
+        row['research_edge_percent'] = edge_percent
+        row['research_under_edge_percent'] = under_edge_percent
+        blockers = ([row['exclusion_reason']] if row['exclusion_reason'] else [])
+        blockers += assess(row, player, game, evidence)
+        row['recommendation_blockers'] = list(dict.fromkeys(blockers))
+        row['actionable'] = not blockers
+        row['exclusion_reason'] = blockers[0] if blockers else None
+        row['usage'] = 'recommendation_eligible' if row['actionable'] else 'research_only'
+        if blockers:
+            row['edge_percent'] = row['under_edge_percent'] = None
     return out
 
 
@@ -285,12 +310,35 @@ async def props(sport: str | None = Query(default=None), db: AsyncSession = Depe
     return await prop_rows(db, sport)
 
 
+@router.get('/props/validation')
+async def prop_validation_status(sport: str | None = None, db: AsyncSession = Depends(get_db)):
+    """Live recommendation holds and bounded history diagnostics; not betting advice."""
+    from collections import Counter
+    from src.services.player_features import snapshots
+    from src.services.model_version import manifest
+    from src.services.prop_validation import LARGE_EDGE_PERCENT, LARGE_PROBABILITY_GAP
+    rows = await prop_rows(db, sport, live_only=True)
+    counts = Counter(reason for row in rows for reason in row['recommendation_blockers'])
+    def edge(row):
+        return max((v for v in (row.get('research_edge_percent'), row.get('research_under_edge_percent'))
+                    if isinstance(v, (int, float))), default=-1e9)
+    largest = sorted(rows, key=lambda row: (-edge(row), row['id']))[:40]
+    history = await snapshots(db, largest, datetime.now(timezone.utc))
+    return {'model': manifest(), 'quotes_checked': len(rows),
+        'actionable': sum(row['actionable'] for row in rows), 'blockers': dict(counts),
+        'large_edge_policy': {'ev_percent_above': LARGE_EDGE_PERCENT,
+                              'probability_gap_above': LARGE_PROBABILITY_GAP},
+        'largest_research_edges': [{**row, 'history_evidence': history.get(row['id'])} for row in largest],
+        'note': 'Research estimates are not validated edges. Missing team corroboration is not repaired by guessing; exact event matching applies to new provider observations. No automatic promotion.'}
+
+
 def compact_prop(row):
     # Keep view-model fields, not repeated archives or redundant model inputs.
     keys = ('id', 'sport', 'source', 'player_name', 'player_id', 'game_id', 'team_name',
             'stat_type', 'line', 'over_price_american', 'under_price_american', 'projection',
             'edge_percent', 'under_edge_percent', 'model_probability', 'under_model_probability',
-            'game_time', 'game_status', 'last_seen_at', 'actionable', 'exclusion_reason')
+            'game_time', 'game_status', 'last_seen_at', 'actionable', 'exclusion_reason',
+            'model_version', 'cohort_version', 'recommendation_blockers', 'usage', 'validation_evidence')
     result = {k: row.get(k) for k in keys}
     context = row.get('injury_context') or {}
     result['injury_context'] = {'status': context.get('status'),

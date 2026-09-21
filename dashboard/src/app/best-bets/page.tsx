@@ -146,8 +146,9 @@ export default async function BestBetsPage({
       <PageHeader
         eyebrow="Live quantitative ranking · no LLM, nothing cached"
         title="Best Bets"
-        description="Every priced signal and qualified player prop, ranked by edge against the market price. Computed fresh on every request from the same Elo/totals/projection baseline as the Board and Recommendations pages - no narrative, just the numbers, sorted."
+        description="Only recommendation-eligible signals and player props are ranked here. Unvalidated models, uncertain event links and unusually large player-prop edges stay in research."
       />
+      <p className="mb-6 text-sm text-amber-300">Missing player props? <Link className="underline" href="/calibration/props">Review validation holds and historical support</Link>.</p>
 
       <nav className="mb-6 flex gap-1 overflow-x-auto" aria-label="Filter by sport">
         {(["all", ...SPORTS] as const).map((option) => {

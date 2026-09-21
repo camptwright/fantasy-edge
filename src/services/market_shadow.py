@@ -31,7 +31,7 @@ def forecasts(props, as_of):
         try:
             seen = datetime.fromisoformat(row['last_seen_at'])
             kickoff = datetime.fromisoformat(row['game_time'])
-            if (not row.get('actionable') or not book or not row.get('player_id') or not row.get('game_id')
+            if (not row.get('research_capture_eligible', row.get('actionable')) or not book or not row.get('player_id') or not row.get('game_id')
                     or not 0 <= (as_of-seen).total_seconds() <= 900 or kickoff <= as_of):
                 continue
             over, under = row['over_price_american'], row['under_price_american']

@@ -7,11 +7,11 @@ from src.models.facts import QuoteAvailability
 TTL_SECONDS = 2700
 
 
-async def confirm_quote(db, kind, quote):
+async def confirm_quote(db, kind, quote, event_binding=None):
     now = datetime.now(timezone.utc)
     await db.execute(insert(QuoteAvailability).values(kind=kind, quote_id=quote.id,
-        source=quote.source, seen_at=now, available=True).on_conflict_do_update(
-            index_elements=['kind', 'quote_id'], set_={'seen_at': now, 'available': True}))
+        source=quote.source, seen_at=now, available=True, event_binding=event_binding).on_conflict_do_update(
+            index_elements=['kind', 'quote_id'], set_={'seen_at': now, 'available': True, 'event_binding': event_binding}))
 
 
 async def withdraw_absent_props(db, source, poll_started):

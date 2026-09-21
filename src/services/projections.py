@@ -20,6 +20,7 @@ from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.facts import Game, PlayerGameStat
+from src.models.identity import Player
 from src.utils.odds_math import normal_cdf
 from src.services.stat_identity import canonical_stat, canonical_results, ALIASES
 from src.services.result_eligibility import no_pending_correction
@@ -55,7 +56,9 @@ async def _project_stats_batch(
     rows = (
         await db.execute(
             select(PlayerGameStat.player_id, PlayerGameStat.game_id, PlayerGameStat.stat_type,
-                   PlayerGameStat.value).join(Game, Game.id == PlayerGameStat.game_id).where(
+                   PlayerGameStat.value).join(Game, Game.id == PlayerGameStat.game_id)
+                .join(Player, Player.id == PlayerGameStat.player_id).where(
+                Game.sport == Player.sport,
                 PlayerGameStat.stat_type.in_(stats),
                 PlayerGameStat.player_id.in_(player_ids), Game.status == 'final',
                 no_pending_correction(),

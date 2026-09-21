@@ -42,3 +42,9 @@ def test_repeated_book_does_not_masquerade_as_two_reference_books():
     rows = slate(now)
     rows[2]['source'] = rows[1]['source']
     assert forecasts(rows, now) == {}
+
+
+def test_unapproved_research_quotes_still_generate_shadow_candidates():
+    now = datetime.now(timezone.utc)
+    rows = [{**r, 'actionable': False, 'research_capture_eligible': True} for r in slate(now)]
+    assert len(forecasts(rows, now)) == 3

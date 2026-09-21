@@ -144,7 +144,7 @@ async def test_shadow_capture_grades_separately_and_does_not_change_serving(db, 
     assert record['prediction']['model_probability'] == current['model_probability']
     assert current['market_fair_probability'] == pytest.approx(.5)
     report = await coverage(db, [current])
-    assert next(r for r in report['families'] if r['stat_type']=='receptions')['actionable_quotes'] == 1
+    assert next(r for r in report['families'] if r['stat_type']=='receptions')['actionable_quotes'] == 0
     gid, pid = game.id, player.id
     await db.rollback()
     game = await db.get(Game, gid)

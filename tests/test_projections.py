@@ -62,6 +62,14 @@ async def test_minimum_games_qualifies_and_returns_mean_and_stddev(db):
     assert stddev > 0
 
 
+async def test_cross_sport_game_history_cannot_qualify_player(db):
+    from sqlalchemy import update
+    from src.models.facts import Game
+    player = await _seed_player_with_games(db, [250.0, 275.0, 300.0, 225.0])
+    await db.execute(update(Game).values(sport='ncaaf'))
+    assert await project_stats(db, {(player.id, 'passing_yards')}) == {}
+
+
 async def test_zero_variance_history_does_not_qualify(db):
     """Every game identical would make over_probability degenerate to
     exactly 0 or 1 - false certainty, not a real signal - so this is
