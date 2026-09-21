@@ -139,6 +139,7 @@ async def test_shadow_capture_grades_separately_and_does_not_change_serving(db, 
     assert len(payload['records']) == 1
     record = payload['records'][0]
     assert len(record['shadow_predictions']) == 2
+    assert all(s['comparison_baseline'] == 'retained_baseline' for s in record['shadow_predictions'].values())
     assert record['feature_snapshot']['as_of'] < payload['captured_at']
     current = (await prop_rows(db, 'ncaaf'))[0]
     assert record['prediction']['model_probability'] == current['model_probability']
@@ -155,5 +156,8 @@ async def test_shadow_capture_grades_separately_and_does_not_change_serving(db, 
     result = await grade(db, tmp_path)
     assert result['counts'] == {'graded': 1}  # Shadows do not inflate serving counts.
     assert len(result['shadow_reports']) == 2
-    assert result['reports'][0]['prospective_scorecard']['paired_candidate']['samples'] == 1
-    assert all(r['scorecard']['paired_candidate']['samples'] == 1 for r in result['shadow_reports'])
+    # Research results remain graded, but uncorroborated fixtures cannot enter
+    # the new verified prospective promotion cohort.
+    assert result['reports'][0]['prospective_scorecard']['paired_candidate']['samples'] == 0
+    assert result['reports'][0]['prospective_scorecard']['unverified_records_excluded'] == 1
+    assert all(r['scorecard']['paired_candidate']['samples'] == 0 for r in result['shadow_reports'])

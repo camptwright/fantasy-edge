@@ -97,6 +97,7 @@ def test_decision_digest_preserves_unchanged_regrade_not_changed_metrics():
     ],
 )
 def test_only_exact_fresh_passed_approved_report_can_authorize(tmp_path, monkeypatch, change):
+    from src.services.prospective_review import protocol
     now = datetime.now(timezone.utc)
     versions = {"model_version": "model", "cohort_version": "cohort"}
     record = dict(
@@ -107,6 +108,7 @@ def test_only_exact_fresh_passed_approved_report_can_authorize(tmp_path, monkeyp
         sample_size=500,
         independent_games=250,
         prospective_scorecard={
+            'protocol': protocol('nfl'),
             "decision_not_before": (now - timedelta(days=1)).isoformat(),
             "review": {"promotion_eligible": True, "blockers": [], "independent_games": 250},
         },
@@ -208,6 +210,10 @@ async def test_serving_needs_approval_but_valid_research_can_still_be_captured(d
     )
     db.add_all([player, game])
     await db.flush()
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr('src.services.roster_evidence.contexts', AsyncMock(return_value={str(player.id): {
+        'status': 'corroborated', 'sport': 'nfl', 'season': 2026,
+        'team_id': str(home.id), 'observed_at': now.isoformat()}}))
     for i in range(4):
         past = Game(sport="nfl", season=2026, status="final", game_time=now - timedelta(days=i + 1))
         db.add(past)

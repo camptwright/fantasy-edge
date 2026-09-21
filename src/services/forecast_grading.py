@@ -15,7 +15,30 @@ from sqlalchemy import select, text
 from src.models.facts import Game, PlayerGameStat
 from src.models.governance import ResultCorrection
 from src.services.stat_identity import canonical_stat, canonical_results
-from src.services.prospective_review import scorecard
+from src.services.prospective_review import scorecard, protocol
+
+
+def verified(record):
+    return record.get('prediction', {}).get('forecast_eligible') is True
+
+
+def prefer(rank, record, previous):
+    # V2 selects the earliest verified pregame observation independently of
+    # results. Earlier unverified research must not poison this game's cohort.
+    if previous and record.get('prospective_protocol') and record.get('prospective_protocol') == protocol(record.get('prediction', {}).get('sport')):
+        old_record = previous[1]
+        if verified(record) != verified(old_record):
+            return verified(record)
+    return previous is None or rank < previous[0]
+
+
+def prospective_card(rows, sport, *, shadow=False):
+    policy = protocol(sport)
+    use_new = all(r.get('prospective_protocol') == policy for r in rows)
+    comparison = ('market_baseline' if use_new and not shadow and
+                  all(r.get('comparison_reference') == 'market_baseline' for r in rows)
+                  else 'retained_baseline')
+    return scorecard(rows, policy=policy if use_new else None, comparison=comparison)
 
 
 def timestamp(value):
@@ -76,14 +99,14 @@ def load_cohort(directory, include_shadows=False):
             key = (version, record['game_id'], record['kind'], canonical_stat(record['market']), record.get('player_id'))
             # Quote UUID is an outcome-independent, deterministic tie breaker.
             rank = (captured, record['quote_id'])
-            if key not in selected or rank < selected[key][0]:
+            if prefer(rank, record, selected.get(key)):
                 selected[key] = (rank, record)
             if include_shadows:
                 for recipe, shadow in record.get('shadow_predictions', {}).items():
                     if shadow.get('model_probability') is None:
                         continue
                     shadow_key = (*key, recipe+':'+shadow.get('recipe_version', 'unversioned'))
-                    if shadow_key not in shadows or rank < shadows[shadow_key][0]:
+                    if prefer(rank, record, shadows.get(shadow_key)):
                         shadows[shadow_key] = (rank, record, shadow)
     return (selected, raw, files, shadows) if include_shadows else (selected, raw, files)
 
@@ -158,6 +181,8 @@ async def grade(db, directory):
         group['counts'][status] += 1
         prediction = record['prediction']
         evaluation = {'captured_at': captured, 'game_id': record['game_id'],
+            'prospective_protocol': record.get('prospective_protocol'),
+            'comparison_reference': record.get('comparison_reference'),
             'market_key': canonical_stat(record['market'])+':'+str(record.get('player_id', 'team')),
             'probability': prediction.get('model_probability'), 'baseline': prediction.get('baseline_model_probability'),
             'market_probability': prediction.get('market_fair_probability', prediction.get('fair_probability')),
@@ -184,6 +209,7 @@ async def grade(db, directory):
         except (TypeError, ValueError, KeyError):
             state, result = 'invalid', None
         shadow_groups.setdefault(group_key, []).append({'captured_at': captured, 'game_id': record['game_id'],
+            'prospective_protocol': record.get('prospective_protocol'),
             'market_key': canonical_stat(record['market'])+':'+str(record.get('player_id', 'team')),
             'probability': shadow['model_probability'],
             'baseline': prediction.get('baseline_model_probability') if shadow.get('comparison_baseline') == 'retained_baseline'
@@ -203,7 +229,7 @@ async def grade(db, directory):
             'paired_baseline_log_loss': sum(-math.log(max(1e-15, p if y else 1-p)) for p, y in baseline_scores)/bn if bn else None,
             'brier_score': sum((p-y)**2 for p, y in scores)/n if n else None,
             'log_loss': sum(-math.log(max(1e-15, p if y else 1-p)) for p, y in scores)/n if n else None})
-        reports[-1]['prospective_scorecard'] = scorecard(group['evaluation'])
+        reports[-1]['prospective_scorecard'] = prospective_card(group['evaluation'], sport)
     return {'schema_version': 1, 'status': 'available' if files else 'awaiting_forecasts',
         'graded_at': datetime.now(timezone.utc).isoformat(), 'archive_files': files,
         'raw_records': raw, 'cohort_records': len(cohort), 'duplicates_excluded': raw-len(cohort),
@@ -211,7 +237,7 @@ async def grade(db, directory):
         'pending_correction_outcomes': len(disputed),
         'unresolved_evidence': unresolved_evidence(unresolved, games, stats),
         'shadow_reports': [{'sport': sport, 'kind': kind, 'market': market, 'model_version': version,
-            'recipe': recipe, 'status': 'shadow_only', 'scorecard': scorecard(rows)}
+            'recipe': recipe, 'status': 'shadow_only', 'scorecard': prospective_card(rows, sport, shadow=True)}
             for (sport, kind, market, version, recipe), rows in sorted(shadow_groups.items())],
         'latest_selected_capture_at': max((v[0][0] for v in cohort.values()), default=None).isoformat() if cohort else None,
         'note': 'Earliest captured forecast per model/event/market/player; one book, line and side. Player probabilities score OVER. Pushes and missing results are excluded. Props within a game are correlated. Statistical outcomes, not bookmaker settlement or profit. No automatic model promotion.'}

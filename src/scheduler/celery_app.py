@@ -24,6 +24,7 @@ celery_app.conf.update(
     result_backend=None,
     task_routes={"fantasy.evaluate_models": {"queue": "evaluation"}},
     beat_schedule={
+        "archive-rosters": {"task": "fantasy.archive_rosters", "schedule": 21600.0},
         "sync-fantasy-market": {"task":"fantasy.sync_fantasy_market","schedule":86400.0},
         "archive-event-weather": {"task":"fantasy.archive_event_weather","schedule":3600.0},
         "full-nfl-schedule": {"task":"fantasy.full_nfl_schedule","schedule":86400.0},

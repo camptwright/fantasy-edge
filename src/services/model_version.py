@@ -53,7 +53,8 @@ def manifest():
     policy = {name: semantic_hash((root/name).read_text()) for name in
               ('services/quote_eligibility.py', 'services/injury_evidence.py', 'services/prop_requirements.py',
                'services/prop_validation.py', 'ingest/prop_events.py',
-               'services/prospective_review.py', 'services/model_review.py', 'services/forecast_grading.py')}
+               'services/prospective_review.py', 'services/model_review.py', 'services/forecast_grading.py',
+               'services/roster_evidence.py', 'services/forecast_capture.py', 'services/player_features.py')}
     model_version, policy_version = digest(model), digest(policy)
     return {'schema_version': 2, 'model': model, 'policy': policy,
         'model_version': model_version, 'policy_version': policy_version,

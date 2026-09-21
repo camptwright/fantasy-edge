@@ -47,6 +47,21 @@ def archive(kind, payload):
     return str(path)
 
 
+@celery_app.task(name='fantasy.archive_rosters', soft_time_limit=600, time_limit=660)
+def archive_rosters():
+    async def run():
+        from src.services.roster_evidence import collect
+        async with get_worker_db() as db:
+            payload = await collect(db)
+        verified = sum(r['status'] == 'verified_roster' for r in payload['teams'])
+        path = archive('roster-evidence', payload)
+        if payload['teams'] and not verified:
+            raise RuntimeError('All roster sources failed; failed evidence archived.')
+        return {'teams': len(payload['teams']), 'verified': verified,
+                'failed': len(payload['teams'])-verified, 'archive': path}
+    return asyncio.run(run())
+
+
 async def renew_evaluation_lease(redis, key, token):
     while True:
         await asyncio.sleep(30)

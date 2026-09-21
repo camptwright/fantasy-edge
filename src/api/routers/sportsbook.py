@@ -190,6 +190,9 @@ async def prop_rows(db: AsyncSession, sport: str | None, *, live_only: bool = Fa
     from src.services.prop_validation import load_evidence, assess, linkage, binding_reason
     versions = manifest()
     validation = load_evidence(Path(get_settings().raw_archive_dir) / 'grading', versions, context_time)
+    from src.services.roster_evidence import contexts as roster_contexts
+    rosters = await roster_contexts(db, list({p.id: p for _, p in rows}.values()), games,
+                                    Path(get_settings().raw_archive_dir) / 'roster-evidence', context_time)
 
     out = []
     for prop, player in rows:
@@ -284,9 +287,13 @@ async def prop_rows(db: AsyncSession, sport: str | None, *, live_only: bool = Fa
         row = out[-1]
         # Preserve research estimates and capture eligibility separately from
         # recommendation approval, so the evaluation pipeline does not deadlock.
-        row['research_capture_eligible'] = row['actionable']
+        from src.services.roster_stat_model import finite
+        row['research_capture_eligible'] = (row['actionable'] and finite(model_probability)
+            and 0 <= model_probability <= 1 and finite(prop.line))
         row['event_binding'] = seen[prop.id].event_binding if prop.id in seen else None
-        row['forecast_eligible'] = (row['actionable'] and linkage(player, game) is None
+        row['roster_evidence'] = rosters.get(str(player.id), {'status': 'roster_unverified'})
+        row['forecast_eligible'] = (row['research_capture_eligible'] and not float(prop.line).is_integer()
+                                   and linkage(player, game, row['roster_evidence']) is None
                                    and binding_reason(row['event_binding'], game) is None)
         row['model_version'] = versions['model_version']
         row['cohort_version'] = versions['cohort_version']
@@ -317,6 +324,7 @@ async def prop_validation_status(sport: str | None = None, db: AsyncSession = De
     from src.services.player_features import snapshots
     from src.services.model_version import manifest
     from src.services.prop_validation import LARGE_EDGE_PERCENT, LARGE_PROBABILITY_GAP
+    from src.services.prospective_review import protocol
     rows = await prop_rows(db, sport, live_only=True)
     counts = Counter(reason for row in rows for reason in row['recommendation_blockers'])
     def edge(row):
@@ -326,6 +334,9 @@ async def prop_validation_status(sport: str | None = None, db: AsyncSession = De
     history = await snapshots(db, largest, datetime.now(timezone.utc))
     return {'model': manifest(), 'quotes_checked': len(rows),
         'actionable': sum(row['actionable'] for row in rows), 'blockers': dict(counts),
+        'roster_corroborated': sum(row['roster_evidence'].get('status') == 'corroborated' for row in rows),
+        'verified_forecast_quotes': sum(row['forecast_eligible'] for row in rows),
+        'prospective_protocols': {s: protocol(s) for s in sorted({row['sport'] for row in rows})},
         'large_edge_policy': {'ev_percent_above': LARGE_EDGE_PERCENT,
                               'probability_gap_above': LARGE_PROBABILITY_GAP},
         'largest_research_edges': [{**row, 'history_evidence': history.get(row['id'])} for row in largest],

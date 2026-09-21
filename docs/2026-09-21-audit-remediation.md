@@ -69,7 +69,11 @@ for approval. Roster/participation evidence, prospective validation and a
 preregistered season-aware evaluation protocol remain substantive data/model
 work; deterministic arithmetic does not establish profitability.
 
-Next: collect corroborated player/roster evidence and prospective results. Paper
+Roster corroboration and prospective collection mechanics are now implemented;
+see [the roster/protocol follow-up](2026-09-21-roster-prospective-validation.md).
+Passing prospective results and explicit model approval still remain pending.
+
+Next: accumulate verified prospective results. Paper
 logging, sharp-market reference pricing, distribution/ROS models and retention
 remain later audit work. Published benchmark comparisons and the audit's model
 promotion recommendation are not sufficient evidence to bypass the real gate.

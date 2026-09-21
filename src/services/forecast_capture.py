@@ -84,6 +84,12 @@ async def capture(db):
     from src.services.event_weather import context as weather_context
     contexts={gid:weather_context(g,started) for gid,g in games.items() if any(r['game_id']==gid for r in records)}
     for record in records:
+        from src.services.prospective_review import protocol
+        record['prospective_protocol'] = protocol(record['prediction']['sport'])
+        record['comparison_reference'] = ('retained_baseline' if
+            record['prediction'].get('calibration_candidate_id') else 'market_baseline')
+        for shadow in record.get('shadow_predictions', {}).values():
+            shadow['comparison_baseline'] = 'retained_baseline'
         record['context_experiment']={'recipe':'frozen_context_observation_v1',
             'weather':contexts.get(record['game_id']), 'numeric_adjustment':None,
             'status':'collecting_covariates_not_trained','serving_enabled':False}

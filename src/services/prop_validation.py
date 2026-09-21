@@ -49,6 +49,7 @@ def load_evidence(directory, versions, now=None):
         sha = hashlib.sha256(raw).hexdigest()
         result = {}
         for row in report["reports"]:
+            from src.services.prospective_review import protocol
             key = (row["sport"], row["market"])
             card = row.get("prospective_scorecard", {})
             review = card.get("review", {})
@@ -57,6 +58,7 @@ def load_evidence(directory, versions, now=None):
                 or row.get("model_version") != versions["cohort_version"]
                 or review.get("promotion_eligible") is not True
                 or review.get("blockers") != []
+                or card.get('protocol') != protocol(row['sport'])
                 or review.get("independent_games", 0) < 200
                 or row.get("independent_games", 0) < 200
                 or datetime.fromisoformat(card["decision_not_before"]) > now
@@ -86,13 +88,16 @@ def load_evidence(directory, versions, now=None):
         return {}
 
 
-def linkage(player, game):
+def linkage(player, game, roster=None):
     if game is None:
         return "unlinked_event"
     if player.sport != game.sport:
         return "player_game_sport_mismatch"
     if not game.home_team_id or not game.away_team_id or game.home_team_id == game.away_team_id:
         return "incomplete_event_teams"
+    if roster is not None:
+        from src.services.roster_evidence import reason
+        return reason(roster, game)
     if not player.current_team_id:
         return "player_team_unverified"
     if player.current_team_id not in (game.home_team_id, game.away_team_id):
@@ -112,7 +117,7 @@ def binding_reason(binding, game):
 
 def assess(row, player, game, evidence):
     reasons = []
-    link = linkage(player, game)
+    link = linkage(player, game, row.get('roster_evidence'))
     if link:
         reasons.append(link)
     bound = binding_reason(row.get("event_binding"), game)
