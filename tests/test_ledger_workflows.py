@@ -101,6 +101,7 @@ def verified_fixture():
     quote=SimpleNamespace(id=uuid4(),price_american=-110,observed_at=kickoff-timedelta(seconds=1))
     contract={k:v for k,v in terms.items() if k not in ('sport','price_american')}
     rule=reviewed(book='testbook',product='sportsbook',jurisdiction='TEST',sport='nfl',market='moneyline',
+        source_observed_at=(kickoff-timedelta(days=2)).isoformat(),
         source='https://example.test/rules',status='verified',unresolved=[],
         effective_from=(kickoff-timedelta(days=2)).isoformat(),effective_until=(kickoff+timedelta(days=2)).isoformat(),
         clauses={k:'test rule' for k in ('stat_definition','participation','overtime','void_conditions','push_treatment')})

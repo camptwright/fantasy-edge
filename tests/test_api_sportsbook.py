@@ -22,6 +22,7 @@ from src.ingest.identity import resolve_team
 from src.models.facts import Game, PlayerGameStat, PlayerPropLine, TeamMarketLine
 from src.models.identity import Player
 from src.models.ratings import TeamRating
+from config.settings import get_settings
 
 
 async def _client(db):
@@ -35,7 +36,8 @@ async def _client(db):
         yield db
 
     app.dependency_overrides[get_db] = _override_get_db
-    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test",
+        headers={'Authorization':'Bearer '+get_settings().fantasy_api_token})
 
 
 async def test_props_returns_the_expected_shape_and_null_projection(db):
@@ -397,7 +399,7 @@ async def test_recommendations_returns_the_latest_snapshot(db):
         app.dependency_overrides.clear()
 
 
-async def test_build_parlay_combines_a_signal_and_a_prop_leg(db):
+async def test_build_parlay_rejects_unvalidated_signal_even_with_priced_prop(db):
     home = await resolve_team(db, "Kansas City Chiefs")
     away = await resolve_team(db, "Los Angeles Chargers")
     db.add(TeamRating(team_id=home.id, sport="nfl", rating=1600.0))
@@ -448,12 +450,8 @@ async def test_build_parlay_combines_a_signal_and_a_prop_leg(db):
                 {"kind": "prop", "id": str(prop.id), "side": "over"},
             ]},
         )
-        assert response.status_code == 200
-        body = response.json()
-        assert len(body["legs"]) == 2
-        assert body["skipped_legs"] == []
-        assert 0 < body["combined_probability"] < 1
-        assert body["combined_price_american"] is not None
+        assert response.status_code == 422
+        assert 'Every parlay leg' in response.json()['detail']
     finally:
         app.dependency_overrides.clear()
 

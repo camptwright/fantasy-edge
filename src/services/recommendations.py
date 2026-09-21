@@ -60,7 +60,7 @@ async def generate_narrative(db: AsyncSession, *, with_evidence=False):
         raise RuntimeError("LITELLM_API_KEY is not configured")
 
     signals = sorted(
-        (row for row in await signal_rows(db, sport=None) if row["price_american"] is not None),
+        (row for row in await signal_rows(db, sport=None) if row.get('actionable') and row["price_american"] is not None),
         key=lambda row: row["ev_percent"],
         reverse=True,
     )[:_TOP_N]

@@ -23,11 +23,18 @@ from config.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
-async def notify(message: str, *, title: str | None = None) -> None:
+def bounded_message(message: str, limit: int = 3500) -> bytes:
+    raw=message.encode('utf-8')
+    if len(raw)<=limit:return raw
+    suffix=b'\n[Truncated; inspect data-health logs for remaining issues.]'
+    return raw[:limit-len(suffix)].decode('utf-8',errors='ignore').encode('utf-8')+suffix
+
+
+async def notify(message: str, *, title: str | None = None) -> bool:
     settings = get_settings()
     if not settings.ntfy_base_url or not settings.ntfy_topic:
         logger.warning("ntfy not configured, dropping alert: %s", message)
-        return
+        return False
 
     headers = {}
     if settings.ntfy_token:
@@ -39,9 +46,11 @@ async def notify(message: str, *, title: str | None = None) -> None:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 f"{settings.ntfy_base_url.rstrip('/')}/{settings.ntfy_topic}",
-                content=message.encode("utf-8"),
+                content=bounded_message(message),
                 headers=headers,
             )
             response.raise_for_status()
+            return True
     except httpx.HTTPError:
-        logger.exception("ntfy alert failed to send: %s", message)
+        logger.exception("ntfy alert failed to send")
+        return False

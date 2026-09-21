@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from redis.asyncio import Redis
 
@@ -58,17 +59,21 @@ def capture_ledger_closes():
 
 
 @celery_app.task(name="fantasy.sync_espn")
-def sync_espn() -> dict[str, int]:
-    async def run() -> dict[str, int]:
+def sync_espn() -> dict:
+    async def run() -> dict:
         written = {}
-        async with get_worker_db() as db:
-            # espn_sports, not supported_sports: MLB's and NHL's schedule/
-            # scores come from their own official APIs instead
-            # (fantasy.sync_mlb, fantasy.sync_nhl) - see config/settings.py's
-            # espn_sports docstring.
-            for sport in get_settings().espn_sports:
-                written[sport] = await sync_scoreboard(db, sport=sport)
-        return written
+        failures = {}
+        for sport in get_settings().espn_sports:
+            try:
+                # Isolate both transactions and connection failures by sport.
+                async with get_worker_db() as db:
+                    written[sport] = await sync_scoreboard(db, sport=sport)
+            except Exception as exc:
+                # HTTP/ingestion failures are recorded by record_run; never
+                # duplicate that audit row or suppress the other sport jobs.
+                failures[sport]=type(exc).__name__
+                logging.getLogger(__name__).exception('ESPN scoreboard failed for %s',sport)
+        return {'rows_written':written,'failures':failures}
 
     return asyncio.run(run())
 
@@ -216,12 +221,14 @@ def check_data_health() -> dict[str, int]:
 
     messages = asyncio.run(run())
     if messages:
-        asyncio.run(
+        delivered = asyncio.run(
             notify(
                 "\n".join(messages),
                 title=f"Fantasy Edge: {len(messages)} data-health issue(s)",
             )
         )
+        if not delivered:
+            raise RuntimeError(f'Data-health alert delivery failed ({len(messages)} issues); inspect notification logs')
     return {"issues": len(messages)}
 
 

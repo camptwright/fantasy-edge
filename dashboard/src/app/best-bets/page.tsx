@@ -20,6 +20,7 @@ const SPORTS = ["nfl", "ncaaf", "nba", "mlb", "nhl"] as const;
 const TOP_N = 30;
 
 type Signal = {
+  actionable?: boolean;
   id: string;
   sport: string;
   market: string;
@@ -134,7 +135,7 @@ export default async function BestBetsPage({
   // to belong to it.
   const opportunities = perSport
     .flatMap(({ signals, props }) => [
-      ...(kind === "player" ? [] : signals.filter((s) => s.price_american !== null).map(signalToOpportunity)),
+      ...(kind === "player" ? [] : signals.filter((s) => s.actionable === true && s.price_american !== null && s.ev_percent > 0).map(signalToOpportunity)),
       ...(kind === "team" ? [] : props.flatMap(propToOpportunities)),
     ])
     .sort((a, b) => b.edgePercent - a.edgePercent)

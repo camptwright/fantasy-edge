@@ -105,7 +105,8 @@ def _emit_pair_rows(
                 "id": str(line.id),
                 "game_id": str(game.id),
                 "side": line.side,
-                "actionable": True,
+                "actionable": False,
+                "exclusion_reason": "missing_version_bound_validation",
                 "sport": game.sport,
                 "market": market,
                 "selection": selection,
@@ -503,6 +504,12 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
                 row['calibration_candidate_id'] = distribution_id
     for row in out:
         row['last_seen_at'] = seen[uuid.UUID(row['id'])].seen_at.isoformat()
+        from src.services.signal_eligibility import blockers
+        reasons=blockers(row)
+        row['actionable']=not reasons
+        row['exclusion_reason']=reasons[0] if reasons else None
+        row['actionability_blockers']=reasons
+        row['usage']='research_only' if reasons else 'qualified_signal'
     return out
 
 
@@ -592,7 +599,7 @@ async def parlays(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """
     all_signals = await signal_rows(db, sport=None)
     candidates = sorted(
-        (s for s in all_signals if s["price_american"] is not None),
+        (s for s in all_signals if s.get('actionable') and s["price_american"] is not None),
         key=lambda s: s["ev_percent"],
         reverse=True,
     )
@@ -654,7 +661,7 @@ async def build_parlay(request: ParlayBuildRequest, db: AsyncSession = Depends(g
         if row is None:
             continue  # Unknown IDs retain the documented skipped_legs contract.
         if not row.get('actionable'):
-            raise HTTPException(422, 'Every parlay leg must be a fresh, priced pregame offer with a projection')
+            raise HTTPException(422, 'Every parlay leg must pass actionability checks, including quote freshness and model eligibility')
         event = row.get('game_id')
         if event is None or event in events:
             raise HTTPException(422, 'Duplicate, contradictory, and same-game legs require a joint model and are not supported')

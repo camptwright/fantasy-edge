@@ -53,11 +53,14 @@ async def test_scoreboard_window_covers_previous_utc_day(db, monkeypatch):
         def now(tz):
             return datetime(2026, 9, 5, 1, tzinfo=timezone.utc)
     monkeypatch.setattr(module, 'datetime', Clock)
+    requested=[]
     async def get(self, url, **kwargs):
-        assert kwargs['params'] == {'dates': '20260904-20260912', 'limit': '1000', 'groups': '80'}
+        requested.append(kwargs['params']['dates'])
+        assert kwargs['params'] == {'dates': requested[-1], 'limit': '1000', 'groups': '80'}
         return httpx.Response(200, json={'events': []}, request=httpx.Request('GET', url))
     monkeypatch.setattr(httpx.AsyncClient, 'get', get)
     assert await sync_scoreboard(db, sport='ncaaf') == 0
+    assert requested==[f'202609{d:02}' for d in range(4,13)]
 
 
 async def test_ncaaf_empty_and_unfinished_boxscores_are_retried(db, monkeypatch):
@@ -72,7 +75,9 @@ async def test_ncaaf_empty_and_unfinished_boxscores_are_retried(db, monkeypatch)
     assert (await sync_ncaaf_results(db))['games'] == 0  # durable retry cooldown
 
 
-async def test_ncaaf_completed_results_and_canonical_backfill(db, monkeypatch):
+async def test_ncaaf_completed_results_and_canonical_backfill(db, monkeypatch, tmp_path):
+    from config.settings import get_settings
+    monkeypatch.setattr(get_settings(),'raw_archive_dir',str(tmp_path))
     from src.ingest.ncaaf_players import _upsert_player
     from src.models.facts import PlayerGameStat
     from sqlalchemy import select

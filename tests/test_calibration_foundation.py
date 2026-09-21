@@ -1,5 +1,6 @@
 from unittest.mock import AsyncMock
 from types import SimpleNamespace
+from uuid import uuid4
 from src.ingest.lines import record_prop_line
 from src.utils.normalize import normalize_stat_type
 from src.services.backtest import run_backtest
@@ -17,7 +18,7 @@ def test_interception_aliases_preserve_period():
 
 async def test_dedup_query_is_scoped_to_game():
     db = AsyncMock()
-    db.scalar.return_value = SimpleNamespace(line=3, over_price_american=-110,
+    db.scalar.return_value = SimpleNamespace(id=uuid4(), source='test', line=3, over_price_american=-110,
                                             under_price_american=-110)
     await record_prop_line(db, player_id=None, game_id=None, stat_type='hits',
                            line=3, over_price_american=-110, under_price_american=-110,
@@ -74,8 +75,9 @@ async def test_prop_replay_does_not_load_history_without_linked_quotes():
     db = AsyncMock()
     class Result:
         def all(self): return []
-    db.execute.return_value = Result()
+    db.scalars.return_value = Result()
     rows, exclusions = await run_prop_backtest(db, 'nfl')
     assert rows == {}
     assert exclusions == {'no_linked_settled_quotes': 1}
-    assert db.execute.await_count == 1
+    assert db.scalars.await_count == 1
+    db.execute.assert_not_awaited()

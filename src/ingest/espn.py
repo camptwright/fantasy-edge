@@ -59,31 +59,49 @@ _SEVENTEEN_GAME_SEASON_START = 2021
 _ESPN_SCOREBOARD_PARAMS = {"nfl": {}, "ncaaf": {"groups": "80"}}
 
 
+def scoreboard_dates(days_ahead=7, dates=None):
+    """Expand ranges locally: ESPN receives only supported single-day values."""
+    if dates is None:
+        if not isinstance(days_ahead,int) or not 0<=days_ahead<=366:
+            raise ValueError('days_ahead must be between 0 and 366')
+        today=datetime.now(timezone.utc).date()
+        start,end=today-timedelta(days=1),today+timedelta(days=days_ahead)
+    else:
+        from datetime import datetime as DateParser
+        parts=dates.split('-')
+        if len(parts) not in (1,2) or any(len(p)!=8 or not p.isdigit() for p in parts):
+            raise ValueError('dates must be YYYYMMDD or YYYYMMDD-YYYYMMDD')
+        start=DateParser.strptime(parts[0],'%Y%m%d').date()
+        end=DateParser.strptime(parts[-1],'%Y%m%d').date()
+    if not 0<=(end-start).days<=367:raise ValueError('Invalid or excessive scoreboard window')
+    return [(start+timedelta(days=i)).strftime('%Y%m%d') for i in range((end-start).days+1)]
+
+
 async def sync_scoreboard(
     db: AsyncSession, sport: str = "nfl", days_ahead: int = 7, dates: str | None = None
 ) -> int:
-    """`dates` overrides the default today-forward window with an explicit
-    ESPN `dates` value (a single `YYYYMMDD`, or a `YYYYMMDD-YYYYMMDD` range)
-    - used by scripts/bootstrap_ratings.py to backfill past seasons through
-    the same insert-on-change path live sync uses, rather than a second
-    parser. ESPN's own range support is undocumented and unreliable beyond
-    roughly a week, so the bootstrap script passes single dates in a loop
-    rather than one season-wide range."""
+    """Fetch single days, including yesterday; deduplicate week-wide responses.
+
+    Explicit bootstrap date ranges are expanded locally, never sent to ESPN.
+    Fetch the full window before applying it so a failed day cannot masquerade
+    as a successful full-window refresh.
+    """
     settings = get_settings()
-    if dates is None:
-        today = datetime.now(timezone.utc).date()
-        dates = f"{today - timedelta(days=1):%Y%m%d}-{today + timedelta(days=days_ahead):%Y%m%d}"
-    params = {"dates": dates, "limit": "1000", **_ESPN_SCOREBOARD_PARAMS.get(sport, {})}
+    days=scoreboard_dates(days_ahead,dates)
+    events={}
 
     async with record_run(db, f"{SOURCE}_{sport}") as run:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.get(
-                f"{settings.espn_base_urls[sport]}/scoreboard", params=params
-            )
-            response.raise_for_status()
-            payload = response.json()
+            for day in days:
+                params={"dates":day,"limit":"1000",**_ESPN_SCOREBOARD_PARAMS.get(sport,{})}
+                response = await client.get(f"{settings.espn_base_urls[sport]}/scoreboard",params=params)
+                response.raise_for_status()
+                payload=response.json()
+                if not isinstance(payload.get('events'),list):raise ValueError('Missing ESPN events list')
+                for event in payload['events']:
+                    if event.get('id'):events[str(event['id'])]=event
 
-        for event in payload.get("events", []):
+        for event in events.values():
             game = await _upsert_event(db, event, run, sport)
             if game is None:
                 continue
@@ -329,9 +347,9 @@ def _apply_scores(
     entry in this poll. A side missing from this poll entirely must leave
     the existing DB value alone rather than being coerced to None."""
     if home_seen:
-        game.home_score = int(home_score) if home_score not in (None, "") else None
+        game.home_score = int(home_score) if game.status!='scheduled' and home_score not in (None, "") else None
     if away_seen:
-        game.away_score = int(away_score) if away_score not in (None, "") else None
+        game.away_score = int(away_score) if game.status!='scheduled' and away_score not in (None, "") else None
 
 
 def _odds_rows(event: dict[str, Any]) -> list[dict[str, Any]]:
