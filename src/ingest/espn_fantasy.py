@@ -261,7 +261,9 @@ def _translate_player_stats(player: dict, position: str | None, week: int) -> di
     )
     if projected is None:
         return {}
-    return {ESPN_APPLIED_TOTAL_KEY: float(projected.get("appliedTotal") or 0)}
+    from src.services.roster_stat_model import finite
+    total=projected.get('appliedTotal')
+    return {ESPN_APPLIED_TOTAL_KEY:float(total)} if finite(total) else {}
 
 
 def _parse_matchups(payload: dict, week: int, team_starters: dict[int, list[str]]) -> list[dict]:
@@ -272,6 +274,17 @@ def _parse_matchups(payload: dict, week: int, team_starters: dict[int, list[str]
     # once per team from the SAME response's mRoster view) is used
     # instead, keyed by the matching teamId, rather than a second request
     # for ESPN's own mBoxscore view.
+    from src.services.roster_stat_model import finite
+    points_by_team={}
+    for team in payload.get('teams',[]):
+        values={}
+        for entry in team.get('roster',{}).get('entries',[]):
+            player=entry.get('playerPoolEntry',{}).get('player',{})
+            actual=[r.get('appliedTotal') for r in player.get('stats',[])
+                if r.get('statSourceId')==0 and r.get('scoringPeriodId')==week]
+            if actual and all(finite(v) for v in actual) and len(set(actual))==1:
+                values[str(player['id'])]=actual[0]
+        points_by_team[team.get('id')]=values
     rows: list[dict] = []
     for matchup in payload.get("schedule", []):
         if matchup.get("matchupPeriodId") != week:
@@ -282,9 +295,10 @@ def _parse_matchups(payload: dict, week: int, team_starters: dict[int, list[str]
                 continue
             rows.append({
                 "roster_id": side.get("teamId"),
-                "matchup_id": matchup.get("matchupPeriodId"),
+                "matchup_id": matchup.get('id') if matchup.get('id') is not None else f"{week}:{matchup.get('home',{}).get('teamId')}:{matchup.get('away',{}).get('teamId')}",
                 "points": side.get("totalPoints", 0),
                 "starters": team_starters.get(side.get("teamId"), []),
+                "players_points":points_by_team.get(side.get('teamId'),{}),
             })
     return rows
 
@@ -309,7 +323,8 @@ async def _upsert_league(
         "roster_positions": roster_positions,
         "settings": {k: v for k, v in league_settings.items() if k not in ("scoringSettings", "rosterSettings")},
         "scoring_settings": scoring_settings,
-        "raw": {"league_id": raw_league_id},  # full ESPN payload is large and roster-holding;
+        "raw": {"league_id": raw_league_id,
+                "scoringSettings": raw.get('settings',{}).get('scoringSettings',{})},  # retain exact scoring evidence, not account/roster payload
         # not archived wholesale the way Sleeper's already-small league
         # object is - the normalized snapshots below are the source of
         # truth for everything downstream actually reads.

@@ -24,12 +24,17 @@ def bind(quote, rule=None, *, source_snapshot=None):
             blockers.append('missing_rule_source_snapshot')
         clauses = rule.get('clauses') or {}
         needed = ['stat_definition', 'participation', 'overtime', 'void_conditions', 'push_treatment']
+        if re.match(r'^[1-4][qh]_',quote.get('market') or ''):
+            needed += ['period_definition','period_completion']
         if 'td_scorer' in (quote.get('market') or ''):
             needed += ['no_touchdown', 'unlisted_scorer', 'selection_universe']
         if not isinstance(clauses, dict) or any(not clauses.get(k) for k in needed):
             blockers.append('missing_settlement_clauses')
         try:
             captured = datetime.fromisoformat(quote['captured_at'])
+            observed = datetime.fromisoformat(rule['source_observed_at'])
+            if observed.tzinfo is None or observed>captured:
+                blockers.append('rule_source_not_available_at_capture')
             start, end = (datetime.fromisoformat(rule[k]) for k in ('effective_from', 'effective_until'))
             if any(t.tzinfo is None for t in (captured, start, end)) or not start <= captured < end:
                 blockers.append('rule_outside_effective_interval')

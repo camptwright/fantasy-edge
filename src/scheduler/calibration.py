@@ -239,6 +239,40 @@ def player_lab_prospective():
     return asyncio.run(execute())
 
 
+@celery_app.task(name='fantasy.college_lab_prospective', soft_time_limit=240, time_limit=300)
+def college_lab_prospective():
+    from src.services.college_prospective import execute
+    return asyncio.run(execute())
+
+
+@celery_app.task(name='fantasy.fantasy_prospective', soft_time_limit=240, time_limit=300)
+def fantasy_prospective():
+    from src.services.fantasy_prospective import execute
+    return asyncio.run(execute())
+
+
+@celery_app.task(name='fantasy.full_nfl_schedule', soft_time_limit=240, time_limit=300)
+def full_nfl_schedule():
+    from src.services.fantasy_schedule import sync
+    from datetime import datetime, timezone
+    now=datetime.now(timezone.utc)
+    async def execute():
+        async with get_worker_db() as db:
+            return await sync(db,now.year if now.month>=8 else now.year-1)
+    return asyncio.run(execute())
+
+
+@celery_app.task(name='fantasy.fantasy_scoring', soft_time_limit=540, time_limit=600)
+def fantasy_scoring():
+    from src.ingest.fantasy_scoring import sync
+    from datetime import datetime, timezone
+    now=datetime.now(timezone.utc)
+    async def execute():
+        async with get_worker_db() as db:
+            return await sync(db,now.year if now.month>=8 else now.year-1)
+    return asyncio.run(execute())
+
+
 @celery_app.task(name='fantasy.grade_forecasts', soft_time_limit=600, time_limit=900)
 def grade_forecasts():
     async def run():

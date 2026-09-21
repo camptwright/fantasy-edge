@@ -12,6 +12,7 @@ import src.models.facts  # noqa: F401
 import src.models.governance  # noqa: F401
 import src.models.sleeper  # noqa: F401
 import src.models.ratings  # noqa: F401
+import src.models.ledger  # noqa: F401
 
 config = context.config
 

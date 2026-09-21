@@ -1,0 +1,24 @@
+{
+  "receipts": [
+    {
+      "receipt_id": "REPLACE_WITH_BOOK_BET_ID",
+      "account_alias": "my-local-nickname",
+      "entry": {
+        "currency": "USD",
+        "stake": "10.00",
+        "placed_at": "REPLACE_WITH_ISO_TIME_AND_TIMEZONE",
+        "game_id": "REPLACE_WITH_APP_GAME_UUID",
+        "kind": "team",
+        "market": "moneyline",
+        "side": "home",
+        "line": null,
+        "price_american": -110,
+        "book": "REPLACE_WITH_EXACT_BOOK_SOURCE",
+        "settlement_rules": "REPLACE_WITH_RECEIPT_RULE_NOTES",
+        "product": null,
+        "jurisdiction": null,
+        "period": "full_game"
+      }
+    }
+  ]
+}

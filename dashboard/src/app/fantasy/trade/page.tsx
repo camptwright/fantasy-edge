@@ -71,6 +71,7 @@ export default async function TradePage({ searchParams }: { searchParams: Promis
       <p className="text-xs font-bold uppercase tracking-[.2em] text-emerald-300">Fantasy Edge · Trade desk</p>
       <h1 className="mt-2 text-4xl font-bold tracking-tight md:text-6xl">Trade calculator.</h1>
       <p className="mt-3 max-w-2xl text-slate-400">Evaluate any proposed trade, or see suggested swaps that use your roster depth to fill a real positional gap.</p>
+      <p className="mt-4 rounded border border-amber-800 p-3 text-sm text-amber-200">This is the legacy weekly/season-average proxy, not validated market fairness. <Link className="underline" href={`/fantasy/values${selected?`?league=${encodeURIComponent(selected.league_id)}`:""}`}>Open fresh player values and two-sided roster impact</Link> for coverage-aware research.</p>
     </header>
     {!selected ? <p className="rounded-xl border border-slate-800 p-6 text-slate-400">No leagues synced yet.</p> : <>
       <nav className="-mx-5 mb-6 flex gap-3 overflow-x-auto px-5 md:mx-0 md:px-0">

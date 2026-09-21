@@ -104,6 +104,7 @@ def _emit_pair_rows(
             {
                 "id": str(line.id),
                 "game_id": str(game.id),
+                "side": line.side,
                 "actionable": True,
                 "sport": game.sport,
                 "market": market,
@@ -822,6 +823,12 @@ async def prop_provider_status():
     return {'enabled': settings.aggregate_props_enabled, 'providers': providers,
             'dfs_actionable': False, 'direct_underdog_scheduled': False,
             'note': 'Initial limited bookmaker/market coverage. Source timestamps control freshness. The Odds API budget is independent.'}
+
+
+@router.get('/calibration/provider-coverage')
+async def provider_coverage(db: AsyncSession = Depends(get_db)):
+    from src.services.provider_coverage import coverage
+    return await coverage(db)
 
 
 @router.get('/calibration/result-repair')

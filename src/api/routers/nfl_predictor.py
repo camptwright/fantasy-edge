@@ -14,6 +14,18 @@ from src.models.identity import Team
 from src.services.nfl_predictor_lab import predict_games, team_key
 
 router = APIRouter()
+
+
+@router.get('/experiments/weather-context')
+async def weather_context_status():
+    from src.services.event_weather import latest
+    return await run_in_threadpool(latest)
+
+
+@router.get('/experiments/missing-results')
+async def missing_results(db: AsyncSession = Depends(get_db)):
+    from src.services.missing_result_queue import queue
+    return await queue(db)
 ARTIFACT = Path(__file__).resolve().parents[3]/'config'/'nfl_predictor_lab.json'
 
 
@@ -33,7 +45,8 @@ async def football_prop_research():
 @router.get('/experiments/college-players')
 async def college_players():
     from src.services.college_player_lab import latest
-    return await run_in_threadpool(latest)
+    from src.services.college_prospective import latest as prospective
+    return {**await run_in_threadpool(latest),'prospective':await run_in_threadpool(prospective)}
 
 
 @router.get('/experiments/nfl-predictor')

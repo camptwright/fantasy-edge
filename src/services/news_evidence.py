@@ -6,7 +6,9 @@ as immutable context only when a normalized player name appears in the title.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
+import re
 from pathlib import Path
 
 from src.utils.normalize import normalize_player_name
@@ -18,6 +20,17 @@ def _timestamp(value):
     except (TypeError, ValueError):
         return None
     return parsed if parsed.tzinfo is not None else None
+
+
+def publication_time(value):
+    parsed = _timestamp(value)
+    if parsed is not None:
+        return parsed
+    try:
+        parsed = parsedate_to_datetime(str(value))
+        return parsed if parsed.tzinfo is not None else None
+    except (TypeError, ValueError, IndexError):
+        return None
 
 
 def headlines_for_players(archive_dir: Path, players: dict[str, str], as_of: datetime) -> dict[str, list[dict]]:
@@ -42,7 +55,12 @@ def headlines_for_players(archive_dir: Path, players: dict[str, str], as_of: dat
                 continue
             observed = _timestamp(row.get('observed_at'))
             title, url = row.get('title'), row.get('url')
-            if observed is None or observed > as_of or not isinstance(title, str) or not isinstance(url, str):
+            if observed is None or not as_of-timedelta(hours=72) <= observed <= as_of or not isinstance(title, str) or not isinstance(url, str):
+                continue
+            published = publication_time(row.get('published_at_raw'))
+            if published is not None and not as_of-timedelta(hours=72) <= published <= as_of:
+                continue
+            if not url.startswith(('https://', 'http://')):
                 continue
             key = (title.strip(), url.strip())
             if key in seen:
@@ -50,7 +68,7 @@ def headlines_for_players(archive_dir: Path, players: dict[str, str], as_of: dat
             seen.add(key)
             normalized = normalize_player_name(title)
             for player_id, name in names.items():
-                if name in normalized and len(result[player_id]) < 5:
+                if re.search(r'(?<!\w)' + re.escape(name) + r'(?!\w)', normalized) and len(result[player_id]) < 5:
                     result[player_id].append({'title': title.strip(), 'url': url.strip(),
                                               'source': str(row.get('source') or ''),
                                               'observed_at': observed.isoformat()})

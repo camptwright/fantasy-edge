@@ -21,7 +21,7 @@ from src.services.roster_stat_model import finite, RECIPE
 
 
 def version():
-    files = ('roster_stat_model.py', 'roster_stat_lab.py', 'roster_stat_prospective.py')
+    files = ('roster_stat_model.py', 'roster_stat_lab.py', 'roster_stat_prospective.py', 'player_identity.py','lab_availability.py','injury_evidence.py')
     return hashlib.sha256(b''.join((Path(__file__).parent/f).read_bytes() for f in files)).hexdigest()
 
 
@@ -61,6 +61,7 @@ def candidates(lab, now, model_version):
                 'name': player['name'], 'position': player['position'], 'stat': stat['stat'],
                 'roster_synced_at': lab['roster_synced_at'], 'injury_label': player['injury_status'],
                 'prediction': stat, 'policy': 'first_eligible_72h_to_5min_v1'})
+            records[-1]['availability_candidate']=player.get('availability_candidate',{})
     return records
 
 
@@ -73,7 +74,10 @@ def grade_one(record, game, value, correction_pending=False):
     if correction_pending: return {**result, 'status': 'pending_correction'}
     if not finite(value): return {**result, 'status': 'missing_result'}
     prediction = record['prediction']
+    workload=prediction.get('workload_candidate',{})
     return {**result, 'status': 'graded', 'actual': value,
+        'workload_error':abs(workload['mean']-value) if workload.get('status')=='ready' else None,
+        'availability_shadow_action':record.get('availability_candidate',{}).get('shadow_action','not_captured'),
         'baseline_error': abs(prediction['baseline']-value),
         'candidate_error': abs(prediction['candidate']-value),
         'historical_range_contains_result': prediction['historical_low'] <= value <= prediction['historical_high']}
@@ -113,6 +117,10 @@ async def run(db, root=None):
     metrics = [{'version': v, 'stat': s, 'n': len(rows),
         'baseline_mae': fmean(r['baseline_error'] for r in rows),
         'candidate_mae': fmean(r['candidate_error'] for r in rows),
+        'workload_samples':sum(r.get('workload_error') is not None for r in rows),
+        'workload_paired_baseline_mae':fmean(r['baseline_error'] for r in rows if r.get('workload_error') is not None) if any(r.get('workload_error') is not None for r in rows) else None,
+        'availability_actions':dict(Counter(r.get('availability_shadow_action','not_captured') for r in rows)),
+        'workload_mae':fmean(r['workload_error'] for r in rows if r.get('workload_error') is not None) if any(r.get('workload_error') is not None for r in rows) else None,
         'historical_range_coverage': fmean(r['historical_range_contains_result'] for r in rows)}
         for (v, s), rows in sorted(grouped.items())]
     report = {'status': 'experimental', 'generated_at': now.isoformat(), 'new_forecasts': new,

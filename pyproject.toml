@@ -28,6 +28,8 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.32",
   "celery[redis]>=5.4",
+  # Exact flex/superflex assignment in the fantasy decision API.
+  "scipy>=1.14",
 ]
 
 [project.optional-dependencies]
@@ -41,7 +43,6 @@ offline = [
   "lightgbm>=4.5",
   "scikit-learn>=1.5",
   "pandas>=2.2",
-  "scipy>=1.14",
 ]
 dev = [
   "pytest>=8.3",

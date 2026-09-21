@@ -29,6 +29,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.facts import Game, PlayerGameStat
 from src.models.identity import Player
+from src.services.player_identity import resolve_platform_players
+from src.services.result_eligibility import no_pending_correction
+from datetime import datetime, timezone
+from sqlalchemy import or_
+
+
+async def load_exact_2025_averages(db, platform, player_ids):
+    resolved = await resolve_platform_players(db, platform, player_ids)
+    if not resolved:
+        return {}
+    rows = (await db.execute(select(PlayerGameStat.player_id, PlayerGameStat.stat_type, func.avg(PlayerGameStat.value))
+        .join(Game, Game.id == PlayerGameStat.game_id).where(
+            PlayerGameStat.player_id.in_([p.id for p in resolved.values()]), Game.sport=='nfl',
+            Game.season==2025, Game.status=='final', Game.game_time.isnot(None),
+            Game.game_time < datetime.now(timezone.utc), or_(Game.game_type.is_(None),Game.game_type!='PRE'),
+            no_pending_correction()).group_by(PlayerGameStat.player_id,PlayerGameStat.stat_type))).all()
+    canonical = {}
+    for pid, stat, value in rows: canonical.setdefault(pid,{})[stat]=float(value)
+    return {pid:canonical[player.id] for pid,player in resolved.items() if player.id in canonical}
+
+
+def exact_projected_points(scoring_settings, player_id, averages, position=None):
+    if position in _UNMODELED_POSITIONS: return None
+    stats = averages.get(str(player_id))
+    if stats is None: return None
+    required = [(stat,float(scoring_settings.get(key,0) or 0)) for stat,key in _STAT_TYPE_TO_SCORING_KEY.items()
+                if float(scoring_settings.get(key,0) or 0)!=0]
+    if not required or any(stat not in stats for stat,_ in required): return None
+    return round(sum(stats[stat]*weight for stat,weight in required),2)
 
 # player_game_stats.stat_type (this app's own naming, from nfl_pbp_props.py)
 # -> the Sleeper scoring_settings key it corresponds to. Only stats fantasy

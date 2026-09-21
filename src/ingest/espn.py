@@ -237,6 +237,8 @@ def _kickoff_from_event(event: dict[str, Any]) -> datetime | None:
     Game exists to run its kickoff-window match, and `_apply_schedule_fields`,
     which needs the same value once the Game does exist - one parser for
     both keeps them from drifting apart."""
+    if any(c.get('timeValid') is False for c in event.get('competitions', [])):
+        return None
     date_text = event.get("date")
     if not date_text:
         return None

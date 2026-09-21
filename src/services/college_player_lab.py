@@ -1,5 +1,6 @@
 """Power Four current-team cohort, prior-day stat replay. Research only."""
 import json
+import uuid
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,6 +12,7 @@ from src.models.identity import Player, PlayerExternalId, Team
 from src.services.result_eligibility import no_pending_correction
 from src.services.roster_stat_model import STATS, RECIPE, estimate, finite
 from src.services.roster_stat_prospective import publish
+from src.services.player_identity import resolve_external_players
 
 CONFERENCES = {'acc': 'ACC', 'big10': 'Big Ten', 'big12': 'Big 12', 'sec': 'SEC'}
 
@@ -50,7 +52,7 @@ def replay(history, stats, season):
     return results
 
 
-async def run(db, conference_snapshot):
+async def run(db, conference_snapshot, full=False):
     await db.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'))
     now = datetime.now(timezone.utc)
     season = conference_snapshot['season']
@@ -60,8 +62,7 @@ async def run(db, conference_snapshot):
     by_id = {t.id:t for t in teams}
     roster = conference_snapshot['rosters']
     team_by_external = {t.espn_id:t for t in teams}
-    links = (await db.execute(select(PlayerExternalId.external_id,Player).join(Player,Player.id==PlayerExternalId.player_id)
-        .where(Player.sport=='ncaaf',PlayerExternalId.source=='espn_ncaaf',PlayerExternalId.external_id.in_(roster)))).all()
+    links = (await resolve_external_players(db,'ncaaf','espn_ncaaf',roster)).items()
     players, player_team, positions = [], {}, {}
     for external, player in links:
         info = roster[external]
@@ -102,6 +103,10 @@ async def run(db, conference_snapshot):
             'team':by_id[player_team[player.id]].name,'conference':conf,
             'game_id':str(upcoming[0].id) if upcoming else None,
             'game_time':upcoming[0].game_time.isoformat() if upcoming else None,'stats':forecasts})
+    from src.services.lab_availability import contexts
+    card_games={uuid.UUID(p['player_id']):game_by_id.get(uuid.UUID(p['game_id'])) if p['game_id'] else None for p in cards}
+    availability=await contexts(db,'ncaaf',list(card_games),card_games,now)
+    for card in cards: card['availability_candidate']=availability.get(uuid.UUID(card['player_id']),{})
     groups = defaultdict(list)
     for row in evaluations:
         if row['status']=='ready': groups[(row['conference'],row['stat'])].append(row)
@@ -131,7 +136,7 @@ async def run(db, conference_snapshot):
     root = Path(get_settings().raw_archive_dir)/'college-player-lab'
     publish(root/'sources'/f"{now.strftime('%Y%m%dT%H%M%S.%f')}.json",conference_snapshot)
     publish(root/f"{now.strftime('%Y%m%dT%H%M%S.%f')}.json",report)
-    return {k:v for k,v in report.items() if k!='players'}
+    return report if full else {k:v for k,v in report.items() if k!='players'}
 
 
 def latest():

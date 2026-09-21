@@ -7,6 +7,13 @@ from src.services.settlement_binding import bind
 NOW = datetime(2026, 9, 11, tzinfo=timezone.utc)
 
 
+def test_provider_period_receiving_alias_is_captured():
+    from src.services.period_shadow_capture import history_market,MARKETS
+    assert '1h_rec_yards' in MARKETS
+    assert history_market('1h_rec_yards')=='1h_receiving_yards'
+    assert history_market('1q_rushing_attempts')=='1q_carries'
+
+
 def history():
     return [{'game_id': str(i), 'date': f'2025-09-{i+1:02}',
              'available_at': '2026-09-10T00:00:00+00:00',
@@ -44,10 +51,13 @@ def test_rules_bound_to_exact_identity_and_effective_interval():
     source = b'Verified test fixture rules'
     rule = {**q, 'status': 'verified', 'source': 'https://example.test/rules',
             'source_sha256': hashlib.sha256(source).hexdigest(),
-            'clauses': dict.fromkeys(('stat_definition', 'participation', 'overtime', 'void_conditions', 'push_treatment'), 'test'),
+            'source_observed_at': '2026-01-01T00:00:00+00:00',
+            'clauses': dict.fromkeys(('stat_definition', 'participation', 'overtime', 'void_conditions', 'push_treatment', 'period_definition', 'period_completion'), 'test'),
             'effective_from': '2026-01-01T00:00:00+00:00', 'effective_until': '2026-10-01T00:00:00+00:00'}
     result = bind(q, rule, source_snapshot=source)
     assert result['ready']
+    assert not bind(q, {**rule, 'source_observed_at': '2027-01-01T00:00:00+00:00'}, source_snapshot=source)['ready']
+    assert not bind(q, {**rule, 'clauses': {k:v for k,v in rule['clauses'].items() if k!='period_completion'}}, source_snapshot=source)['ready']
     assert not bind(q, rule)['ready']
     assert not bind(q, rule, source_snapshot=b'changed')['ready']
     rule['product'] = 'builder'

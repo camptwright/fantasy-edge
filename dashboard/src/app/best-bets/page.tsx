@@ -24,6 +24,7 @@ type Signal = {
   sport: string;
   market: string;
   selection: string;
+  side: string;
   price_american: number | null;
   matchup: string;
   ev_percent: number;
@@ -50,6 +51,7 @@ type Opportunity = {
   detail: string;
   price: number | null;
   edgePercent: number;
+  ledgerUrl: string;
 };
 
 function signalToOpportunity(s: Signal): Opportunity {
@@ -61,6 +63,7 @@ function signalToOpportunity(s: Signal): Opportunity {
     detail: s.matchup,
     price: s.price_american,
     edgePercent: s.ev_percent,
+    ledgerUrl: `/ledger?kind=team&quote=${encodeURIComponent(s.id)}&side=${encodeURIComponent(s.side)}`,
   };
 }
 
@@ -80,6 +83,7 @@ function propToOpportunities(p: Prop): Opportunity[] {
       detail: `${p.stat_type.replaceAll("_", " ")} · Availability: ${availability}`,
       price: p.over_price_american,
       edgePercent: p.edge_percent,
+      ledgerUrl: `/ledger?kind=player&quote=${encodeURIComponent(p.id)}&side=over`,
     });
   }
   if (p.under_edge_percent !== null && p.under_price_american !== null) {
@@ -91,6 +95,7 @@ function propToOpportunities(p: Prop): Opportunity[] {
       detail: `${p.stat_type.replaceAll("_", " ")} · Availability: ${availability}`,
       price: p.under_price_american,
       edgePercent: p.under_edge_percent,
+      ledgerUrl: `/ledger?kind=player&quote=${encodeURIComponent(p.id)}&side=under`,
     });
   }
   return out;
@@ -218,6 +223,7 @@ export default async function BestBetsPage({
                   )}
                   +{opp.edgePercent.toFixed(1)}%
                 </p>
+                <Link href={opp.ledgerUrl} className="mt-2 inline-block rounded border border-slate-600 px-2 py-1 text-xs text-emerald-300">Log / paper bet</Link>
               </div>
             </li>
           ))}

@@ -25,6 +25,38 @@ from src.utils.alerts import notify
 from src.utils.dashboard_ingest import post_article
 
 
+@celery_app.task(name='fantasy.sync_fantasy_market', soft_time_limit=180, time_limit=210)
+def sync_fantasy_market():
+    from src.services.fantasy_market import collect
+    async def run():
+        from src.services.settlement_evidence import collect as collect_rules
+        rules=await collect_rules()
+        async with get_worker_db() as db:
+            return {'market':await collect(db),'settlement':rules}
+    return asyncio.run(run())
+
+
+@celery_app.task(name='fantasy.archive_event_weather', soft_time_limit=500, time_limit=540)
+def archive_event_weather():
+    async def run():
+        from src.services.event_weather import collect
+        async with get_worker_db() as db:
+            return await collect(db)
+    report=asyncio.run(run())
+    return {'games':len(report['rows']),'truncated':report['truncated']}
+
+
+@celery_app.task(name='fantasy.capture_ledger_closes', soft_time_limit=110, time_limit=120)
+def capture_ledger_closes():
+    async def run():
+        from sqlalchemy import text
+        from src.services.betting_ledger import capture_closes
+        async with get_worker_db() as db:
+            await db.execute(text('SELECT pg_advisory_xact_lock(78241903)'))
+            return await capture_closes(db)
+    return asyncio.run(run())
+
+
 @celery_app.task(name="fantasy.sync_espn")
 def sync_espn() -> dict[str, int]:
     async def run() -> dict[str, int]:

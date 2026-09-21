@@ -10,9 +10,11 @@ const LINKS = [
   { href: "/fantasy/trade", label: "Trade" },
   { href: "/board", label: "Board" },
   { href: "/best-bets", label: "Best Bets" },
+  { href: "/ledger", label: "Ledger" },
   { href: "/experimental", label: "Experimental" },
   { href: "/recommendations", label: "Recommendations" },
   { href: "/calibration", label: "Calibration" },
+  { href: "/providers", label: "Providers" },
 ];
 
 export function Nav() {

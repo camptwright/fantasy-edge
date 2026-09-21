@@ -90,14 +90,18 @@ async def _sync_sport(db: AsyncSession, client: httpx.AsyncClient, user: dict, s
             logger.warning("sleeper users fetch failed for league_id=%s: %s", league_id, exc)
         await _upsert_rosters(db, league_id, rosters, team_names)
         metadata_exists = await db.scalar(
-            select(SleeperLeagueSnapshot.league_id).where(
+            select(SleeperLeagueSnapshot.synced_at).where(
                 SleeperLeagueSnapshot.league_id == league_id,
                 SleeperLeagueSnapshot.kind == "player_metadata",
             ).limit(1)
         )
-        if metadata_exists is None:
+        if metadata_exists is None or (datetime.now(timezone.utc)-metadata_exists).total_seconds() >= 14400:
             if player_catalog is None:
-                player_catalog = (await client.get(f"/players/{sport}")).json()
+                response = await client.get(f"/players/{sport}")
+                response.raise_for_status()
+                player_catalog = response.json()
+                if not isinstance(player_catalog, dict) or not player_catalog:
+                    raise ValueError('empty player metadata')
             # Widened from "rostered players only" to every fantasy-relevant
             # player: the projections payload's ID-keyed values carry no
             # name/position/team of their own (see projection_rows() in

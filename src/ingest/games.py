@@ -82,6 +82,12 @@ async def resolve_game(
             ).scalars()
         )
         for candidate in candidates:
+            # Adjacent MLB series games/doubleheaders are different fixtures.
+            # A time window may backfill a missing ID, never override a conflict.
+            if any(incoming and stored and incoming != stored for incoming, stored in (
+                (mlb_id,candidate.mlb_game_pk),(nhl_id,candidate.nhl_game_id),
+                (espn_id,candidate.espn_event_id),(nflverse_id,candidate.nflverse_game_id))):
+                continue
             if candidate.game_time is not None and abs(
                 (candidate.game_time - kickoff).total_seconds()
             ) < 86400:
@@ -147,6 +153,9 @@ async def find_game_by_teams(
             and abs((game.game_time - kickoff).total_seconds()) < _MATCH_WINDOW_SECONDS
         ]
         if timed:
+            timed.sort(key=lambda game:abs((game.game_time-kickoff).total_seconds()))
+            if len(timed)>1 and abs((timed[0].game_time-kickoff).total_seconds())==abs((timed[1].game_time-kickoff).total_seconds()):
+                return None
             return timed[0]
     # No timed candidate matched (or no kickoff was given at all). Only
     # trust an unconditional single match when its game_time is unknown -

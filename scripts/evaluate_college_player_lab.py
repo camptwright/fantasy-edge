@@ -1,12 +1,22 @@
 """Refresh official-provider conference snapshot, then run Power Four replay."""
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+import json
+from config.settings import get_settings
 import httpx
 from src.db.client import get_worker_db
 from src.services.college_player_lab import membership, run
 
-async def evaluate():
+async def evaluate(full=False):
     now = datetime.now(timezone.utc)
+    cached = sorted((Path(get_settings().raw_archive_dir)/'college-player-lab'/'sources').glob('*.json'))
+    if cached:
+        snapshot = json.loads(cached[-1].read_text())
+        age = now-datetime.fromisoformat(snapshot['fetched_at'])
+        if snapshot['season']==now.year and timedelta(0)<=age<timedelta(hours=6):
+            async with get_worker_db() as db:
+                return await run(db,snapshot,full=full)
     url = 'https://site.api.espn.com/apis/v2/sports/football/college-football/standings'
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.get(url,params={'season':now.year})
@@ -32,7 +42,7 @@ async def evaluate():
                         snapshot['rosters'][pid] = value
         await asyncio.gather(*(roster(team) for team in snapshot['teams']))
     async with get_worker_db() as db:
-        return await run(db,snapshot)
+        return await run(db,snapshot,full=full)
 
 if __name__=='__main__':
     import json

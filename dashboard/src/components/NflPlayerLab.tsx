@@ -1,4 +1,5 @@
-type Stat = { stat: string; status: string; games: number; baseline?: number; candidate?: number;
+import {OpportunityCandidate, type OpportunityStat, type AvailabilityCandidate} from "./OpportunityCandidate";
+type Stat = OpportunityStat & { stat: string; status: string; games: number; baseline?: number; candidate?: number;
   historical_low?: number; historical_high?: number; last_result?: string; method?: string;
   evaluation?: { games: number; baseline_mae: number | null; candidate_mae: number | null } };
 export type PlayerLabData = { status: string; reason?: string; league_id?: string; league_name?: string;
@@ -6,7 +7,7 @@ export type PlayerLabData = { status: string; reason?: string; league_id?: strin
     metrics: { version: string; stat: string; n: number; baseline_mae: number; candidate_mae: number }[] };
   roster_synced_at?: string; leagues: { id: string; name: string }[]; notes?: string[];
   players: { roster_player_id: string; name: string; position: string; team: string; starter: boolean;
-    injury_status: string; status: string; opponent: string | null; game_time: string | null; stats: Stat[] }[] };
+    injury_status: string; availability_candidate?: AvailabilityCandidate; status: string; opponent: string | null; game_time: string | null; stats: Stat[] }[] };
 const label = (s: string) => s.replaceAll("_", " ");
 const number = (n?: number | null) => n == null ? "—" : n.toFixed(1);
 export function NflPlayerLab({ data }: { data: PlayerLabData }) {
@@ -29,6 +30,7 @@ export function NflPlayerLab({ data }: { data: PlayerLabData }) {
         <p className="my-2 text-xs text-slate-400">{p.game_time ? `Next: ${p.opponent} · ${new Date(p.game_time).toUTCString()}` : "No upcoming scheduled game found in the next 10 days; estimates are historical only."}</p>
         {p.status !== "ready" && <p className="text-sm text-amber-200">{label(p.status)}{p.status === "unsupported_position" ? " — kickers and defenses are outside this first version." : " — estimates require an exact player ID and at least 8 recorded games."}</p>}
         {p.stats.length > 0 && <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-xs text-slate-400"><tr>{["Stat", "Baseline", "Candidate", "Historical range", "Games", "Backtest MAE (base / candidate)"].map(h=><th key={h} className="py-2 pr-4">{h}</th>)}</tr></thead><tbody>{p.stats.map(s=><tr key={s.stat} className="border-t border-slate-800 text-slate-200"><td className="py-2 pr-4 capitalize">{label(s.stat)}</td>{s.status === "ready" ? <><td>{number(s.baseline)}</td><td>{number(s.candidate)}<span className="block text-xs text-slate-500">{s.method === "baseline_only" ? "baseline only" : "usage blend"}</span></td><td>{number(s.historical_low)}–{number(s.historical_high)}</td><td>{s.games}</td><td>{number(s.evaluation?.baseline_mae)} / {number(s.evaluation?.candidate_mae)}<span className="block text-xs text-slate-500">{s.evaluation?.games || 0} past-only tests</span></td></> : <td colSpan={5} className="text-slate-400">{label(s.status)} ({s.games} games)</td>}</tr>)}</tbody></table></div>}
+        <OpportunityCandidate stats={p.stats} availability={p.availability_candidate}/>
       </article>)}</div>
       <ul className="list-disc space-y-1 pl-5 text-xs text-slate-400">{data.notes?.map(n=><li key={n}>{n}</li>)}</ul>
     </>}

@@ -11,7 +11,12 @@ from src.services.period_shadow import predict
 from src.services.settlement_binding import bind
 
 MARKETS = [f'{period}_{stat}' for period in ('1q', '2q', '3q', '1h')
-           for stat in ('passing_yards', 'receiving_yards', 'rushing_yards', 'receptions', 'rushing_attempts')]
+           for stat in ('passing_yards', 'receiving_yards', 'rec_yards', 'rushing_yards', 'receptions', 'rushing_attempts')]
+
+
+def history_market(stat):
+    period, suffix=stat.split('_',1)
+    return period+'_'+{'rec_yards':'receiving_yards','rushing_attempts':'carries'}.get(suffix,suffix)
 
 
 async def capture(db):
@@ -51,7 +56,7 @@ async def capture(db):
         if key in seen:
             continue
         seen.add(key)
-        market = quote.stat_type.replace('rushing_attempts', 'carries')
+        market = history_market(quote.stat_type)
         result = predict(history, player.gsis_id, market, quote.line, now) if player.gsis_id else {'status': 'missing_gsis_identity'}
         # Source suffix identifies a book, NOT its product or jurisdiction.
         book = quote.source.split('_', 1)[1] if '_' in quote.source else None
@@ -60,8 +65,16 @@ async def capture(db):
             'market': quote.stat_type, 'quote_id': str(quote.id), 'captured_at': now.isoformat()})
         records.append({'quote_id': str(quote.id), 'game_id': str(game.id), 'player_id': str(player.id),
             'market': quote.stat_type, 'line': quote.line, 'source': quote.source,
+            'history_market':market,
             'over_price': quote.over_price_american, 'under_price': quote.under_price_american,
             'game_time': game.game_time.isoformat(), 'prediction': result, 'settlement_binding': contract})
+    finished = datetime.now(timezone.utc)
+    from src.services.event_weather import context as weather_context
+    game_map={str(g.id):g for _,g,_ in rows}
+    for record in records:
+        record['context_experiment']={'recipe':'frozen_context_observation_v1',
+            'weather':weather_context(game_map[record['game_id']],now),
+            'numeric_adjustment':None,'serving_enabled':False}
     finished = datetime.now(timezone.utc)
     records = [r for r in records if datetime.fromisoformat(r['game_time']) > finished]
     return {'schema_version': 1, 'status': 'research', 'captured_at': finished.isoformat(),

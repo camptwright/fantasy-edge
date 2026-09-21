@@ -81,6 +81,13 @@ async def capture(db):
             'prediction': prop, 'inputs': {'mean': parameters[0], 'stddev': parameters[1],
                 'served_mean': prop['served_projection_mean'], 'served_stddev': prop['served_projection_stddev']}})
     finished = datetime.now(timezone.utc)
+    from src.services.event_weather import context as weather_context
+    contexts={gid:weather_context(g,started) for gid,g in games.items() if any(r['game_id']==gid for r in records)}
+    for record in records:
+        record['context_experiment']={'recipe':'frozen_context_observation_v1',
+            'weather':contexts.get(record['game_id']), 'numeric_adjustment':None,
+            'status':'collecting_covariates_not_trained','serving_enabled':False}
+    finished = datetime.now(timezone.utc)
     accepted = [r for r in records if eligible(games.get(r['game_id']), finished)]
     from src.services.model_version import manifest
     versions = manifest()

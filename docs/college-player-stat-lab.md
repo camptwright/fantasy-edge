@@ -1,5 +1,15 @@
 # Power Four player stat lab — September 12, 2026
 
+## September 14 automation update
+
+College prospective testing is now deployed as `fantasy.college_lab_prospective` every 15 minutes. Each run refreshes projections from current eligible results; exact-ID roster/conference snapshots are reused for up to six hours. Source refresh failures prevent new captures but do not prevent grading existing forecasts. Read-only worker transactions use fresh database sessions.
+
+The first eligible prediction per model/player/game/stat is captured between 72 hours and five minutes before known kickoff. Game status and kickoff are rechecked before atomic, create-only publication. Original predictions are never rewritten. Current corrected final facts are graded on subsequent runs; pending corrections and missing results stay ungraded. Code-versioned MAE is separate from the retrospective scorecard, with no automatic promotion. The shared result queue now includes these college archives.
+
+Verified 14 focused tests, production build, two manual runs, and repeated scheduled runs through 2026-09-14 12:14 UTC. At that check, zero eligible captures was expected: the earliest player game was September 17 at 23:30 UTC, opening its capture window September 14 at 23:30 UTC (6:30 p.m. Central). This verifies scheduling and eligibility behavior, not completed prospective forecast accuracy. The first real captures and final-result grades remain to be observed.
+
+The following describes the initial manual-only release and is retained as historical context.
+
 Available on Experimental below the NFL roster lab. Manual refresh: `python -m scripts.evaluate_college_player_lab` inside the API environment. This version is an archived retrospective evaluation and current historical-estimate explorer, not automatic college pregame capture. NFL prospective recording remains separate and unchanged.
 
 ## Scope and evidence

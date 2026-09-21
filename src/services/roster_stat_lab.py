@@ -9,6 +9,7 @@ from src.models.identity import Player, PlayerExternalId, Team
 from src.models.facts import Game, PlayerGameStat
 from src.services.result_eligibility import no_pending_correction
 from src.services.roster_stat_model import STATS, USAGE, RECIPE, forecast
+from src.services.player_identity import resolve_platform_players
 
 
 async def build(db, league_id=None):
@@ -37,22 +38,8 @@ async def build(db, league_id=None):
     roster = rosters[0]
     metadata = latest.get('player_metadata')
     catalog = metadata.payload if metadata and isinstance(metadata.payload, dict) else {}
-    ids_file = Path(__file__).resolve().parents[2]/'config/nfl_player_lab_ids.json'
-    ids = json.loads(ids_file.read_text()).get('identities', {}) if ids_file.exists() else {}
     roster_ids = list(dict.fromkeys(str(p) for p in roster.players))[:40]
-    source_ids = {pid: ({'espn_id': pid} if league.platform == 'espn' else ids.get(pid, {})) for pid in roster_ids}
-    gsis = {v['gsis_id'] for v in source_ids.values() if v.get('gsis_id')}
-    espn = {v['espn_id'] for v in source_ids.values() if v.get('espn_id')}
-    direct = (await db.scalars(select(Player).where(Player.sport == 'nfl', Player.gsis_id.in_(gsis)))).all()
-    external = (await db.execute(select(PlayerExternalId.external_id, Player).join(Player, Player.id == PlayerExternalId.player_id)
-        .where(Player.sport == 'nfl', PlayerExternalId.source == 'espn_nfl', PlayerExternalId.external_id.in_(espn)))).all()
-    by_gsis = {p.gsis_id: p for p in direct}
-    by_espn = {key: p for key, p in external}
-    resolved = {}
-    for pid, identity in source_ids.items():
-        matches = [p for p in (by_gsis.get(identity.get('gsis_id')), by_espn.get(identity.get('espn_id'))) if p]
-        if matches and len({p.id for p in matches}) == 1:
-            resolved[pid] = matches[0]
+    resolved = await resolve_platform_players(db, league.platform, roster_ids)
     stats = set(s for ss in STATS.values() for s in ss) | set(USAGE.values())
     rows = (await db.execute(select(PlayerGameStat, Game).join(Game, Game.id == PlayerGameStat.game_id).where(
         PlayerGameStat.player_id.in_([p.id for p in resolved.values()]), PlayerGameStat.stat_type.in_(stats),
@@ -70,6 +57,13 @@ async def build(db, league_id=None):
         Game.game_time > now, Game.game_time <= now+timedelta(days=10),
         or_(Game.game_type.is_(None), Game.game_type != 'PRE')).order_by(Game.game_time))).all()
     players = []
+    from src.services.lab_availability import contexts
+    player_games={}
+    for pid,player in resolved.items():
+        info=catalog.get(pid,{})
+        team=team_by_abbr.get(aliases.get(info.get('team'),info.get('team')))
+        player_games[player.id]=next((g for g in games if team and team.id in (g.home_team_id,g.away_team_id)),None)
+    availability_context=await contexts(db,'nfl',[p.id for p in resolved.values()],player_games,now)
     for pid in roster_ids:
         info, player = catalog.get(pid, {}), resolved.get(pid)
         position = info.get('position')
@@ -78,6 +72,7 @@ async def build(db, league_id=None):
         opponent = team_by_id.get(game.away_team_id if game.home_team_id == team.id else game.home_team_id) if game else None
         forecasts = [forecast(list(histories[player.id].values()), s, now) for s in STATS.get(position, [])] if player else []
         players.append({'roster_player_id': pid, 'name': ' '.join(str(info.get(k) or '') for k in ('first_name', 'last_name')).strip() or pid,
+            'availability_candidate':availability_context.get(player.id,{}) if player else {},
             'player_id': str(player.id) if player else None, 'game_id': str(game.id) if game else None,
             'position': position, 'team': info.get('team'), 'starter': pid in roster.starters,
             'injury_status': info.get('injury_status') or 'unknown',

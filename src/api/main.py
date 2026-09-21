@@ -9,7 +9,7 @@ import httpx
 import json
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,12 +18,14 @@ from config.settings import get_settings
 from src.api.performance import PerformanceMiddleware, snapshot as performance_snapshot
 from src.api.routers.sportsbook import router as sportsbook_router
 from src.api.routers.nfl_predictor import router as nfl_predictor_router
+from src.api.routers.ledger import router as ledger_router
+import src.api.routers.ledger_imports  # noqa: F401 - registers receipt routes
 from src.data.news import fetch_rss_headlines
 from src.db.client import dispose_api_engine, get_api_engine
 from src.db.client import get_db
 from src.ingest.sleeper import sync_sleeper_account
 from src.ingest.espn_fantasy import sync_espn_fantasy_account
-from src.services.custom_projection import custom_projected_points, load_2025_averages
+from src.services.custom_projection import exact_projected_points as custom_projected_points, load_exact_2025_averages
 from src.services.trade import evaluate_trade, suggest_trades
 from src.models.sleeper import SleeperLeague, SleeperLeagueSnapshot, SleeperRoster
 
@@ -134,6 +136,7 @@ async def performance():
 # edgeFetch), so this fails quiet there, not hard, if the token is unset.
 app.include_router(sportsbook_router, dependencies=[Depends(require_fantasy_token)])
 app.include_router(nfl_predictor_router, dependencies=[Depends(require_fantasy_token)])
+app.include_router(ledger_router, dependencies=[Depends(require_fantasy_token)])
 
 
 @app.get("/health", tags=["operations"])
@@ -276,13 +279,13 @@ async def _score_league_players(league: "SleeperLeague", latest: dict, db: Async
         raise HTTPException(status_code=409, detail="run sync to load current projections")
     metadata_snapshot = latest.get("player_metadata")
     metadata_players = metadata_snapshot.payload if metadata_snapshot and isinstance(metadata_snapshot.payload, dict) else {}
-    season_averages = await load_2025_averages(db)
+    season_averages = await load_exact_2025_averages(db, league.platform, metadata_players)
     def view(item: dict) -> dict:
         info = metadata_players.get(item["player_id"], {})
         stats = item.get("stats") or {}
         points = sum(float(stats.get(key, 0) or 0) * float(weight or 0) for key, weight in league.scoring_settings.items())
         name = " ".join(part for part in [info.get("first_name"), info.get("last_name")] if part)
-        return {"player_id": item["player_id"], "name": name, "position": info.get("position"), "team": info.get("team"), "opponent": None, "injury_status": info.get("injury_status"), "projected_points": round(points, 2), "custom_projected_points": custom_projected_points(league.scoring_settings, name, season_averages, info.get("position"))}
+        return {"player_id": item["player_id"], "name": name, "position": info.get("position"), "team": info.get("team"), "opponent": None, "injury_status": info.get("injury_status"), "projected_points": round(points, 2), "custom_projected_points": custom_projected_points(league.scoring_settings, item["player_id"], season_averages, info.get("position"))}
     rows = projection_rows(projections.payload)
     scored = sorted((view(item) for item in rows), key=lambda item: item["projected_points"], reverse=True)
     scored_by_id = {item["player_id"]: item for item in scored}
@@ -292,7 +295,7 @@ async def _score_league_players(league: "SleeperLeague", latest: dict, db: Async
             return scored_by_id[pid]
         info = metadata_players.get(pid, {})
         name = " ".join(part for part in [info.get("first_name"), info.get("last_name")] if part) or pid
-        return {"player_id": pid, "name": name, "position": info.get("position"), "team": info.get("team"), "opponent": None, "injury_status": info.get("injury_status"), "projected_points": 0.0, "custom_projected_points": custom_projected_points(league.scoring_settings, name, season_averages, info.get("position"))}
+        return {"player_id": pid, "name": name, "position": info.get("position"), "team": info.get("team"), "opponent": None, "injury_status": info.get("injury_status"), "projected_points": 0.0, "custom_projected_points": custom_projected_points(league.scoring_settings, pid, season_averages, info.get("position"))}
     return scored_by_id, player_view
 
 
@@ -567,7 +570,7 @@ async def fantasy_matchup(league_id: str, db: AsyncSession = Depends(get_db)) ->
             points = sum(float(stats.get(key, 0) or 0) * float(weight or 0) for key, weight in league.scoring_settings.items())
             projected_points_by_id[row["player_id"]] = round(points, 2)
     # Second, independent projection source - see custom_projection.py.
-    season_averages = await load_2025_averages(db)
+    season_averages = await load_exact_2025_averages(db, league.platform, players)
     # .get("full_name") was the original raw-Sleeper-catalog field name;
     # the player_metadata snapshot was later trimmed to first_name/
     # last_name (see sleeper.py's widened, size-trimmed metadata) and
@@ -582,7 +585,7 @@ async def fantasy_matchup(league_id: str, db: AsyncSession = Depends(get_db)) ->
         def name_for(player_id: object) -> str:
             info = info_for(player_id)
             return " ".join(part for part in [info.get("first_name"), info.get("last_name")] if part) or str(player_id)
-        return [{"player_id": str(player_id), "name": name_for(player_id), "position": info_for(player_id).get("position"), "team": info_for(player_id).get("team"), "projected_points": projected_points_by_id.get(str(player_id), 0.0), "custom_projected_points": custom_projected_points(league.scoring_settings, name_for(player_id), season_averages, info_for(player_id).get("position"))} for player_id in ids]
+        return [{"player_id": str(player_id), "name": name_for(player_id), "position": info_for(player_id).get("position"), "team": info_for(player_id).get("team"), "projected_points": projected_points_by_id.get(str(player_id), 0.0), "custom_projected_points": custom_projected_points(league.scoring_settings, str(player_id), season_averages, info_for(player_id).get("position"))} for player_id in ids]
     mine_starters = [str(player_id) for player_id in mine.starters]
     mine_projected = round(sum(projected_points_by_id.get(pid, 0.0) for pid in mine_starters), 2)
     opponent_starters = [str(player_id) for player_id in (opponent.get("starters") or [])] if opponent else []
@@ -608,6 +611,59 @@ async def _load_league_and_scoring(league_id: str, db: AsyncSession) -> tuple["S
 class TradeEvaluateRequest(BaseModel):
     side_a_player_ids: list[str]
     side_b_player_ids: list[str]
+
+
+class TradeRosterAdjustment(BaseModel):
+    add: list[str] = Field(default_factory=list,max_length=6)
+    drop: list[str] = Field(default_factory=list,max_length=6)
+
+
+class TradeRosterRequest(TradeEvaluateRequest):
+    a: TradeRosterAdjustment = Field(default_factory=TradeRosterAdjustment)
+    b: TradeRosterAdjustment = Field(default_factory=TradeRosterAdjustment)
+
+
+@app.get("/api/v1/fantasy/leagues/{league_id}/player-values", dependencies=[Depends(require_fantasy_token)])
+async def fantasy_player_values(league_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    from src.services.fantasy_decision_models import build
+    from src.services.fantasy_values import value_board, suggestions
+    from starlette.concurrency import run_in_threadpool
+    data=value_board(await build(db,league_id,include_catalog=True))
+    data['trade_candidates']=await run_in_threadpool(suggestions,data)
+    return data
+
+
+@app.post("/api/v1/fantasy/leagues/{league_id}/trade/roster-impact", dependencies=[Depends(require_fantasy_token)])
+async def fantasy_roster_trade(league_id: str, request: TradeRosterRequest, db: AsyncSession = Depends(get_db)) -> dict:
+    from src.services.fantasy_decision_models import build
+    from src.services.fantasy_values import compare
+    if len(request.side_a_player_ids)+len(request.side_b_player_ids)>12:
+        raise HTTPException(status_code=400,detail="At most twelve players per comparison")
+    data=await build(db,league_id,include_catalog=True)
+    from src.services.fantasy_market import selected,cohort
+    league=await db.get(SleeperLeague,league_id)
+    market=selected(cohort(league,len(data.get('rosters',[]))),league.platform,request.side_a_player_ids+request.side_b_player_ids) if league else {'status':'missing_league'}
+    return {**compare(data,request.side_a_player_ids,request.side_b_player_ids,
+                     adjustments={'a':request.a.model_dump(),'b':request.b.model_dump()}),'market':market}
+
+
+@app.get("/api/v1/fantasy/leagues/{league_id}/decision-models", dependencies=[Depends(require_fantasy_token)])
+async def fantasy_decision_models(league_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    from src.services.fantasy_decision_models import build
+    from src.services.fantasy_prospective import latest
+    from starlette.concurrency import run_in_threadpool
+    from src.services.fantasy_specialists import latest as specialist_latest
+    return {**await build(db, league_id), 'prospective':await run_in_threadpool(latest),
+            'specialist_validation':await run_in_threadpool(specialist_latest,league_id)}
+
+
+@app.post("/api/v1/fantasy/leagues/{league_id}/trade/ros", dependencies=[Depends(require_fantasy_token)])
+async def fantasy_ros_trade(league_id: str, request: TradeEvaluateRequest, db: AsyncSession = Depends(get_db)) -> dict:
+    from src.services.fantasy_decision_models import build, trade_comparison
+    if len(request.side_a_player_ids)+len(request.side_b_player_ids)>12:
+        raise HTTPException(status_code=400, detail="At most twelve players per comparison")
+    data=await build(db,league_id)
+    return trade_comparison({p['player_id']:p for p in data['players']},request.side_a_player_ids,request.side_b_player_ids)
 
 
 @app.post("/api/v1/fantasy/leagues/{league_id}/trade/evaluate", dependencies=[Depends(require_fantasy_token)])

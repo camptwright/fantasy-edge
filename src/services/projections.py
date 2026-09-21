@@ -2,15 +2,9 @@
 for a stat_type from realized results (player_game_stats), never a
 fabricated league-average constant.
 
-Depends on player_game_stats actually being populated - today that only
-happens via the offline nflverse batch ingest (src/ingest/players.py's
-ingest_player_stats), deliberately kept out of the serving/worker image
-(pyproject.toml's `offline` extras group - the Dockerfile installs the base
-package only) and run as a manual/scripted job, not on the Celery beat
-schedule. A player's projection is therefore only as fresh as the last time
-that job ran for the current season - the same operational model
-docs/nfl-modeling.md already documented for the prior (now-removed)
-predictor, `src/services/nfl_predictors.py`.
+Reads eligible realized results at request time, including scheduled result
+ingestion and historical backfills. New final results affect projections
+without retraining coefficients; pending corrections remain excluded.
 
 MIN_GAMES_FOR_PROJECTION mirrors that prior predictor's own threshold (see
 docs/nfl-modeling.md: "A profile needs four completed games by default").
