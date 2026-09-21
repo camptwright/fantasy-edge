@@ -152,7 +152,8 @@ async def test_api_spread_and_prop_override_and_baseline(db, monkeypatch, stat):
         db.add(TeamMarketLine(game_id=game.id, source='test', market='spread', side=side,
             line=line, line_type='live', price_american=100, observed_at=datetime.now(timezone.utc)))
     for i in range(4):
-        past = Game(sport='ncaaf', season=2025, status='final')
+        past = Game(sport='ncaaf', season=2025, status='final',
+                    game_time=datetime.now(timezone.utc)-timedelta(days=i+2))
         db.add(past)
         await db.flush()
         db.add(PlayerGameStat(player_id=player.id, game_id=past.id, stat_type=stat, value=i+2))

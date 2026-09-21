@@ -33,15 +33,40 @@ The complete prior tree and the supplied audit were committed and pushed as
   a test writing to the production archive path, and missing API-test auth.
   Combined targeted database/API regressions: 59 passed, one live test deselected.
 
+## Test and narrative follow-up
+
+- X-05: default suite now passes: **613 passed, 1 skipped, 20 live checks
+  deselected**, in 29.79 seconds against the isolated PostgreSQL test database.
+  The skip is the intentional relocation-era NFL team alias exception.
+  Distribution/projection fixtures now have historical kickoff times; the
+  schema checklist includes the six newer tables. Eligibility was not weakened.
+- Full-season nflverse tests are explicitly marked live (all six passed in the
+  earlier broad run). Player ingestion tests use fixed provider rows while
+  exercising real database writes, identity ambiguity, game linkage and unique
+  constraints. They no longer download whole seasons repeatedly. A DB advisory
+  lock prevents overlapping test runs from truncating each other's fixtures.
+  The earlier long run's StaleDataError followed overlapping focused/full runs;
+  serial runs are green. Other excluded live checks were not certified here.
+- B-05: numerical recommendation summaries no longer call an LLM. Each selected
+  side uses its own probability and American price to compute break-even
+  probability and EV with explicit units. Only actionable, positive-EV, finite
+  priced quotes qualify; up to eight are ranked deterministically. Cached legacy
+  prose is withheld. Cached deterministic numbers are recomputed against current
+  quote evidence, so a changed probability invalidates text even if the quote ID
+  is unchanged. Event-start and scoped-evidence regressions pass.
+- TypeScript checking, dashboard production build and focused Python lint pass.
+  API/worker/beat/dashboard and localhost preview were redeployed. Generation
+  succeeded twice in the same worker process; live GET /recommendations returned
+  HTTP 200 with deterministic, quote-bound summaries. No model was promoted.
+
 ## Still open
 
-The full suite is not certified green. A broader run was interrupted after
-262 passes and 22 failures; 18 were API tests missing auth (subsequently addressed)
-and four were distribution-override expectations requiring investigation.
-The parlay contract test now explicitly expects rejection of unvalidated signals.
+Deterministic arithmetic does not validate model quality. Live prop estimates
+still include unusually large modeled edges (one observed near +80% EV); these
+are not evidence of profitability. Version-bound prop validation, historical
+coverage and prop/game linkage still need the subsequent audit work.
 
-Next: finish suite isolation/override cases, deterministic numerical narratives
-(B-05), persist version-bound promotion evidence, and prop/game linkage. Paper
+Next: persist version-bound promotion evidence and prop/game linkage. Paper
 logging, sharp-market reference pricing, distribution/ROS models and retention
 remain later audit work. Published benchmark comparisons and the audit's model
 promotion recommendation are not sufficient evidence to bypass the real gate.

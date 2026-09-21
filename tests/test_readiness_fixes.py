@@ -96,10 +96,15 @@ async def test_latest_props_keep_separate_events(db):
 
 
 async def test_cached_narrative_is_withheld_when_event_starts(db):
+    from src.services.recommendations import generate_narrative
     game, quote = await offer(db)
-    db.add(RecommendationSnapshot(narrative='Evidence-backed text', quote_ids=[str(quote.id)]))
+    quote.line = .5  # Positive-EV quote, not the original 50/50 line at -110.
     await db.commit()
-    assert (await recommendations(db))['narrative'] == 'Evidence-backed text'
+    content = await generate_narrative(db, with_evidence=True)
+    assert content['quote_ids'] == [str(quote.id)]
+    db.add(RecommendationSnapshot(**content))
+    await db.commit()
+    assert (await recommendations(db))['narrative'] == content['narrative']
     game.status = 'in_progress'
     await db.commit()
     assert (await recommendations(db))['narrative'] is None

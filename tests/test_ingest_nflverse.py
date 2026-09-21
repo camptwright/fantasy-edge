@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
 from sqlalchemy import func, select
 
 from src.ingest.nflverse import _kickoff, ingest_games
@@ -16,6 +17,7 @@ from src.models.facts import Game, TeamMarketLine
 from src.models.identity import Team
 
 
+@pytest.mark.live
 async def test_ingest_2025_creates_285_games_with_closing_lines(db):
     written = await ingest_games(db, seasons=[2025])
     assert written > 0
@@ -40,6 +42,7 @@ async def test_ingest_2025_creates_285_games_with_closing_lines(db):
     assert lines == 285 * 6
 
 
+@pytest.mark.live
 async def test_exactly_32_teams_and_no_duplicates(db):
     await ingest_games(db, seasons=[2025])
     teams = await db.scalar(select(func.count()).select_from(Team))
@@ -59,6 +62,7 @@ async def test_was_and_wsh_resolve_to_one_washington_team(db):
     assert was.espn_id == "28"
 
 
+@pytest.mark.live
 async def test_reingest_is_idempotent(db):
     await ingest_games(db, seasons=[2025])
     first_games = await db.scalar(select(func.count()).select_from(Game))
@@ -77,6 +81,7 @@ async def test_reingest_is_idempotent(db):
     assert first_lines == second_lines, "re-ingesting the same season duplicated market lines"
 
 
+@pytest.mark.live
 async def test_moneyline_rows_carry_no_line_value(db):
     """A moneyline has a price but no handicap. Storing 0.0 would make it
     indistinguishable from a pick-em spread."""
@@ -87,6 +92,7 @@ async def test_moneyline_rows_carry_no_line_value(db):
     assert all(value is None for (value,) in rows)
 
 
+@pytest.mark.live
 async def test_spread_sign_follows_the_sportsbook_convention(db):
     """The favourite's line is NEGATIVE.
 
@@ -158,6 +164,7 @@ def test_kickoff_converts_eastern_to_utc_across_the_dst_boundary():
     assert wildcard == datetime(2025, 1, 11, 21, 30, tzinfo=timezone.utc)
 
 
+@pytest.mark.live
 async def test_totals_are_identical_on_both_sides(db):
     """Over and under share one number; only the price differs."""
     await ingest_games(db, seasons=[2025])

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 
+import pytest
 import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -45,14 +46,22 @@ _TABLES = (
 async def db() -> AsyncSession:
     engine = create_async_engine(TEST_DB_URL, poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as reset_session:
-        await reset_session.execute(
-            text(f"TRUNCATE TABLE {', '.join(_TABLES)} RESTART IDENTITY CASCADE")
-        )
-        await reset_session.commit()
     try:
-        async with factory() as session:
-            yield session
-            await session.rollback()
+        # Hold a separate connection for the test's lifetime: ingesters commit
+        # internally, so a transaction lock would release too soon. Fail fast
+        # rather than truncating a concurrent pytest process's active fixtures.
+        async with engine.connect() as guard:
+            locked = await guard.scalar(text("SELECT pg_try_advisory_lock(61420921)"))
+            if not locked:
+                pytest.fail("Another DB test is active; use a separate test database or run serially.")
+            async with factory() as reset_session:
+                await reset_session.execute(
+                    text(f"TRUNCATE TABLE {', '.join(_TABLES)} RESTART IDENTITY CASCADE")
+                )
+                await reset_session.commit()
+            async with factory() as session:
+                yield session
+                await session.rollback()
     finally:
+        # NullPool closes the guard connection, releasing its session lock.
         await engine.dispose()

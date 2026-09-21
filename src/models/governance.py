@@ -105,22 +105,12 @@ class ResultCorrection(Base, UUIDPrimaryKey):
 
 
 class RecommendationSnapshot(Base, UUIDPrimaryKey):
-    quote_ids: Mapped[list[str] | None] = mapped_column(ARRAY(String(36)), nullable=True)
-    """One row per LLM narrative-generation cycle (src/services/
-    recommendations.py), append-only like team_market_lines - kept for
-    history, not upserted.
+    """Append-only deterministic summaries, bound to quote IDs and generation time.
 
-    Deliberately carries no reference to which signals/props fed it: the
-    API layer re-fetches live /signals and /props for the actual numbers,
-    and this row's own `generated_at` is what tells a reader how fresh the
-    commentary is - the same explicit-staleness-over-silent-guessing
-    pattern src/services/reconciliation.py's freshness check already uses.
-    One combined narrative across every sport, not one per sport - a real
-    generation call through this stack's local Ollama model took ~78s
-    (verified live 2026-09-04), so five per-sport calls would eat most of
-    a 30-minute beat cycle and contend with the worker's own concurrency
-    limit against every other scheduled task.
+    Serving rechecks actionability and regenerates each quote's numeric text
+    before returning a cached summary. Legacy LLM narratives are withheld.
     """
+    quote_ids: Mapped[list[str] | None] = mapped_column(ARRAY(String(36)), nullable=True)
 
     __tablename__ = "recommendation_snapshots"
 

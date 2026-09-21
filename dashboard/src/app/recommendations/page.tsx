@@ -90,9 +90,9 @@ export default async function RecommendationsPage() {
         </p>
       )}
       <PageHeader
-        eyebrow="LLM narrative over a transparent baseline · not calibrated, not gambling advice"
+        eyebrow="Deterministic quote summaries · model estimates, not gambling advice"
         title="Recommendations"
-        description="Top signals and player props across every sport, narrated by the local model on a 30-minute refresh, plus a parlay builder for combining the picks you choose."
+        description="Actionable signals and player props summarized from their model probabilities and current prices on a 30-minute refresh, plus a parlay builder for combining the picks you choose."
       />
 
       <RecommendationsView

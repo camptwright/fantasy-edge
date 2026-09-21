@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from datetime import datetime, timedelta, timezone
 
 from src.ingest.identity import resolve_team
 from src.models.facts import PlayerGameStat
@@ -36,6 +37,7 @@ async def _dummy_game_id(db, salt: int):
     game = Game(
         sport="nfl", espn_event_id=f"proj-test-{salt}", season=2026,
         home_team_id=team.id, away_team_id=opp.id, status="final",
+        game_time=datetime.now(timezone.utc)-timedelta(days=salt+2),
     )
     db.add(game)
     await db.flush()

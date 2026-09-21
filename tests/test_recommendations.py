@@ -1,171 +1,114 @@
-"""src/services/recommendations.py - the RAG narrative pipeline.
+"""Numeric summaries do not require an LLM or API key."""
 
-The LLM call itself is mocked throughout (same pattern as
-test_theodds_key_safety.py's httpx.AsyncClient mock) - a real call through
-this stack takes ~78s, verified live 2026-09-04, which is exactly why
-generate_narrative is never called from a request/response cycle.
-"""
+from unittest.mock import AsyncMock
+import pytest
+from src.services import recommendations as service
 
-from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from sqlalchemy import select
-from src.services.quote_eligibility import confirm_quote
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+def signal():
+    return dict(
+        id="s",
+        actionable=True,
+        sport="nfl",
+        matchup="A @ B",
+        selection="B ML",
+        bookmaker="test",
+        price_american=135,
+        model_probability=0.5663,
+    )
 
-import httpx
 
-from src.ingest.identity import resolve_team
-from src.models.facts import Game, PlayerGameStat, PlayerPropLine, TeamMarketLine
-from src.models.identity import Player
-from src.models.ratings import TeamRating
-from src.services.recommendations import NO_DATA_NARRATIVE, generate_narrative
+def prop():
+    return dict(
+        id="p",
+        actionable=True,
+        sport="nfl",
+        player_name="Player",
+        stat_type="receptions",
+        line=5.5,
+        source="test",
+        over_price_american=-110,
+        under_price_american=-110,
+        model_probability=0.3,
+        under_model_probability=0.7,
+    )
 
-FAKE_SETTINGS = SimpleNamespace(
-    litellm_api_key="fake-key",
-    litellm_base_url="http://litellm:4000/v1",
-    fantasy_model_alias="worker",
+
+def test_comparison_direction_and_units_are_computed():
+    row = service.quote_summary(signal(), "signal")
+    assert "56.63% is above" in row["text"]
+    assert "42.55%" in row["text"]
+    assert "EV +33.08% per unit staked" in row["text"]
+
+
+def test_under_selection_keeps_under_odds_and_probability():
+    row = service.quote_summary(prop(), "prop")
+    assert "Under 5.5 receptions" in row["text"] and "70.00%" in row["text"]
+    assert "EV +33.64%" in row["text"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"actionable": False},
+        {"model_probability": float("nan")},
+        {"model_probability": 0.1},
+        {"price_american": None},
+        {"price_american": 0},
+        {"price_american": True},
+    ],
 )
+def test_invalid_or_unqualified_quotes_are_never_narrated(change):
+    assert service.quote_summary({**signal(), **change}, "signal") is None
+
+
+async def test_empty_data_needs_no_llm_key_or_network(monkeypatch):
+    monkeypatch.setattr(service, "signal_rows", AsyncMock(return_value=[]))
+    monkeypatch.setattr(service, "prop_rows", AsyncMock(return_value=[]))
+    result = await service.generate_narrative(None, with_evidence=True)
+    assert result == {"narrative": service.NO_DATA_NARRATIVE, "quote_ids": []}
+
+
+async def test_deterministic_order_and_exact_quote_ids(monkeypatch):
+    rows = [signal(), {**signal(), "id": "excluded", "actionable": False}]
+    monkeypatch.setattr(service, "signal_rows", AsyncMock(return_value=rows))
+    monkeypatch.setattr(service, "prop_rows", AsyncMock(return_value=[prop()]))
+    first = await service.generate_narrative(None, with_evidence=True)
+    assert first == await service.generate_narrative(None, with_evidence=True)
+    assert first["quote_ids"] == ["p", "s"]
+    assert first["narrative"].startswith(service.NARRATIVE_VERSION)
+    assert "not American odds" in first["narrative"]
+
+
+async def test_legacy_llm_cache_is_withheld():
+    from types import SimpleNamespace
+    from datetime import datetime, timezone
+
+    db = AsyncMock()
+    db.scalar.return_value = SimpleNamespace(
+        narrative="Model probability .56 is lower than .42",
+        quote_ids=[],
+        generated_at=datetime.now(timezone.utc),
+    )
+    assert (await service.get_valid_narrative(db))["narrative"] is None
 
 
 def test_prop_ranking_includes_under_only_edges():
-    from src.services.recommendations import prop_edge
-    assert prop_edge({'edge_percent': -20, 'under_edge_percent': 15}) == 15
-    assert prop_edge({'edge_percent': None, 'under_edge_percent': 8}) == 8
-    assert prop_edge({'edge_percent': 0, 'under_edge_percent': -2}) == 0
+    assert service.prop_edge({"edge_percent": -20, "under_edge_percent": 15}) == 15
 
 
-def _mock_client(content: str) -> AsyncMock:
-    fake_request = httpx.Request("POST", "http://litellm:4000/v1/chat/completions")
-    fake_response = httpx.Response(
-        200, request=fake_request, json={"choices": [{"message": {"content": content}}]}
-    )
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=fake_response)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    return mock_client
+async def test_cached_numbers_are_revalidated_even_when_quote_id_is_unchanged(monkeypatch):
+    from types import SimpleNamespace
+    from datetime import datetime, timezone
+    from uuid import uuid4
 
-
-async def test_raises_without_a_configured_api_key(db):
-    settings = SimpleNamespace(litellm_api_key="", litellm_base_url="x", fantasy_model_alias="x")
-    with patch("src.services.recommendations.get_settings", return_value=settings):
-        try:
-            await generate_narrative(db)
-            raised = False
-        except RuntimeError:
-            raised = True
-    assert raised
-
-
-async def test_skips_the_llm_call_entirely_when_there_is_nothing_to_narrate(db):
-    mock_client = _mock_client("unused")
-    with (
-        patch("src.services.recommendations.get_settings", return_value=FAKE_SETTINGS),
-        patch("src.services.recommendations.httpx.AsyncClient", return_value=mock_client),
-    ):
-        narrative = await generate_narrative(db)
-
-    assert narrative == NO_DATA_NARRATIVE
-    mock_client.post.assert_not_called()
-
-
-async def test_calls_the_llm_with_real_signal_and_prop_evidence_when_qualified(db):
-    home = await resolve_team(db, "Kansas City Chiefs")
-    away = await resolve_team(db, "Los Angeles Chargers")
-    db.add(TeamRating(team_id=home.id, sport="nfl", rating=1650.0))
-    db.add(TeamRating(team_id=away.id, sport="nfl", rating=1350.0))
-    game = Game(
-        sport="nfl", espn_event_id="rec-test-1", season=2026,
-        game_time=datetime.now(timezone.utc)+timedelta(days=1),
-        home_team_id=home.id, away_team_id=away.id, status="scheduled",
-    )
-    db.add(game)
-    await db.flush()
-    now = datetime.now(timezone.utc)
-    db.add(TeamMarketLine(game_id=game.id, market="moneyline", side="home", price_american=-150, source="pinnacle", line_type="live", observed_at=now))
-    db.add(TeamMarketLine(game_id=game.id, market="moneyline", side="away", price_american=130, source="pinnacle", line_type="live", observed_at=now))
-
-    player = Player(sport="nfl", full_name="Evidence Test Player", current_team_id=home.id)
-    db.add(player)
-    await db.flush()
-    for i, value in enumerate([250.0, 275.0, 300.0, 225.0]):
-        stat_game = Game(
-            sport="nfl", espn_event_id=f"rec-test-stat-{i}", season=2026,
-            game_time=now-timedelta(days=i+1),
-            home_team_id=home.id, away_team_id=away.id, status="final",
-        )
-        db.add(stat_game)
-        await db.flush()
-        db.add(PlayerGameStat(player_id=player.id, game_id=stat_game.id, stat_type="passing_yards", value=value))
-    db.add(
-        PlayerPropLine(
-            player_id=player.id, game_id=game.id, stat_type="passing_yards", line=200.0,
-            over_price_american=-110, under_price_american=-110,
-            source="underdog", observed_at=now,
-        )
-    )
-    await db.commit()
-
-    mock_client = _mock_client("Real narrative text.")
-    for kind, model in [('team', TeamMarketLine), ('prop', PlayerPropLine)]:
-        for quote in (await db.scalars(select(model))).all():
-            await confirm_quote(db, kind, quote)
-    await db.commit()
-    with (
-        patch("src.services.recommendations.get_settings", return_value=FAKE_SETTINGS),
-        patch("src.services.recommendations.httpx.AsyncClient", return_value=mock_client),
-    ):
-        narrative = await generate_narrative(db)
-
-    assert narrative == "Real narrative text."
-    mock_client.post.assert_awaited_once()
-    _, kwargs = mock_client.post.call_args.args, mock_client.post.call_args.kwargs
-    evidence_message = kwargs["json"]["messages"][1]["content"]
-    # The real matchup and player name must be present verbatim - the
-    # model is only ever handed real evidence, never a fabricated stand-in.
-    assert "Chiefs" in evidence_message
-    assert "Evidence Test Player" in evidence_message
-
-
-async def test_raises_on_a_blank_completion_instead_of_returning_it(db):
-    """FOUND LIVE 2026-09-05: the local Ollama model returned a real HTTP
-    200 with an empty completion (no exception to catch on its own).
-    Without a check, that empty string was written straight into a new
-    RecommendationSnapshot row, silently replacing a real cached narrative
-    with nothing - /recommendations then served "no narrative yet" even
-    though a good one existed from the prior cycle. Raising here means
-    generate_recommendations (src/scheduler/tasks.py) never persists the
-    empty result at all - the last good snapshot stays live instead."""
-    home = await resolve_team(db, "Kansas City Chiefs")
-    away = await resolve_team(db, "Los Angeles Chargers")
-    db.add(TeamRating(team_id=home.id, sport="nfl", rating=1650.0))
-    db.add(TeamRating(team_id=away.id, sport="nfl", rating=1350.0))
-    game = Game(
-        sport="nfl", espn_event_id="rec-test-blank", season=2026,
-        game_time=datetime.now(timezone.utc)+timedelta(days=1),
-        home_team_id=home.id, away_team_id=away.id, status="scheduled",
-    )
-    db.add(game)
-    await db.flush()
-    now = datetime.now(timezone.utc)
-    db.add(TeamMarketLine(game_id=game.id, market="moneyline", side="home", price_american=-150, source="pinnacle", line_type="live", observed_at=now))
-    db.add(TeamMarketLine(game_id=game.id, market="moneyline", side="away", price_american=130, source="pinnacle", line_type="live", observed_at=now))
-    await db.commit()
-
-    for blank in ("", "   \n"):
-        for quote in (await db.scalars(select(TeamMarketLine))).all():
-            await confirm_quote(db, 'team', quote)
-        await db.commit()
-        mock_client = _mock_client(blank)
-        with (
-            patch("src.services.recommendations.get_settings", return_value=FAKE_SETTINGS),
-            patch("src.services.recommendations.httpx.AsyncClient", return_value=mock_client),
-        ):
-            try:
-                await generate_narrative(db)
-                raised = False
-            except RuntimeError:
-                raised = True
-        assert raised, f"blank completion {blank!r} must raise, not be persisted"
+    row = {**signal(), "id": str(uuid4())}
+    signals = AsyncMock(return_value=[row])
+    monkeypatch.setattr(service, "signal_rows", signals)
+    monkeypatch.setattr(service, "prop_rows", AsyncMock(return_value=[]))
+    cached = await service.generate_narrative(None, with_evidence=True)
+    db = AsyncMock()
+    db.scalar.return_value = SimpleNamespace(**cached, generated_at=datetime.now(timezone.utc))
+    assert (await service.get_valid_narrative(db))["narrative"] == cached["narrative"]
+    signals.return_value = [{**row, "model_probability": 0.6}]
+    assert (await service.get_valid_narrative(db))["narrative"] is None

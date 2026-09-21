@@ -121,14 +121,18 @@ async def test_ineligible_quotes_do_not_project(db,monkeypatch,reason):
 
 
 async def test_narrative_scopes_quotes(db,monkeypatch):
+    from src.services import recommendations as service
     quote_id=str(uuid.uuid4())
-    snapshot=RecommendationSnapshot(narrative='Test',generated_at=datetime.now(timezone.utc),quote_ids=[quote_id])
+    row=dict(id=quote_id, actionable=True, line=5.5, model_probability=.7,
+             over_price_american=-110)
+    text=service.NARRATIVE_VERSION+'\n\n'+service.quote_summary(row,'prop')['text']
+    snapshot=RecommendationSnapshot(narrative=text,generated_at=datetime.now(timezone.utc),quote_ids=[quote_id])
     db.add(snapshot)
     await db.flush()
     signals=AsyncMock(return_value=[])
-    props=AsyncMock(return_value=[{'id':quote_id,'actionable':True}])
-    monkeypatch.setattr(sportsbook,'signal_rows',signals)
-    monkeypatch.setattr(sportsbook,'prop_rows',props)
-    assert (await sportsbook.recommendations(db))['narrative']=='Test'
+    props=AsyncMock(return_value=[row])
+    monkeypatch.setattr(service,'signal_rows',signals)
+    monkeypatch.setattr(service,'prop_rows',props)
+    assert (await sportsbook.recommendations(db))['narrative']==text
     props.assert_awaited_once_with(db,None,live_only=True,quote_ids={uuid.UUID(quote_id)})
     signals.assert_awaited_once_with(db,None,quote_ids={uuid.UUID(quote_id)})

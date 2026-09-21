@@ -18,6 +18,35 @@ from src.models.facts import Game, PlayerGameStat
 from src.models.identity import Player, PlayerExternalId
 
 
+@pytest.fixture(autouse=True)
+def nflverse_fixture(monkeypatch):
+    """Exercise real DB ingestion without downloading whole seasons per test."""
+    from types import SimpleNamespace
+    from src.ingest import nflverse, players
+
+    schedules = [
+        dict(game_id="2025_01_KC_LAC", home_team="LAC", away_team="KC"),
+        dict(game_id="2025_01_DAL_PHI", home_team="PHI", away_team="DAL"),
+    ]
+    schedules = [dict(row, season=2025, week=1, game_type="REG",
+                      gameday="2025-09-05", gametime="20:20",
+                      home_score=24, away_score=21) for row in schedules]
+    provider = SimpleNamespace(
+        load_schedules=lambda seasons: schedules,
+        load_players=lambda: [
+            dict(gsis_id="00-0033873", display_name="Patrick Mahomes", position="QB"),
+            dict(gsis_id="test-buf", display_name="Josh Allen", position="QB"),
+            dict(gsis_id="test-jax", display_name="Josh Allen", position="DE"),
+        ],
+        load_player_stats=lambda seasons: [
+            dict(player_id="00-0033873", season=2025, week=1, team="KC",
+                 season_type="REG", passing_yards=250, passing_tds=2),
+        ],
+    )
+    monkeypatch.setattr(nflverse, "_nflreadpy", lambda: provider)
+    monkeypatch.setattr(players, "_nflreadpy", lambda: provider)
+
+
 async def test_both_josh_allens_are_distinct_players(db):
     await ingest_players(db)
     rows = await db.execute(select(Player).where(Player.full_name.ilike("josh allen")))

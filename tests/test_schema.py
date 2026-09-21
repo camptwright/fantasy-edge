@@ -1,4 +1,4 @@
-"""The migration must produce exactly the ten tables the spec names."""
+"""The migrated schema must contain the complete application table set."""
 
 from __future__ import annotations
 
@@ -21,6 +21,12 @@ EXPECTED_TABLES = {
     "team_ratings",
     "recommendation_snapshots",
     "calibration_reports",
+    "quote_availability",
+    "result_sync_states",
+    "result_corrections",
+    "ledger_bets",
+    "ledger_events",
+    "ledger_policies",
 }
 
 

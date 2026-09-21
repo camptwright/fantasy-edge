@@ -744,11 +744,9 @@ async def build_parlay(request: ParlayBuildRequest, db: AsyncSession = Depends(g
 
 @router.get("/recommendations")
 async def recommendations(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    """The latest cached LLM narrative (src/services/recommendations.py),
-    generated on a Celery schedule - never computed live in this request. A
-    real generation call through this stack's local Ollama model takes
-    ~78s, so this is always a fast read of the most recent
-    RecommendationSnapshot row, not an LLM call.
+    """The latest cached deterministic quote summary, generated on a Celery
+    schedule. This request revalidates its quote evidence and numeric text;
+    neither generation nor serving calls an LLM.
 
     The freshness/quote-evidence gate itself lives in
     recommendations.get_valid_narrative - shared with

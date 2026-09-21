@@ -1,28 +1,13 @@
-"""LLM narrative generation over real signals/props - a RAG pipeline, not
-model fine-tuning. The model only narrates and ranks already-computed
-evidence; it never produces its own probability/EV numbers - those keep
-coming from src/services/elo.py/totals.py/projections.py via the exact same
-signal_rows/prop_rows this app's /signals and /props already serve.
-Mirrors src/api/main.py's fantasy_advice endpoint's evidence-only framing.
-
-One combined narrative across every sport, not one per sport - a real
-generation call through this stack's local Ollama model took ~78s
-(verified live 2026-09-04, no GPU acceleration for a 9B model on this Mac
-mini), so five per-sport calls would eat most of a 30-minute beat cycle.
-See src/scheduler/tasks.py's fantasy.generate_recommendations, which is
-the only caller - this never runs inside an HTTP request/response cycle.
-"""
+"""Deterministic, quote-bound numeric summaries. No LLM or external calls."""
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
 
-import httpx
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config.settings import get_settings
 from src.api.routers.sportsbook import prop_rows, signal_rows
 
 _TOP_N = 8
@@ -36,124 +21,98 @@ _NARRATIVE_MAX_AGE_SECONDS = 2700
 
 
 def prop_edge(row):
-    return max((row.get(k) for k in ('edge_percent', 'under_edge_percent')
-                if row.get(k) is not None), default=float('-inf'))
+    return max(
+        (row.get(k) for k in ("edge_percent", "under_edge_percent") if row.get(k) is not None),
+        default=float("-inf"),
+    )
 
-_SYSTEM_PROMPT = (
-    "You are a sports betting analyst. Use only the supplied JSON evidence - "
-    "never invent a probability, price, or player detail not present in it. "
-    "Identify the most interesting signals and props across every sport "
-    "given, explain briefly why each stands out (edge percent, and model "
-    "probability versus the market's implied probability where given), and "
-    "group your write-up by sport. State plainly that these are "
-    "probabilistic edges from a transparent baseline model, not calibrated "
-    "predictions or guaranteed outcomes, and that this is not gambling "
-    "advice."
+
+NARRATIVE_VERSION = "Deterministic quote summary (v1)"
+NO_DATA_NARRATIVE = (
+    "No positive-EV, actionable quotes with valid model probabilities are available."
 )
 
-NO_DATA_NARRATIVE = "No priced signals or qualified props are available yet."
+
+def _priced(probability, price):
+    from src.services.roster_stat_model import finite
+    from src.utils.odds_math import american_to_implied, expected_value_percent
+
+    if not finite(probability) or not 0 < probability < 1 or not finite(price) or abs(price) < 100:
+        return None
+    ev = expected_value_percent(probability, price)
+    return (probability, price, american_to_implied(price), ev) if ev > 0 else None
+
+
+def _label(value):
+    # Provider text is a label, never executable instructions or multi-line prose.
+    return " ".join(str(value or "").split())[:180]
+
+
+def quote_summary(row, kind):
+    if row.get("actionable") is not True or not row.get("id"):
+        return None
+    if kind == "signal":
+        priced = _priced(row.get("model_probability"), row.get("price_american"))
+        label = f"{_label(row.get('matchup'))}: {_label(row.get('selection'))}"
+        book = row.get("bookmaker")
+    else:
+        from src.services.roster_stat_model import finite
+
+        if not finite(row.get("line")):
+            return None
+        choices = []
+        for side, key in (("Over", "model_probability"), ("Under", "under_model_probability")):
+            value = _priced(row.get(key), row.get(side.lower() + "_price_american"))
+            if value:
+                choices.append((value[3], side, value))
+        if not choices:
+            return None
+        _, side, priced = max(choices, key=lambda x: (x[0], x[1]))
+        label = f"{_label(row.get('player_name'))}: {side} {row['line']:g} {_label(row.get('stat_type'))}"
+        book = row.get("source")
+    if priced is None:
+        return None
+    probability, price, implied, ev = priced
+    model_pct, implied_pct = round(100 * probability, 2), round(100 * implied, 2)
+    comparison = (
+        "above"
+        if model_pct > implied_pct
+        else "below"
+        if model_pct < implied_pct
+        else "approximately equal to"
+    )
+    text = (
+        f"{_label(row.get('sport')).upper()} · {label} · {_label(book)} {price:+g}. "
+        f"Model probability {model_pct:.2f}% is {comparison} the price-implied "
+        f"break-even probability {implied_pct:.2f}%. Estimated EV {ev:+.2f}% per unit staked."
+    )
+    return {"id": row["id"], "text": text, "ev": ev}
 
 
 async def generate_narrative(db: AsyncSession, *, with_evidence=False):
-    settings = get_settings()
-    if not settings.litellm_api_key:
-        raise RuntimeError("LITELLM_API_KEY is not configured")
-
-    signals = sorted(
-        (row for row in await signal_rows(db, sport=None) if row.get('actionable') and row["price_american"] is not None),
-        key=lambda row: row["ev_percent"],
-        reverse=True,
-    )[:_TOP_N]
-    props = sorted(
-        (row for row in await prop_rows(db, sport=None, live_only=True)
-         if row.get('actionable') and prop_edge(row) != float('-inf')),
-        key=prop_edge,
-        reverse=True,
-    )[:_TOP_N]
-
-    if not signals and not props:
-        # Nothing to narrate yet - skip the ~78s round trip entirely rather
-        # than asking the model to comment on empty evidence.
-        return {'narrative': NO_DATA_NARRATIVE, 'quote_ids': []} if with_evidence else NO_DATA_NARRATIVE
-
-    evidence = {
-        "signals": [
-            {
-                "sport": row["sport"],
-                "matchup": row["matchup"],
-                "market": row["market"],
-                "selection": row["selection"],
-                "price_american": row["price_american"],
-                "model_probability": row["model_probability"],
-                "implied_probability": row["implied_probability"],
-                "ev_percent": row["ev_percent"],
-            }
-            for row in signals
-        ],
-        "props": [
-            {
-                "sport": row["sport"],
-                "player_name": row["player_name"],
-                "stat_type": row["stat_type"],
-                "line": row["line"],
-                "projection": row["projection"],
-                "edge_percent": row["edge_percent"],
-                "under_edge_percent": row.get("under_edge_percent"),
-                "over_price_american": row.get("over_price_american"),
-                "under_price_american": row.get("under_price_american"),
-                "source": row.get("source"),
-            }
-            for row in props
-        ],
-    }
-
-    # 180s wasn't enough live: a real 5-sport, 16-item evidence payload
-    # (the realistic case, not the 1-signal smoke test that measured ~78s)
-    # timed out against it. 480s gives real headroom - this always runs
-    # from a Celery task on a 30-minute cadence, never a request/response
-    # cycle, so a slow generation just delays this cycle's row, not a user.
-    async with httpx.AsyncClient(base_url=settings.litellm_base_url, timeout=480) as client:
-        response = await client.post(
-            "/chat/completions",
-            headers={"Authorization": f"Bearer {settings.litellm_api_key}"},
-            json={
-                "model": settings.fantasy_model_alias,
-                "messages": [
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": str(evidence)},
-                ],
-                "temperature": 0.2,
-                # FOUND LIVE 2026-09-05: this model is a "thinking" model
-                # that emits its chain-of-thought as a separate
-                # `reasoning_content` field before ever writing the real
-                # answer into `content`. Verified live: a 1-signal prompt
-                # finished in ~2.4k total tokens with real content; the
-                # real 16-item, 5-sport evidence payload burns enough
-                # reasoning tokens that without headroom the response gets
-                # cut off while still "thinking" - content empty,
-                # reasoning_content populated, finish_reason cut short.
-                # No max_tokens was set before, so this rode whatever
-                # Ollama's own num_predict default is - too small for this
-                # model's reasoning overhead at real evidence size.
-                "max_tokens": 8000,
-            },
+    summaries = []
+    for kind, rows in (
+        ("signal", await signal_rows(db, sport=None)),
+        ("prop", await prop_rows(db, sport=None, live_only=True)),
+    ):
+        summaries.extend(s for row in rows if (s := quote_summary(row, kind)) is not None)
+    summaries = sorted(summaries, key=lambda s: (-s["ev"], s["id"]))[:_TOP_N]
+    content = (
+        (
+            NARRATIVE_VERSION
+            + "\n\n"
+            + "\n\n".join(s["text"] for s in summaries)
+            + "\n\nModel estimates are not guarantees. Price-implied probability includes bookmaker margin; "
+            "EV is a percentage of stake, not American odds. No wager is placed."
         )
-        response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
-    if not content.strip():
-        # FOUND LIVE 2026-09-05: the local Ollama model occasionally returns
-        # a real HTTP 200 with an empty completion (no error to catch, no
-        # exception to raise on its own). Without this check that empty
-        # string got written straight into a new RecommendationSnapshot row,
-        # silently replacing a real, useful cached narrative with nothing -
-        # /recommendations then serves "no narrative yet" even though a good
-        # one existed a cycle ago. Raising here routes through the Celery
-        # task's existing try/except+notify and, critically, means the
-        # failed generate_recommendations run never calls db.add() at all -
-        # the last good snapshot stays live instead of being overwritten by
-        # a worse one.
-        raise RuntimeError("LLM returned an empty narrative")
-    return {'narrative': content, 'quote_ids': [r['id'] for r in signals+props]} if with_evidence else content
+        if summaries
+        else NO_DATA_NARRATIVE
+    )
+    return (
+        {"narrative": content, "quote_ids": [s["id"] for s in summaries]}
+        if with_evidence
+        else content
+    )
 
 
 async def get_valid_narrative(db: AsyncSession) -> dict:
@@ -186,6 +145,15 @@ async def get_valid_narrative(db: AsyncSession) -> dict:
     if snapshot is None:
         return {"narrative": None, "generated_at": None, "note": "no recommendation generated yet"}
 
+    if snapshot.narrative != NO_DATA_NARRATIVE and not snapshot.narrative.startswith(
+        NARRATIVE_VERSION + "\n\n"
+    ):
+        return {
+            "narrative": None,
+            "generated_at": snapshot.generated_at.isoformat(),
+            "note": "Legacy non-deterministic narrative withheld; refresh pending.",
+        }
+
     age = (datetime.now(timezone.utc) - snapshot.generated_at).total_seconds()
     if snapshot.quote_ids is None or not 0 <= age <= _NARRATIVE_MAX_AGE_SECONDS:
         return {
@@ -203,7 +171,11 @@ async def get_valid_narrative(db: AsyncSession) -> dict:
         try:
             ids = {uuid.UUID(value) for value in snapshot.quote_ids}
         except (ValueError, TypeError, AttributeError):
-            return {"narrative": None, "generated_at": snapshot.generated_at.isoformat(), "note": "Invalid quote evidence."}
+            return {
+                "narrative": None,
+                "generated_at": snapshot.generated_at.isoformat(),
+                "note": "Invalid quote evidence.",
+            }
         if len(ids) > 200:
             return {
                 "narrative": None,
@@ -211,11 +183,13 @@ async def get_valid_narrative(db: AsyncSession) -> dict:
                 "note": "Quote evidence exceeds validation limit.",
             }
 
-        current = {
-            r["id"]
-            for r in (await signal_rows(db, None, quote_ids=ids)) + (await prop_rows(db, None, live_only=True, quote_ids=ids))
-            if r.get("actionable")
-        }
+        summaries = []
+        for kind, rows in (
+            ("signal", await signal_rows(db, None, quote_ids=ids)),
+            ("prop", await prop_rows(db, None, live_only=True, quote_ids=ids)),
+        ):
+            summaries.extend(s for row in rows if (s := quote_summary(row, kind)) is not None)
+        current = {s["id"] for s in summaries if s["text"] in snapshot.narrative}
         if not set(snapshot.quote_ids).issubset(current):
             return {
                 "narrative": None,

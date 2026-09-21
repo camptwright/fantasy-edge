@@ -385,16 +385,17 @@ async def test_recommendations_reports_the_gap_when_nothing_has_been_generated(d
 
 async def test_recommendations_returns_the_latest_snapshot(db):
     from src.models.governance import RecommendationSnapshot
+    from src.services.recommendations import NO_DATA_NARRATIVE
 
     db.add(RecommendationSnapshot(narrative="Older narrative.", generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc)))
-    db.add(RecommendationSnapshot(narrative="Newest narrative.", quote_ids=[], generated_at=datetime.now(timezone.utc)))
+    db.add(RecommendationSnapshot(narrative=NO_DATA_NARRATIVE, quote_ids=[], generated_at=datetime.now(timezone.utc)))
     await db.commit()
 
     client = await _client(db)
     try:
         response = await client.get("/recommendations")
         body = response.json()
-        assert body["narrative"] == "Newest narrative."
+        assert body["narrative"] == NO_DATA_NARRATIVE
     finally:
         app.dependency_overrides.clear()
 

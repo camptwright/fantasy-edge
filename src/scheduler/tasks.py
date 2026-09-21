@@ -234,9 +234,7 @@ def check_data_health() -> dict[str, int]:
 
 @celery_app.task(name="fantasy.generate_recommendations")
 def generate_recommendations() -> dict[str, int]:
-    """Runs the ~78s LLM narrative generation (src/services/
-    recommendations.py) and persists it - the only place this ever runs;
-    GET /recommendations just reads the latest row this writes."""
+    """Persist deterministic quote summaries; GET only reads validated snapshots."""
 
     async def run() -> int:
         async with get_worker_db() as db:
