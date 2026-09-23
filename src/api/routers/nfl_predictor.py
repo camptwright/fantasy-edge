@@ -82,6 +82,17 @@ async def nfl_predictor(db: AsyncSession = Depends(get_db)):
         elif g.status=='scheduled' and (g.game_time is None or g.game_time>now):
             scheduled.append(row)
     predictions = await run_in_threadpool(predict_games,artifact,scheduled,results)
+    from src.services.nfl_lab_registry import market_reference
+    from src.services.nfl_epa_feed import latest_features
+    game_by_id={str(g.id):g for g in games}
+    for row in predictions:
+        if row.get('home_probability') is None:continue
+        market=await market_reference(db,game_by_id[row['id']],now)
+        row['market_reference']=market
+        row['market_blend_candidate_home_probability']=(.75*row['home_probability']+.25*market['probability']) if market else None
+        row['market_blend_status']='research_only_unvalidated' if market else 'missing_fresh_sharp_market'
+        row['epa_features']=await run_in_threadpool(latest_features,row['home'],row['away'],now)
+        row['serving_promoted']=False
     return {'status':'experimental','generated_at':now.isoformat(),'version':artifact['version'],
             'recipe':artifact['recipe'],'training_games':artifact['training_games'],
             'history_games':artifact['history_games'],'history_through':artifact['history_through'],

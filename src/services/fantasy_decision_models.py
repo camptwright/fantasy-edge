@@ -116,7 +116,9 @@ def historical_candidate(rows, scoring):
         complete=[r for r in rows if all(finite(r['values'].get(CORE[k])) for k in modeled)]
     complete=sorted(complete,key=lambda r:(r['time'],r['game_id']))[-20:]
     if not modeled or len(complete)<8:
-        return {'status':'insufficient_history','games':len(complete),'missing_scoring_keys':unsupported,
+        return {'status':'insufficient_history','games':len(complete) if modeled else 0,'missing_scoring_keys':unsupported,
+                'available_games':len(rows),
+                'missing_category_counts':{k:sum(not finite(r['values'].get(CORE[k])) for r in rows) for k in weights if k in CORE},
                 'per_game':None,'modeled_subtotal':None}
     totals=[sum(r['values'][CORE[k]]*w for k,w in modeled.items()) for r in complete]
     baseline=fmean(totals)
@@ -126,6 +128,9 @@ def historical_candidate(rows, scoring):
         workload=prediction['workload_candidate']
         candidate+=w*(workload['mean'] if workload['status']=='ready' else prediction['baseline'])
     return {'status':'partial_scoring' if unsupported else 'candidate','games':len(complete),
+            'score_samples':totals if not unsupported else [],
+            'available_games':len(rows),
+            'missing_category_counts':{k:sum(not finite(r['values'].get(CORE[k])) for r in rows) for k in weights if k in CORE},
             'missing_scoring_keys':unsupported,'per_game':round(candidate,2) if not unsupported else None,
             'modeled_subtotal':round(candidate,2),'baseline_subtotal':round(baseline,2),
             'scoring_weights':{CORE[k]:w for k,w in modeled.items()},'conditional_on_playing':True}
@@ -166,6 +171,17 @@ async def build(db, league_id, *, include_catalog=False):
         .order_by(SleeperLeagueSnapshot.week.desc(),SleeperLeagueSnapshot.synced_at.desc()))).all()
     latest={}
     for row in snapshots: latest.setdefault(row.kind,row)
+    # A newer projection alone must not be paired with last week's opponent.
+    common=sorted({s.week for s in snapshots if s.kind=='projections'} &
+                  {s.week for s in snapshots if s.kind=='matchups'},reverse=True)
+    games=(await db.scalars(select(Game).where(Game.sport=='nfl',Game.season==int(league.season),
+        or_(Game.game_type.is_(None),Game.game_type=='REG')))).all()
+    upcoming=sorted({g.week for g in games if g.week and g.status=='scheduled' and g.game_time and g.game_time>now})
+    selected_week=upcoming[0] if upcoming and upcoming[0] in common else next(
+        (w for w in common if not upcoming or w<=upcoming[0]),None)
+    if selected_week is not None:
+        for kind in ('projections','matchups'):
+            latest[kind]=next(s for s in snapshots if s.kind==kind and s.week==selected_week)
     meta=latest.get('player_metadata'); proj=latest.get('projections'); matchup=latest.get('matchups'); account=latest.get('account')
     if not all((meta,proj,matchup,account)): return {'status':'missing_snapshots','players':[]}
     catalog=meta.payload if isinstance(meta.payload,dict) else {}
@@ -191,8 +207,6 @@ async def build(db, league_id, *, include_catalog=False):
     teams=(await db.scalars(select(Team).where(Team.sport=='nfl'))).all()
     alias={'LA':'LAR','WSH':'WAS','JAC':'JAX'}
     team_by_abbr={alias.get(t.nflverse_abbr,t.nflverse_abbr):t.id for t in teams}
-    games=(await db.scalars(select(Game).where(Game.sport=='nfl',Game.season==int(league.season),
-        or_(Game.game_type.is_(None),Game.game_type=='REG')))).all()
     history=defaultdict(dict)
     facts=(await db.execute(select(PlayerGameStat,Game).join(Game,Game.id==PlayerGameStat.game_id).where(
         PlayerGameStat.player_id.in_([p.id for p in resolved.values()]),Game.sport=='nfl',
@@ -237,31 +251,93 @@ async def build(db, league_id, *, include_catalog=False):
             'identity_status':'exact' if canonical else 'unresolved','ros':ros_value(h,pg,now,schedule_complete=schedule_coverage['complete'] and team is not None),
             'locked':len([g for g in pg if g.week==week])!=1 or any(g.week==week and (g.game_time is None or g.game_time<=now or g.status!='scheduled') for g in pg)})
     by_id={p['player_id']:p for p in players}
+    from src.services.fantasy_score_history import distributions,scoring_hash
+    official_rules=league.raw.get('scoringSettings') if league.platform=='espn' else None
+    platform_history=distributions(snapshots,league.scoring_settings,league.season,week,now,official_rules)
+    specialist_history={}
+    if league.platform=='sleeper':
+        from src.services.fantasy_component_history import ARCHIVE_ID,distributions as component_distributions
+        archives=(await db.scalars(select(SleeperLeagueSnapshot).where(SleeperLeagueSnapshot.league_id==ARCHIVE_ID))).all()
+        specialist_history=component_distributions(archives,snapshots,league.scoring_settings,league.season,week,now)
+    for p in players:
+        h=p['ros']['per_game']
+        p['score_samples']=h.get('score_samples',[])
+        p['distribution_evidence']=platform_history.get(p['player_id'],
+            {'status':'missing_platform_history','games':0,'score_samples':[]})
+        p['distribution_source']='complete_component_history' if p['score_samples'] else None
+        if not p['score_samples'] and p['distribution_evidence']['score_samples']:
+            p['score_samples']=p['distribution_evidence']['score_samples']
+            p['distribution_source']='league_scored_provider_history'
+        if not p['score_samples'] and p['player_id'] in specialist_history:
+            p['distribution_evidence']=specialist_history[p['player_id']]
+            p['score_samples']=p['distribution_evidence']['score_samples']
+            if p['score_samples']:p['distribution_source']='reconciled_sleeper_component_history'
+        if not p['score_samples'] and p['position'] in ('K','DEF'):
+            p['distribution_evidence']={**p['distribution_evidence'],
+                'status':'assumed_position_prior','recipe':'explicit_specialist_default_v1',
+                'standard_deviation':5.0 if p['position']=='K' else 7.0,
+                'label':'Explicit unvalidated default, not measured player variance',
+                'uses_synthetic_history':False}
+            p['distribution_source']='assumed_specialist_default'
+        p['is_mine']=p['player_id'] in set(map(str,mine.players))
+        p['decision_tier']='estimated' if p['weekly_evidence']['status']=='pregame_provider_projection' else 'ranked_only'
+        p['decision_points']=p['weekly_points'] if p['decision_tier']=='estimated' else None
+        p['decision_source']='fresh_provider_projection' if p['decision_points'] is not None else 'unpriced_roster_context'
+        # A missing provider row can fall back to recent complete same-rule
+        # history, but stale feeds, unknown games and partial scoring cannot.
+        if (p['decision_points'] is None and not stale and proj.week==week and not p['locked']
+            and h.get('status')=='candidate' and finite(h.get('per_game')) and p['history_through']
+            and 0<=(now-datetime.fromisoformat(p['history_through'])).total_seconds()<=28*86400):
+            p['decision_points']=h['per_game']
+            p['decision_tier']='estimated_history'
+            p['decision_source']='recent_complete_history_conditional_on_playing'
+        p['history_diagnostics']={'eligible_games':len(history[resolved[p['player_id']].id]) if p['player_id'] in resolved else 0,
+            'complete_scored_games':h.get('games',0),'missing_scoring_keys':h.get('missing_scoring_keys',[]),
+            'missing_category_counts':h.get('missing_category_counts',{}),
+            'identity_status':p['identity_status'], 'position_supported':p['position'] in ('QB','RB','WR','TE')}
     mine_players=[by_id[str(pid)] for pid in mine.players]
     matchrows=matchup.payload if isinstance(matchup.payload,list) else []
     mymatch=next((r for r in matchrows if r.get('roster_id')==mine.roster_id),{})
     opponent=next((r for r in matchrows if mymatch.get('matchup_id') is not None and r.get('matchup_id')==mymatch['matchup_id'] and r.get('roster_id')!=mine.roster_id),None)
     def total(ids):
-        vals=[by_id.get(str(pid),{}).get('weekly_points') for pid in ids]
+        vals=[by_id.get(str(pid),{}).get('decision_points') for pid in ids]
         return round(sum(vals),2) if vals and all(finite(v) for v in vals) else None
     a=total(mymatch.get('starters',[])); b=total(opponent.get('starters',[])) if opponent else None
     # Unknown team/game binding is not an inferred bye or an unlocked player.
     matchup_bound=bool(opponent) and all(not by_id.get(str(pid),{}).get('locked',True)
         for pid in mymatch.get('starters',[])+(opponent.get('starters',[]) if opponent else []))
+    planning_weeks=sorted({g.week for g in games if g.week and g.status=='scheduled' and g.game_time and g.game_time>now})
+    from src.services.fantasy_simulation import evaluate
+    simulation=evaluate(players,list(map(str,mymatch.get('starters',[]))),
+        list(map(str,opponent.get('starters',[]))) if opponent else [],league.roster_positions)
+    from src.services.fantasy_locks import lineup as locked_lineup, waivers as locked_waivers
+    starters=list(map(str,mymatch.get('starters',[])))
+    decisions_fresh=not stale and proj.week==week
+    lineup_decision=locked_lineup(mine_players,league.roster_positions,starters) if decisions_fresh else {
+        'status':'stale_inputs','lineup':[],'total':None,'unlocked_points':None}
     return {'status':'candidate','league_id':league_id,'league_name':league.name,'week':week,'generated_at':now.isoformat(),
         'roster_positions':league.roster_positions,
+        'planning_week':planning_weeks[0] if planning_weeks else None,
+        'planning_status':'aligned' if planning_weeks and planning_weeks[0]==week else 'awaiting_matching_week_snapshots',
+        'lineup_simulation':simulation,
+        'lineup_decision':lineup_decision,
+        'matchup_rosters':{'mine':mymatch,'opponent':opponent},
+        'fallback_rankings':[{ 'player_id':p['player_id'],'name':p['name'],'tier':p['decision_tier'],
+            'points':p['decision_points'],'locked':p['locked']} for p in sorted(players,
+                key=lambda p:(p['decision_points'] is None,-(p['decision_points'] or 0),p['name']))],
         'rosters':[{'roster_id':r.roster_id,'name':r.team_name or str(r.roster_id),'is_mine':r is mine,
                     'player_ids':list(map(str,r.players))} for r in rosters],
         'input_timestamps':{kind:row.synced_at.isoformat() for kind,row in latest.items() if kind in ('player_metadata','projections','matchups')},
-        'model_version':'fantasy_decisions_v2','serving_replaced':False,'scoring_settings':league.scoring_settings,
+        'model_version':'fantasy_decisions_v4','serving_replaced':False,'scoring_settings':league.scoring_settings,
+        'scoring_contract_hash':scoring_hash(league.scoring_settings,official_rules),
         'coverage':{'stale_inputs':stale,'projection_week':proj.week,'weekly_decisions_open':weekly_open,
                     'schedule':schedule_coverage,'scheduled_rows':len(games),'player_pool':len(players),'free_agent_candidates':len(free),
                     'history_statuses':dict(Counter(p['ros']['per_game']['status'] for p in players))},
-        'matchup':{'status':'pregame_candidate' if weekly_open and matchup_bound and a is not None and b is not None else 'withheld',
+        'matchup':{'status':'pregame_candidate' if not stale and proj.week==week and matchup_bound and a is not None and b is not None else 'withheld',
                    'your_pregame_projection':a,'opponent_pregame_projection':b,
-                   'projected_margin':round(a-b,2) if weekly_open and matchup_bound and a is not None and b is not None else None,
+                   'projected_margin':round(a-b,2) if not stale and proj.week==week and matchup_bound and a is not None and b is not None else None,
                    'win_probability':None,'reason':'Pregame only; no calibrated win probability or remaining-points model. Started games, stale inputs and missing projections block decisions.'},
-        'waivers':waiver_moves(mine_players,[by_id[p] for p in free],league.roster_positions,set(map(str,mine.starters))) if weekly_open else {'status':'withheld_stale_or_started_week','moves':[]},
+        'waivers':locked_waivers(mine_players,[by_id[p] for p in free],league.roster_positions,starters) if decisions_fresh else {'status':'withheld_stale_inputs','moves':[]},
         'validation_lineups':{'your_starters':mymatch.get('starters',[]),'opponent_starters':opponent.get('starters',[]) if opponent else [],
             'games':[{'id':str(g.id),'kickoff':g.game_time.isoformat() if g.game_time else None} for g in week_games]},
         'players':players,'notes':['Read-only candidates; no lineup, waiver claim or trade is submitted.',

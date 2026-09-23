@@ -115,7 +115,7 @@ async def poll_team_markets(db: AsyncSession, redis: Redis, sport: str = "nfl") 
                 continue
             for entry in _rows_for(event):
                 if await record_team_line(
-                    db, game_id=game.id, source=SOURCE, line_type="live", **entry
+                    db, game_id=game.id, line_type="live", **entry
                 ):
                     run.rows_written += 1
         await db.commit()
@@ -146,6 +146,19 @@ async def _match_game(db: AsyncSession, event: dict[str, Any], sport: str = "nfl
 
 
 def _rows_for(event: dict[str, Any]) -> list[dict[str, Any]]:
+    """Preserve book identity; never relabel historical generic observations."""
+    import re
+    rows = []
+    for book in event.get('bookmakers') or []:
+        key = book.get('key', '')
+        if not isinstance(key, str) or not re.fullmatch(r'[a-z0-9_]{1,24}', key):
+            continue
+        rows.extend(dict(row, source=f'theodds_{key}') for row in
+                    _book_rows(dict(event, bookmakers=[book])))
+    return rows
+
+
+def _book_rows(event: dict[str, Any]) -> list[dict[str, Any]]:
     """Flatten one event's bookmaker blocks into line rows.
 
     Response shape: event.bookmakers[].markets[].outcomes[], where an outcome
@@ -153,10 +166,7 @@ def _rows_for(event: dict[str, Any]) -> list[dict[str, Any]]:
     outcomes are named by full team name; totals outcomes are named Over and
     Under.
 
-    Only the first bookmaker is taken. Storing every book would multiply row
-    volume without helping: this feed exists to corroborate ESPN, and a
-    consensus across books is a modelling decision for Plan 2, not an
-    ingestion one.
+    The caller supplies exactly one bookmaker and attaches its identity.
 
     SIGN: verified 2026-08-21 against a live fixture
     (tests/fixtures/theodds_nfl.json, event 0 - Seahawks -3.5/-185 favourite

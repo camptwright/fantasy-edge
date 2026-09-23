@@ -577,6 +577,32 @@ async def signals(sport: str | None = Query(default=None), db: AsyncSession = De
     return await signal_rows(db, sport)
 
 
+@router.get('/markets/price-comparisons')
+async def price_comparisons(sport: str | None = None, kind: str = 'both', db: AsyncSession = Depends(get_db)):
+    """Separate sharp fair-value evidence from executable target-book prices."""
+    from src.services.sharp_pricing import comparisons
+    if kind not in ('both','team','player'):
+        raise HTTPException(422,'kind must be both, team, or player')
+    stmt = select(TeamMarketLine, Game).join(Game, Game.id == TeamMarketLine.game_id).where(
+        Game.status == 'scheduled', TeamMarketLine.market.in_(_MODELED_MARKETS))
+    if sport:
+        stmt = stmt.where(Game.sport == sport)
+    keys = (TeamMarketLine.game_id, TeamMarketLine.market, TeamMarketLine.side, TeamMarketLine.source)
+    stmt = stmt.distinct(*keys).order_by(*keys, TeamMarketLine.observed_at.desc(), TeamMarketLine.id.desc())
+    rows = (await db.execute(stmt)).all()
+    seen = await availability(db, 'team', [line.id for line, _ in rows])
+    fresh = [(line, game) for line, game in rows if exclusion(game, line, seen.get(line.id)) is None]
+    items = [{**r,'kind':'team'} for r in comparisons(fresh)] if kind!='player' else []
+    from src.services.prop_price_comparisons import load as prop_comparisons
+    props = await prop_comparisons(db,sport) if kind!='team' else {'items':[],'fresh_quotes':0}
+    items += props['items']
+    items.sort(key=lambda r:(-r['ev_percent'],r['id'],r['side']))
+    team_count=len(fresh) if kind!='player' else 0
+    return {'items': items, 'fresh_quotes': team_count+props['fresh_quotes'], 'actionable': 0,
+            'coverage':{'team_fresh_quotes':team_count,'player_fresh_quotes':props['fresh_quotes']},
+            'note': 'Exact-line research comparisons only; no strategy approval or regional book availability implied.'}
+
+
 @router.get("/odds/{game_id}/history")
 async def odds_history(
     game_id: uuid.UUID,

@@ -17,6 +17,10 @@ def test_celery_schedule_covers_every_ingestion_source():
     API and Underdog as team-market/props sources."""
     scheduled = celery_app.conf.beat_schedule
     assert {item["task"] for item in scheduled.values()} == {
+        "fantasy.research_shadow",
+        "fantasy.register_nfl_lab",
+        "fantasy.refresh_nfl_stats",
+        "fantasy.raw_retention_report",
         "fantasy.archive_rosters",
         "fantasy.sync_fantasy_market",
         "fantasy.archive_event_weather",

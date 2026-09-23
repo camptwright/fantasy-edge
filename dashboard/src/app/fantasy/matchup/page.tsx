@@ -1,8 +1,8 @@
 import Link from "next/link";
 
 type League = { league_id: string; name: string; settings: Record<string, unknown> };
-type Player = { player_id: string; name: string; position: string | null; team: string | null; projected_points: number; custom_projected_points: number | null };
-type Side = { roster_id: number; starters: Player[]; bench?: Player[]; points: number; projected_points: number };
+type Player = { player_id: string; name: string; position: string | null; team: string | null; projected_points: number | null; custom_projected_points: number | null };
+type Side = { roster_id: number; starters: Player[]; bench?: Player[]; points: number; projected_points: number | null };
 type Matchup = { week: number; your_roster: Side; opponent: Side | null };
 export const dynamic = "force-dynamic";
 
@@ -16,7 +16,7 @@ async function api<T>(path: string): Promise<T | null> {
 
 function Lineup({ title, side, bench = false }: { title: string; side: Side | null; bench?: boolean }) {
   const players = bench ? side?.bench ?? [] : side?.starters ?? [];
-  return <section className="rounded-xl border border-slate-800 bg-slate-900"><header className="flex items-center justify-between gap-3 border-b border-slate-800 px-5 py-4"><h2 className="font-semibold">{title}</h2>{!bench && <span className="shrink-0 text-right"><span className="block font-mono text-emerald-300">{side?.points.toFixed(1) ?? "—"}</span><small className="block whitespace-nowrap text-slate-500">proj {side?.projected_points.toFixed(1) ?? "—"}</small></span>}</header>{players.length ? players.map((player) => <div key={player.player_id} className="flex items-center justify-between gap-3 border-b border-slate-800 px-5 py-3 last:border-0"><strong className="min-w-0 flex-1 truncate text-sm">{player.name}</strong><span className="flex shrink-0 items-center gap-3 text-xs text-slate-400"><span className="hidden whitespace-nowrap sm:inline">{[player.position, player.team].filter(Boolean).join(" · ")}</span><span className="text-right"><b className="block whitespace-nowrap font-mono text-emerald-300">{player.projected_points.toFixed(1)}</b><small className="block whitespace-nowrap text-slate-500">{player.custom_projected_points === null ? "model n/a" : `model ${player.custom_projected_points.toFixed(1)}`}</small></span></span></div>) : <p className="p-5 text-sm text-slate-500">No players available.</p>}</section>;
+  return <section className="rounded-xl border border-slate-800 bg-slate-900"><header className="flex items-center justify-between gap-3 border-b border-slate-800 px-5 py-4"><h2 className="font-semibold">{title}</h2>{!bench && <span className="shrink-0 text-right"><span className="block font-mono text-emerald-300">{side?.points.toFixed(1) ?? "—"}</span><small className="block whitespace-nowrap text-slate-500">proj {side?.projected_points?.toFixed(1) ?? "—"}</small></span>}</header>{players.length ? players.map((player) => <div key={player.player_id} className="flex items-center justify-between gap-3 border-b border-slate-800 px-5 py-3 last:border-0"><strong className="min-w-0 flex-1 truncate text-sm">{player.name}</strong><span className="flex shrink-0 items-center gap-3 text-xs text-slate-400"><span className="hidden whitespace-nowrap sm:inline">{[player.position, player.team].filter(Boolean).join(" · ")}</span><span className="text-right"><b className="block whitespace-nowrap font-mono text-emerald-300">{player.projected_points?.toFixed(1) ?? '—'}</b><small className="block whitespace-nowrap text-slate-500">{player.custom_projected_points === null ? "model n/a" : `model ${player.custom_projected_points.toFixed(1)}`}</small></span></span></div>) : <p className="p-5 text-sm text-slate-500">No players available.</p>}</section>;
 }
 
 export default async function MatchupPage({ searchParams }: { searchParams: Promise<{ league?: string }> }) {

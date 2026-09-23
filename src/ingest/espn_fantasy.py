@@ -125,6 +125,28 @@ async def _sync_league(
     await _snapshot(db, league_id, week, "player_metadata", metadata)
     await _snapshot(db, league_id, week, "projections", projections)
     await _snapshot(db, league_id, week, "matchups", _parse_matchups(payload, week, team_starters))
+    from src.services.fantasy_score_history import collect_espn
+    try:
+        await collect_espn(db,league_id,season,scoring_settings,payload,client=client,raw_league_id=raw_league_id)
+    except (httpx.HTTPError,ValueError,TypeError) as exc:
+        logger.warning('ESPN scored history unavailable league=%s error=%s',league_id,type(exc).__name__)
+    if week<18:
+        try:
+            future=await client.get(f"/seasons/{season}/segments/0/leagues/{raw_league_id}",
+                params=[('view','mRoster'),('view','mMatchup'),('scoringPeriodId',week+1)])
+            future.raise_for_status()
+            future_payload=future.json()
+            if future_payload.get('scoringPeriodId')==week+1:
+                future_meta={};future_projections={};future_starters={}
+                for team in future_payload.get('teams',[]):
+                    picks,_=_parse_roster_entries(team,future_meta,future_projections,week+1)
+                    future_starters[team.get('id')]=picks
+                future_matches=_parse_matchups(future_payload,week+1,future_starters)
+                if future_matches and any(future_projections.values()):
+                    await _snapshot(db,league_id,week+1,'projections',future_projections)
+                    await _snapshot(db,league_id,week+1,'matchups',future_matches)
+        except (httpx.HTTPError,ValueError,TypeError) as exc:
+            logger.warning('ESPN planning unavailable league=%s error=%s',league_id,type(exc).__name__)
     return {"teams": len(teams), "free_agents": free_agent_count, "season": season, "week": week}
 
 
@@ -141,7 +163,7 @@ def _translate_scoring_settings(payload: dict) -> dict[str, float]:
 def _expand_roster_positions(payload: dict) -> list[str]:
     slot_counts = payload.get("settings", {}).get("rosterSettings", {}).get("lineupSlotCounts", {})
     positions: list[str] = []
-    for slot_id_str, count in slot_counts.items():
+    for slot_id_str, count in sorted(slot_counts.items(),key=lambda item:int(item[0])):
         slot_id = int(slot_id_str)
         if slot_id == SUPER_FLEX_SLOT_ID:
             token = "SUPER_FLEX"
@@ -186,7 +208,7 @@ def _record_player(player: dict, metadata: dict, projections: dict, week: int) -
 def _parse_roster_entries(team: dict, metadata: dict, projections: dict, week: int) -> tuple[list[str], list[str]]:
     starters: list[str] = []
     players_on_team: list[str] = []
-    for entry in team.get("roster", {}).get("entries", []):
+    for entry in sorted(team.get("roster", {}).get("entries", []),key=lambda item:item.get('lineupSlotId',999)):
         player = entry.get("playerPoolEntry", {}).get("player", {})
         player_id = _record_player(player, metadata, projections, week)
         players_on_team.append(player_id)

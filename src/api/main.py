@@ -299,200 +299,12 @@ async def _score_league_players(league: "SleeperLeague", latest: dict, db: Async
     return scored_by_id, player_view
 
 
-async def _build_fantasy_view(league_id: str, db: AsyncSession) -> dict:
-    """Shared core for /recommendations and /advice: resolves this
-    league's current projections into a scored, named player list plus a
-    computed starting-lineup/bench split. Both endpoints must reason
-    about the exact same players and points - /advice used to rebuild a
-    separate, much larger raw payload (200 unscored projection rows) that
-    the local LLM could not process in time; see fantasy_advice() below."""
-    league = await db.get(SleeperLeague, league_id)
-    if league is None:
-        raise HTTPException(status_code=404, detail="league not synced")
-    snapshots = (await db.scalars(select(SleeperLeagueSnapshot).where(SleeperLeagueSnapshot.league_id == league_id).order_by(SleeperLeagueSnapshot.week.desc()))).all()
-    latest = {}
-    for snapshot in snapshots:
-        latest.setdefault(snapshot.kind, snapshot)
-    projections = latest.get("projections")
-    account = latest.get("account")
-    if projections is None or account is None:
-        raise HTTPException(status_code=409, detail="run Sleeper sync to load current projections")
-    rosters = (await db.scalars(select(SleeperRoster).where(SleeperRoster.league_id == league_id))).all()
-    owner_id = account.payload.get("user_id")
-    my_roster = next((roster for roster in rosters if roster.owner_id == owner_id), None)
-    if my_roster is None:
-        raise HTTPException(status_code=409, detail="Sleeper roster ownership is not available yet")
-    owned = {player for roster in rosters for player in roster.players}
-    scored_by_id, player_view = await _score_league_players(league, latest, db)
-    scored = sorted(scored_by_id.values(), key=lambda item: item["projected_points"], reverse=True)
-    rows = projection_rows(projections.payload)
-    raw_projection_count = len(projections.payload) if isinstance(projections.payload, (dict, list)) else 0
-    my_players = [player_view(player_id) for player_id in my_roster.players]
-    starting_lineup, bench = build_starting_lineup(my_players, league.roster_positions)
-    bench.sort(key=lambda player: player["projected_points"], reverse=True)
-    # Lineup suggestions: build the SAME slots using the custom model's
-    # ranking instead of Sleeper's, then diff the two picks per slot. A
-    # slot where they agree needs no comment; a slot where they disagree
-    # is worth a look precisely because it's the two independent sources
-    # giving conflicting advice, not one model's opinion alone. This is
-    # deterministic (compare two already-computed lineups), not an LLM
-    # guess, so it's always available the moment the fixed lineup is.
-    custom_lineup, _ = build_starting_lineup(my_players, league.roster_positions, points_key="custom_projected_points")
-    lineup_suggestions = []
-    for sleeper_entry, custom_entry in zip(starting_lineup, custom_lineup):
-        sleeper_pick, model_pick = sleeper_entry["player"], custom_entry["player"]
-        sleeper_id = sleeper_pick["player_id"] if sleeper_pick else None
-        model_id = model_pick["player_id"] if model_pick else None
-        if model_id is not None and model_id != sleeper_id:
-            lineup_suggestions.append({
-                "slot": sleeper_entry["slot"],
-                "sleeper_pick": {"name": sleeper_pick["name"], "projected_points": sleeper_pick["projected_points"]} if sleeper_pick else None,
-                "model_pick": {"name": model_pick["name"], "custom_projected_points": model_pick["custom_projected_points"]},
-            })
-    waivers = [item for item in scored if str(item["player_id"]) not in owned]
-    # A waiver candidate is "recommended" if EITHER model projects them at
-    # or above your worst currently-STARTING skill/QB player's Sleeper
-    # points - i.e. a realistic case they could outproduce someone
-    # already in your lineup. Deliberately not position-matched against
-    # that exact starter (FLEX/SUPER_FLEX eligibility makes "which
-    # starter would this replace" genuinely ambiguous) - this is a
-    # coarse "worth a look" signal, not a specific swap instruction;
-    # lineup_suggestions above is where specific, slot-matched swaps
-    # live. K/DEF are EXCLUDED from this baseline (see the K/DEF gate
-    # below for why) - confirmed live 2026-09-10, without this exclusion
-    # a real ESPN league's low-scoring DEF (5.41 pts) set the bar low
-    # enough that a pile of irrelevant streaming kickers cleared it.
-    starting_points = [entry["player"]["projected_points"] for entry in starting_lineup if entry["player"] and entry["player"].get("position") not in ("K", "DEF")]
-    worst_starter_points = min(starting_points) if starting_points else 0.0
-    # QB needs its own gate: confirmed live 2026-09-09, without this every
-    # unrostered backup QB "beat the worst starter" (usually the kicker,
-    # ~6-8 pts, trivially cleared by any real QB's 15-19) and flooded a
-    # standard 1-QB league's recommendations with QBs nobody could
-    # actually start - a bench QB has zero real value there regardless of
-    # how many points it projects. Only worth flagging if this league can
-    # actually start a second QB (SUPER_FLEX, or a league with 2+ direct
-    # QB slots).
-    can_start_second_qb = league.roster_positions.count("QB") > 1 or "SUPER_FLEX" in league.roster_positions
-    # K/DEF need a DIFFERENT gate, not the QB one: every league here has
-    # exactly one K and one DEF slot (there's no "second kicker" case to
-    # gate on), so the real bug wasn't a missing slot - it was comparing
-    # a streaming kicker/defense against the WRONG baseline. Confirmed
-    # live 2026-09-10 against a real ESPN league: comparing candidate
-    # kickers against the single worst-starter-overall number (there, the
-    # team's own low-scoring DEF) flagged several kickers that projected
-    # BELOW the team's actual kicker as "recommended" purely because they
-    # beat an unrelated position's number. A K/DEF swap only ever makes
-    # sense compared against the specific K/DEF already in that slot, so
-    # each is position-matched against the CURRENT starter there instead
-    # of the cross-position floor every other waiver candidate uses.
-    current_starter_by_position: dict[str, float] = {}
-    for entry in starting_lineup:
-        player = entry["player"]
-        position = player.get("position") if player else None
-        if position in ("K", "DEF"):
-            current_starter_by_position[position] = player["projected_points"]
-    for player in waivers:
-        best = max(player["projected_points"], player["custom_projected_points"] or 0.0)
-        position = player.get("position")
-        if position in ("K", "DEF"):
-            current = current_starter_by_position.get(position, 0.0)
-            player["recommended"] = current > 0 and best > current
-        else:
-            eligible_slot_exists = position != "QB" or can_start_second_qb
-            player["recommended"] = best >= worst_starter_points and worst_starter_points > 0 and eligible_slot_exists
-    # A "recommended" flag alone doesn't tell you WHO to cut to make room
-    # or HOW MUCH to bid - the two questions that actually decide whether
-    # someone acts on it. drop_candidate is always your single weakest
-    # bench player by best-of-both-models value (not position-matched -
-    # a bench slot is generic roster space in every league synced here,
-    # not locked to one position), so it's a real, always-current name
-    # rather than a placeholder. suggested_faab_bid is a simple tiered
-    # percentage of this league's real waiver_budget scaled by how much
-    # the pickup projects to beat the baseline it cleared - a heuristic
-    # explicitly labeled as one, not a claim of modeling how this
-    # league's specific bidders will actually behave this week.
-    weakest_bench_value = lambda p: max(p["projected_points"], p.get("custom_projected_points") or 0.0)
-    weakest_bench = min(bench, key=weakest_bench_value) if bench else None
-    waiver_budget = league.settings.get("waiver_budget") or 0
-    def faab_bid(edge: float) -> int | None:
-        if waiver_budget <= 0:
-            return None
-        tier = 0.05 if edge < 2 else 0.10 if edge < 5 else 0.20 if edge < 10 else 0.35
-        return max(1, round(waiver_budget * tier))
-    for player in waivers:
-        if not player["recommended"]:
-            player["drop_candidate"] = None
-            player["suggested_faab_bid"] = None
-            continue
-        best = max(player["projected_points"], player["custom_projected_points"] or 0.0)
-        baseline = current_starter_by_position.get(player.get("position"), worst_starter_points) if player.get("position") in ("K", "DEF") else worst_starter_points
-        player["drop_candidate"] = {"player_id": weakest_bench["player_id"], "name": weakest_bench["name"], "position": weakest_bench.get("position"), "projected_points": weakest_bench["projected_points"]} if weakest_bench else None
-        player["suggested_faab_bid"] = faab_bid(best - baseline)
-    # News matching is deterministic string-matching (see
-    # match_player_news()), not an LLM call, so every player everywhere -
-    # the recommendations page's lineup/bench/waivers, not just the
-    # /advice narrative - gets real, reliably-matched headlines with zero
-    # hallucination risk and zero added latency. Configuring RSS sources
-    # is optional here (unlike /advice, which also needs LiteLLM
-    # configured) - an empty settings.fantasy_news_rss_urls just means
-    # every player's news list stays empty rather than the whole
-    # recommendations endpoint failing.
-    settings = get_settings()
-    headlines = await fetch_rss_headlines(settings.fantasy_news_rss_urls) if settings.fantasy_news_rss_urls else []
-    def attach_news(player: dict) -> dict:
-        return {**player, "news": match_player_news(player["name"], headlines)}
-    starting_lineup = [{"slot": entry["slot"], "player": attach_news(entry["player"]) if entry["player"] else None} for entry in starting_lineup]
-    bench = [attach_news(player) for player in bench]
-    waivers = [attach_news(player) for player in waivers]
-    return {
-        "league": league,
-        "week": projections.week,
-        "starting_lineup": starting_lineup,
-        "bench": bench,
-        "waivers": waivers,
-        "lineup_suggestions": lineup_suggestions,
-        "rows": rows,
-        "raw_projection_count": raw_projection_count,
-        "headlines": headlines,
-    }
 
 
 @app.get("/api/v1/fantasy/leagues/{league_id}/recommendations", dependencies=[Depends(require_fantasy_token)])
 async def fantasy_recommendations(league_id: str, db: AsyncSession = Depends(get_db)) -> dict:
-    """Rank current Sleeper projections using this league's actual scoring.
-
-    These are decision-support rankings, not fabricated news or guaranteed
-    outcomes. Player-specific narrative is added only once a sourced-news
-    integration is configured.
-    """
-    view_data = await _build_fantasy_view(league_id, db)
-    league = view_data["league"]
-    rows = view_data["rows"]
-    projection_source = "Sleeper"
-    projection_status = "ready" if rows else "source_pending"
-    return {
-        "league_id": league_id,
-        "week": view_data["week"],
-        "roster_positions": league.roster_positions,
-        "starting_lineup": view_data["starting_lineup"],
-        "bench": view_data["bench"],
-        "waivers": view_data["waivers"][:15],
-        "lineup_suggestions": view_data["lineup_suggestions"],
-        "projection_status": projection_status,
-        "projection_source": projection_source,
-        "projection_records": len(rows),
-        "notes": [
-            f"{projection_source} projections are scored using the synced Sleeper scoring settings.",
-            "Starting lineup is computed from this league's real roster_positions, not assumed - exact-position slots are filled before FLEX/SUPER_FLEX so a flex slot never displaces a player with nowhere else to go.",
-            "Waiver candidates exclude all currently rostered player IDs.",
-            "Injury status is from the Sleeper projection payload; add sourced news before automated narrative advice.",
-            "\"Our model\" is each player's own 2025 season per-game average (passing/rushing/receiving only), scored under this league's rules - a second, independent number to compare against Sleeper's, not a claim it is more accurate. \"model n/a\" means the position isn't modeled (K/DEF) or no 2025 NFL history was found for that name.",
-        ] if rows else [
-            f"{projection_source} returned {view_data['raw_projection_count']:,} player records for week {view_data['week']}, but no usable projection records.",
-            "Your roster, league rules, and actual matchup scoring are still synced from Sleeper.",
-            "Start/sit and waiver rankings will appear once a licensed projection source supplies player-level data.",
-        ],
-    }
+    from src.services.fantasy_views import recommendations
+    return await recommendations(db, league_id)
 
 
 @app.get("/api/v1/fantasy/leagues/{league_id}/draft-score", dependencies=[Depends(require_fantasy_token)])
@@ -531,66 +343,8 @@ async def draft_score(league_id: str, db: AsyncSession = Depends(get_db)) -> dic
 
 @app.get("/api/v1/fantasy/leagues/{league_id}/matchup", dependencies=[Depends(require_fantasy_token)])
 async def fantasy_matchup(league_id: str, db: AsyncSession = Depends(get_db)) -> dict:
-    """Return the signed-in Sleeper roster's current matchup without guesses."""
-    league = await db.get(SleeperLeague, league_id)
-    if league is None:
-        raise HTTPException(status_code=404, detail="league not synced")
-    snapshots = (await db.scalars(select(SleeperLeagueSnapshot).where(SleeperLeagueSnapshot.league_id == league_id).order_by(SleeperLeagueSnapshot.week.desc()))).all()
-    latest = {}
-    for row in snapshots:
-        latest.setdefault(row.kind, row)
-    account, matchups = latest.get("account"), latest.get("matchups")
-    if account is None or matchups is None or not isinstance(matchups.payload, list):
-        raise HTTPException(status_code=409, detail="run Sleeper sync to load the current matchup")
-    rosters = (await db.scalars(select(SleeperRoster).where(SleeperRoster.league_id == league_id))).all()
-    mine = next((row for row in rosters if row.owner_id == account.payload.get("user_id")), None)
-    if mine is None:
-        raise HTTPException(status_code=409, detail="Sleeper roster ownership is not available yet")
-    mine_row = next((row for row in matchups.payload if isinstance(row, dict) and row.get("roster_id") == mine.roster_id), None)
-    if mine_row is None:
-        raise HTTPException(status_code=409, detail="your current matchup is not available")
-    opponent = next((row for row in matchups.payload if isinstance(row, dict) and row.get("matchup_id") == mine_row.get("matchup_id") and row.get("roster_id") != mine.roster_id), None)
-    metadata = latest.get("player_metadata")
-    players = metadata.payload if metadata and isinstance(metadata.payload, dict) else {}
-    # Real ("points") scoring is 0 for every roster in the league until
-    # games actually kick off (confirmed live 2026-09-09 against Sleeper's
-    # own /league/{id}/matchups/{week} - every roster_id, not just this
-    # league's) - which left this page with nothing useful to show before
-    # kickoff. Projections come from the SAME "projections" snapshot and
-    # scoring-settings math /recommendations already uses (see
-    # _build_fantasy_view()'s view()), computed independently here since
-    # that helper is scoped to "my roster" only and this page also needs
-    # the opponent's projected points, which it never fetches a roster
-    # for.
-    projections = latest.get("projections")
-    projected_points_by_id: dict[str, float] = {}
-    if projections is not None:
-        for row in projection_rows(projections.payload):
-            stats = row.get("stats") or {}
-            points = sum(float(stats.get(key, 0) or 0) * float(weight or 0) for key, weight in league.scoring_settings.items())
-            projected_points_by_id[row["player_id"]] = round(points, 2)
-    # Second, independent projection source - see custom_projection.py.
-    season_averages = await load_exact_2025_averages(db, league.platform, players)
-    # .get("full_name") was the original raw-Sleeper-catalog field name;
-    # the player_metadata snapshot was later trimmed to first_name/
-    # last_name (see sleeper.py's widened, size-trimmed metadata) and
-    # never carried full_name at all, so every single player here always
-    # fell through to the str(player_id) fallback - confirmed live
-    # 2026-09-09, this endpoint showed raw numeric IDs as "names" for
-    # every player. Matches the same first_name+last_name join already
-    # used in fantasy_recommendations()'s view()/owned_player_view().
-    def enrich(ids: list) -> list[dict]:
-        def info_for(player_id: object) -> dict:
-            return players.get(str(player_id)) or {}
-        def name_for(player_id: object) -> str:
-            info = info_for(player_id)
-            return " ".join(part for part in [info.get("first_name"), info.get("last_name")] if part) or str(player_id)
-        return [{"player_id": str(player_id), "name": name_for(player_id), "position": info_for(player_id).get("position"), "team": info_for(player_id).get("team"), "projected_points": projected_points_by_id.get(str(player_id), 0.0), "custom_projected_points": custom_projected_points(league.scoring_settings, str(player_id), season_averages, info_for(player_id).get("position"))} for player_id in ids]
-    mine_starters = [str(player_id) for player_id in mine.starters]
-    mine_projected = round(sum(projected_points_by_id.get(pid, 0.0) for pid in mine_starters), 2)
-    opponent_starters = [str(player_id) for player_id in (opponent.get("starters") or [])] if opponent else []
-    opponent_projected = round(sum(projected_points_by_id.get(pid, 0.0) for pid in opponent_starters), 2)
-    return {"league_id": league_id, "week": matchups.week, "your_roster": {"roster_id": mine.roster_id, "starters": enrich(mine_starters), "bench": enrich([player_id for player_id in mine.players if str(player_id) not in mine_starters]), "points": mine_row.get("points", 0), "projected_points": mine_projected}, "opponent": {"roster_id": opponent.get("roster_id"), "starters": enrich(opponent_starters), "points": opponent.get("points", 0), "projected_points": opponent_projected} if opponent else None}
+    from src.services.fantasy_views import matchup
+    return await matchup(db, league_id)
 
 
 async def _load_league_and_scoring(league_id: str, db: AsyncSession) -> tuple["SleeperLeague", dict, callable]:
@@ -768,7 +522,8 @@ async def fantasy_advice(league_id: str, db: AsyncSession = Depends(get_db)) -> 
     # unscored, unnamed projection rows as "evidence" instead of this -
     # so large that this CPU-only local model blew past even a 240s
     # timeout without finishing a response.
-    view_data = await _build_fantasy_view(league_id, db)
+    from src.services.fantasy_views import recommendations as shared_recommendations
+    view_data = await shared_recommendations(db, league_id)
     if not view_data["rows"]:
         raise HTTPException(status_code=409, detail="run Sleeper sync before requesting advice")
     evidence = {

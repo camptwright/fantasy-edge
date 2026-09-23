@@ -230,6 +230,9 @@ def capture_forecasts():
         async with get_worker_db() as db:
             payload = await capture(db)
         output = {'records': len(payload['records']), 'archive': archive('forecasts', payload)}
+        from src.services.paper_ledger import capture as capture_paper
+        async with get_worker_db() as db:
+            output['paper_ledger'] = await capture_paper(db)
         # Independent transaction and archive. Research failures must not erase
         # a successful baseline capture or turn unsupported props actionable.
         try:

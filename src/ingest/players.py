@@ -75,9 +75,10 @@ async def ingest_players(db: AsyncSession) -> int:
         return run.rows_written
 
 
-async def ingest_player_stats(db: AsyncSession, seasons: list[int]) -> int:
-    nfl = _nflreadpy()
-    records = _records(nfl.load_player_stats(seasons))
+async def ingest_player_stats(db: AsyncSession, seasons: list[int], *, records=None) -> int:
+    if records is None:
+        nfl = _nflreadpy()
+        records = _records(nfl.load_player_stats(seasons))
 
     async with record_run(db, f"{SOURCE}:player_stats") as run:
         for record in records:
@@ -96,7 +97,7 @@ async def ingest_player_stats(db: AsyncSession, seasons: list[int]) -> int:
                 value = _number(record.get(column))
                 if value is None:
                     continue
-                await db.execute(
+                result = await db.execute(
                     insert(PlayerGameStat)
                     .values(
                         player_id=player.id,
@@ -108,7 +109,7 @@ async def ingest_player_stats(db: AsyncSession, seasons: list[int]) -> int:
                         index_elements=["player_id", "game_id", "stat_type"]
                     )
                 )
-                run.rows_written += 1
+                run.rows_written += result.rowcount
         await db.commit()
         return run.rows_written
 

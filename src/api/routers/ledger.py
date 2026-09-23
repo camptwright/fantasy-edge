@@ -103,6 +103,28 @@ async def preflight(entry: Entry, db=Depends(get_db)):
     return check_limits(exposure(bets, settlements, entry.currency, entry.mode), terms, entry.stake, policies.get(entry.currency, {}))
 
 
+@router.get('/coverage')
+async def coverage(db=Depends(get_db)):
+    from collections import Counter
+    from sqlalchemy import func
+    from src.models.facts import TeamMarketLine, PlayerPropLine
+    bets, _, settlements, closes, _ = await state(db)
+    history = {}
+    for label, model in [('team', TeamMarketLine), ('player', PlayerPropLine)]:
+        rows = (await db.execute(select(model.source, func.min(model.observed_at),
+            func.max(model.observed_at), func.count()).group_by(model.source))).all()
+        history[label] = [dict(source=source, first_observed_at=first,
+            last_observed_at=last, observations=count) for source, first, last, count in rows]
+    return {'quote_history': history, 'bets': len(bets),
+        'automatic_paper_bets': sum(b.terms.get('origin') == 'automatic_qualified_signal_v1' for b in bets),
+        'closing_statuses': dict(Counter(closes.get(str(b.id), {}).get('status', 'awaiting_capture') for b in bets)),
+        'settled_bets': sum(settlements.get(str(b.id), {}).get('status', 'open') != 'open' for b in bets),
+        'policy': 'Only actionable version-bound signals are paper-recorded; fixed $1 paper units, no wager execution.',
+        'limitations': ['Quote-history span is not verified closing-line coverage.',
+            'Official CLV requires reviewed receipt/quote/rule evidence.',
+            'No historical paper entries are fabricated; zero qualifying signals produce zero entries.']}
+
+
 @router.post('/bets')
 async def record(entry: Entry, db=Depends(get_db)):
     return await record_entry(entry, db)
