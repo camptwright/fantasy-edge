@@ -2,6 +2,8 @@
 
 This report supersedes earlier status summaries for the work below; it does not rewrite their historical measurements.
 
+**Release completed:** see [release verification](2026-09-23-release-verification.md) for deployed commits, matching fingerprints, page checks and remaining limitations. The measurements below are the pre-release audit record.
+
 ## Release authorization
 
 The user confirmed on September 23 that the other editor finished and authorized release. The verification below describes the pre-release measurements. See the release-verification report for the resulting commit and deployed fingerprints. Existing review/proposal documents were preserved.
