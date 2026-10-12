@@ -94,6 +94,17 @@ async def test_snap_counts_resolve_exact_ids_and_skip_unresolvable_rows(db):
     assert await db.scalar(select(func.count()).select_from(PlayerSnapCount)) == 3
 
 
+async def test_snap_counts_match_espn_created_games_by_fixture(db):
+    """Current-season games come from ESPN with no nflverse id."""
+    await _seed(db)
+    game = await db.scalar(select(Game).where(Game.nflverse_game_id == GAME))
+    game.nflverse_game_id = None
+    await db.commit()
+    assert await ingest_snap_counts(db, [2025], records=SNAPS, players=PLAYERS) == 3
+    await db.refresh(game)
+    assert game.nflverse_game_id is None, "the fallback must not modify the game row"
+
+
 async def test_season_usage_joins_snaps_to_stats(db):
     await _seed(db)
     await ingest_snap_counts(db, [2025], records=SNAPS, players=PLAYERS)

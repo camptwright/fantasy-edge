@@ -63,8 +63,7 @@ async def ingest_snap_counts(
                 player_ids[gsis_id] = await db.scalar(select(Player.id).where(Player.gsis_id == gsis_id))
             nflverse_id = record.get("game_id")
             if nflverse_id not in game_ids:
-                game_ids[nflverse_id] = await db.scalar(
-                    select(Game.id).where(Game.nflverse_game_id == nflverse_id))
+                game_ids[nflverse_id] = await _game_id(db, nflverse_id)
             team = record["team"]
             if team not in team_ids:
                 try:
@@ -85,6 +84,32 @@ async def ingest_snap_counts(
             run.rows_written += result.rowcount
         await db.commit()
         return run.rows_written
+
+
+async def _game_id(db: AsyncSession, nflverse_id: str | None):
+    """Exact nflverse id, else the id's own season/week/away/home fields.
+
+    Current-season games are created by the ESPN schedule sync and carry no
+    nflverse_game_id (0 of 272 on 2026-10-12). The nflverse id format is
+    "{season}_{week:02d}_{away}_{home}", so the fallback is still an exact
+    fixture match, read-only: the game row is not modified.
+    """
+    if not nflverse_id:
+        return None
+    found = await db.scalar(select(Game.id).where(Game.nflverse_game_id == nflverse_id))
+    if found is not None:
+        return found
+    parts = nflverse_id.split("_")
+    if len(parts) != 4 or not parts[0].isdigit() or not parts[1].isdigit():
+        return None
+    try:
+        away, home = await resolve_team(db, parts[2]), await resolve_team(db, parts[3])
+    except LookupError:
+        return None
+    matches = (await db.scalars(select(Game.id).where(
+        Game.sport == "nfl", Game.season == int(parts[0]), Game.week == int(parts[1]),
+        Game.home_team_id == home.id, Game.away_team_id == away.id))).all()
+    return matches[0] if len(matches) == 1 else None
 
 
 async def refresh_snap_counts(db: AsyncSession, season: int) -> dict[str, int]:
