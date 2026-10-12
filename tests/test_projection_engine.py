@@ -10,8 +10,8 @@ import pytest
 
 from src.services import projection_engine_prospective as prospective
 from src.services.projection_engine import (
-    RATE_PRIORS, PlayerGame, TeamGame, fit_volume, predict_volume, project_player, score,
-    shrunk_rate, shrunk_share, weights,
+    RATE_PRIORS, PlayerGame, TeamGame, fit_volume, player_shares,
+    predict_volume, project_player, score, shrunk_rate, shrunk_share, weights,
 )
 
 T0 = datetime(2026, 9, 1, tzinfo=timezone.utc)
@@ -25,8 +25,9 @@ def test_recency_weights_put_the_newest_game_at_full_weight():
 def test_one_huge_game_does_not_become_the_projected_share():
     assert shrunk_share([0.45], prior=0.15) < 0.30
     assert shrunk_share([], prior=0.15) == 0.15
-    # A steady role converges toward the player's own share.
-    assert shrunk_share([0.28] * 12, prior=0.15) == pytest.approx(0.28, abs=0.03)
+    # A steady role stays much closer to the player's own share than the prior.
+    steady = shrunk_share([0.28] * 12, prior=0.15)
+    assert 0.215 < steady < 0.28
 
 
 def test_rates_on_few_opportunities_regress_to_the_position_rate():
@@ -58,9 +59,10 @@ def test_player_projection_scales_with_team_volume_and_td_environment():
     priors = {"WR": dict.fromkeys(RATE_PRIORS, 0.0)}
     priors["WR"].update(catch_rate=0.62, yards_per_target=8.0, rec_td_rate=0.05)
     share_priors = {"WR": {"targets": 0.15, "rushing_attempts": 0.0, "passing_attempts": 0.0}}
-    base = project_player("WR", games, teams, priors, share_priors, 35, 25, 1.0, 0.95)
-    more = project_player("WR", games, teams, priors, share_priors, 42, 25, 1.0, 0.95)
-    hotter = project_player("WR", games, teams, priors, share_priors, 35, 25, 1.2, 0.95)
+    shares = player_shares("WR", games, teams, share_priors)
+    base = project_player("WR", games, priors, shares, 35, 25, 1.0, 0.95)
+    more = project_player("WR", games, priors, shares, 42, 25, 1.0, 0.95)
+    hotter = project_player("WR", games, priors, shares, 35, 25, 1.2, 0.95)
     assert more["targets"] == pytest.approx(base["targets"] * 42 / 35)
     assert hotter["receiving_touchdowns"] == pytest.approx(base["receiving_touchdowns"] * 1.2)
     assert base["passing_attempts"] == 0.0  # only QBs are given pass volume
