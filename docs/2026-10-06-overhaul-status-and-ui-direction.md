@@ -190,3 +190,40 @@ graded 2026 weeks), then E3 injuries and E4 distributions.
   file, grading 1.2). Only 13% of result payloads are exact duplicates, but
   gzip shrinks the bulky kinds 14–26×. Build cache regrows ~10 GB per day of
   rebuilds. At current growth the 200G disk has roughly six weeks of headroom.
+
+### October 12 — disk growth fixed; E3 amended for the engine's real flaws
+
+**Disk (all three owner-approved items done):**
+1. Hourly `fantasy.compress_raw_archive` (evaluation queue) losslessly gzips
+   day-old files in `raw_retention.COMPRESSIBLE` — append-only directories
+   only, never create-only identity records — within a 2 GB/run budget. All
+   readers of those directories use `src/utils/archive_io`. First batch:
+   1,188 files, 2.0 GB saved of 2.1 GB read; ~68.7k backlog files drain in
+   ~1.5 days. Expected steady growth ~1 GB/week instead of ~16.
+2. The hourly data-health check now alerts via ntfy at 80% disk. Note: the
+   existing `~/bin/check-colima-disk.sh` Uptime Kuma push monitors the same
+   disk at 85% and should have reported "down" during the Oct 12 fill —
+   check that monitor has a notification attached.
+3. Weekly launchd prune (`~/bin/docker-weekly-prune.sh`, Tuesdays 04:30):
+   build cache above 5 GB and dangling images only; never volumes or the
+   `grading-preview-before-*` rollback containers. First run: cache 10 → 5.4 GB.
+
+**Does the plan fix the engine's flaws? Partly — E3 as written is not enough.**
+The walk-forward flaws are backup QBs and fringe players getting a typical
+player's share (QB +1.75 pts, fringe 4.8 vs 4.0), and a per-team share cap
+failed because the engine cannot tell who is active. E3 as written covers
+injury designations (Q/D/O participation probability) and vacated-volume
+redistribution, which handles injured starters but not healthy backups.
+Amendment to E3:
+- Keep Sleeper's `status`, `depth_chart_position` and `depth_chart_order`
+  in the player catalog. `/players/nfl` already returns them (610 of 832
+  rostered QB/RB/WR/TE have a depth order; KC: Mahomes 1, Fields 2,
+  Nussmeier 3) but `src/ingest/sleeper.py` trims them out.
+- Archive the catalog's depth/status daily so it is point-in-time evidence;
+  no historical depth charts exist, so this can only be validated
+  prospectively, never by backtest.
+- Then re-enable a per-team share cap over active, depth-charted players
+  only, and give depth-1 QBs the QB pass share (backups only via E3's
+  vacated-volume path when the starter is out).
+- The RB gap vs Sleeper is better addressed by E5 (accuracy-weighted blend
+  with Sleeper/RotoWire) than by the engine alone.
