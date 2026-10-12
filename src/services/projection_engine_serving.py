@@ -31,7 +31,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from src.models.facts import Game
 from src.models.governance import DerivedCheckpoint
-from src.services import projection_depth
+from src.services import projection_depth, team_model_serving
 from src.services.engine_research import NAME, latest, player_points  # noqa: F401 (re-exported)
 from src.services.forecast_evidence import digest
 from src.services.game_environment import environments
@@ -67,6 +67,7 @@ async def build(db, *, now: datetime | None = None, catalog: dict | None = None)
     tpa = sum(t.targets for t in past) / attempts if attempts else 1.0
     env = await environments(db, [g.id for g in games], as_of=now)
     depth = await projection_depth.depth_inputs(db, catalog) if catalog else {}
+    teams = await team_model_serving.state(db, now)
 
     nearest: dict[uuid.UUID, int] = {}
     for g in sorted(games, key=lambda g: g.game_time):
@@ -85,8 +86,15 @@ async def build(db, *, now: datetime | None = None, catalog: dict | None = None)
             else:
                 home = fallback_environment(past, g.home_team_id, league_mean)
                 away = fallback_environment(past, g.away_team_id, league_mean)
+                projected = team_model_serving.project(teams, g, None) if teams else None
+                if projected is not None:
+                    # Keep the teams' combined scoring level, split by the team
+                    # model's projected margin (opponent strength and home field).
+                    total, margin = home + away, projected["model_margin"]
+                    home, away = total / 2 + margin / 2, total / 2 - margin / 2
                 targets.append((g, home, away, away - home))
-                game_meta[str(g.id)] = {"week": week, "environment": "team_average_no_line", "source": None}
+                game_meta[str(g.id)] = {"week": week, "source": None, "environment":
+                                        "team_model_no_line" if projected is not None else "team_average_no_line"}
         base = compute(history, targets, now, DEFAULT)
         # Designation scope per team: this game is the team's nearest one or not.
         near = {pid: p for pid, p in base.items() if nearest.get(p.team_id) == week}

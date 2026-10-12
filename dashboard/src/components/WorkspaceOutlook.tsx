@@ -1,4 +1,4 @@
-import { engineWeeks, playerProfileHref, pts, type Overview } from "@/lib/workspace";
+import { engineWeeks, playerProfileHref, pts, type Overview, environmentLabel } from "@/lib/workspace";
 import type { PlayerDetail } from "@/lib/workspace-api.generated";
 
 export const POSITION_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"];
@@ -6,7 +6,7 @@ export const byPosition = (a: PlayerDetail, b: PlayerDetail) =>
   (POSITION_ORDER.indexOf(a.position ?? "") + 99) % 99 - (POSITION_ORDER.indexOf(b.position ?? "") + 99) % 99
   || (b.engine_ros_points ?? -1) - (a.engine_ros_points ?? -1) || a.name.localeCompare(b.name);
 
-/** Intensity scales with points; unlined (team-average) weeks are hatched, not hidden. */
+/** Intensity scales with points; unlined weeks are hatched, not hidden. */
 function heat(points: number) {
   const level = Math.min(4, Math.floor(points / 5));
   return ["bg-slate-800 text-slate-300", "bg-sky-950 text-sky-200", "bg-sky-900 text-sky-100", "bg-sky-700 text-white", "bg-sky-500 text-slate-950"][level];
@@ -14,7 +14,7 @@ function heat(points: number) {
 
 export function EngineCells({ player, first, count }: { player: PlayerDetail; first: number; count: number }) {
   return <>{engineWeeks(player, first, count).map((cell, i) => <td key={i} className="px-0.5 py-1.5 text-center">
-    {cell ? <span title={`Week ${cell.week} · ${cell.environment === "market_line" ? "market line" : "team-average environment (no line yet)"}`}
+    {cell ? <span title={`Week ${cell.week} · ${environmentLabel(cell.environment)}`}
       className={`inline-block min-w-10 rounded px-1.5 py-1 text-xs tabular-nums ${heat(cell.points)} ${cell.environment === "market_line" ? "" : "opacity-70 ring-1 ring-inset ring-slate-600"}`}>{cell.points.toFixed(1)}</span>
       : <span className="text-xs text-slate-600" title="No projected game: bye, not modeled, unavailable, or game already started">—</span>}
   </td>)}</>;

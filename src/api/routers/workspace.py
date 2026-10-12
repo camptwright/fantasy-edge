@@ -640,7 +640,7 @@ def engine_waiver_context(data: dict, by_id: dict) -> EngineWaivers:
         if add.get('injury_status'):
             reasons.append(f'Added player has a {add["injury_status"]} designation.')
         if ((add.get('engine') or {}).get('ros_lined_games') or 0) <= 1:
-            reasons.append('Most weeks use team-average environments (no market lines yet).')
+            reasons.append('Most weeks have no market line yet (team-model environment).')
         rows.append(EngineWaiverRow(add=player_detail(add), compare=player_detail(drop), ros_gain=gain,
             week=row.get('week'), week_gain=week_gain, reasons=reasons,
             tier='priority' if gain >= 15 else 'consider' if gain >= 5 else 'depth'))

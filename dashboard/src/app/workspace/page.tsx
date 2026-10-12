@@ -102,7 +102,7 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
             <p className="mt-2 text-slate-400">{overview.message}</p>
             <p className="mt-2 text-xs text-slate-400">Snapshot <time dateTime={overview.generated_at ?? undefined}>{overview.generated_at}</time> · expires {overview.expires_at}. Freshness is checked when this page loads; refresh before acting.</p>
             <ul className="mt-3 list-disc space-y-2 pl-5 text-slate-300">{overview.notes.map(note => <li key={note}>{note}</li>)}
-              <li>Engine columns are projection-engine research (Vegas environment → team volume → usage share → efficiency, adjusted for depth chart and status), conditional on playing and not prospectively validated. Weeks without a market line use each team’s recent average environment.</li></ul>
+              <li>Engine columns are projection-engine research (Vegas environment → team volume → usage share → efficiency, adjusted for depth chart and status), conditional on playing and not prospectively validated. Weeks without a market line split each matchup’s recent scoring level by the NFL team model’s projected margin.</li></ul>
             <p className="mt-3 break-all text-xs text-slate-400">Model: {overview.model_version ?? "unknown"} · Recipe: {overview.recipe_version ?? "unknown"} · Scoring contract: {overview.scoring_contract_hash ?? "unknown"}</p>
           </details>
         </div>}

@@ -1,0 +1,126 @@
+{
+  "recipe": "nfl_team_model_v2",
+  "fitted_on": [
+    2012,
+    2025
+  ],
+  "ratings_through_season": 2025,
+  "params": {
+    "k": 0.34578396353499546,
+    "resist": 1.3309232755542995,
+    "reversion": 0.36971376005371925,
+    "hfa": 1.9895334350548195,
+    "rest": 0.12217280716413159,
+    "sigma": 12.916326718336128,
+    "mr_mid": 2.0919466019384387,
+    "mr_steep": 131465.11901887076,
+    "mr_floor": 0.8472292771160695
+  },
+  "ratings": {
+    "ARI": -6.276,
+    "ATL": -0.943,
+    "BAL": 2.847,
+    "BUF": 6.009,
+    "CAR": -3.196,
+    "CHI": 2.217,
+    "CIN": 0.177,
+    "CLE": -4.808,
+    "DAL": 0.035,
+    "DEN": 5.633,
+    "DET": 4.207,
+    "GB": -2.763,
+    "HOU": 4.638,
+    "IND": -0.961,
+    "JAX": 4.467,
+    "KC": -1.18,
+    "LAC": -2.088,
+    "LAR": 7.492,
+    "LV": -7.122,
+    "MIA": -6.879,
+    "MIN": 4.153,
+    "NE": 6.564,
+    "NO": -2.83,
+    "NYG": -2.842,
+    "NYJ": -11.753,
+    "PHI": 0.8,
+    "PIT": -0.703,
+    "SEA": 11.155,
+    "SF": 4.397,
+    "TB": -2.331,
+    "TEN": -6.704,
+    "WAS": -1.413
+  },
+  "evidence": {
+    "train": [
+      2006,
+      2014
+    ],
+    "test": [
+      2015,
+      2025
+    ],
+    "test_metrics": {
+      "serving_elo": {
+        "n": 3028,
+        "mae": 10.551,
+        "rmse": 13.522,
+        "brier": 0.2326
+      },
+      "rebuilt_raw": {
+        "n": 3028,
+        "mae": 10.136,
+        "rmse": 13.059,
+        "brier": 0.2212
+      },
+      "market_close": {
+        "n": 3028,
+        "mae": 9.807,
+        "rmse": 12.721,
+        "brier": 0.2128
+      },
+      "rebuilt_market_regressed": {
+        "n": 3028,
+        "mae": 9.827,
+        "rmse": 12.734,
+        "brier": 0.2135
+      }
+    },
+    "test_ats": [
+      {
+        "threshold": 0.5,
+        "bets": 1266,
+        "win_rate": 0.5111,
+        "breakeven": 0.5238
+      },
+      {
+        "threshold": 1.0,
+        "bets": 384,
+        "win_rate": 0.5,
+        "breakeven": 0.5238
+      },
+      {
+        "threshold": 1.5,
+        "bets": 122,
+        "win_rate": 0.5164,
+        "breakeven": 0.5238
+      },
+      {
+        "threshold": 2.0,
+        "bets": 47,
+        "win_rate": 0.5106,
+        "breakeven": 0.5238
+      },
+      {
+        "threshold": 3.0,
+        "bets": 11,
+        "win_rate": 0.3636,
+        "breakeven": 0.5238
+      }
+    ]
+  },
+  "sources": [
+    "nflverse games.csv (closing spread_line)",
+    "FiveThirtyEight NFL Elo methodology",
+    "nfelo open methodology (market resist, market regression)"
+  ]
+}

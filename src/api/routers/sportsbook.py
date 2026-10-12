@@ -448,6 +448,14 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
     teams = await _team_lookup(db, team_ids)
     ratings = await _rating_lookup(db, team_ids)
 
+    # NFL team model v2 (src/services/team_model.py): the NFL baseline for
+    # moneyline/spread, regressed toward the pregame consensus spread.
+    team_v2, consensus = None, {}
+    if any(game.sport == 'nfl' and line.market in ('moneyline', 'spread') for line, game in rows):
+        from src.services import team_model_serving
+        team_v2 = await team_model_serving.state(db)
+        if team_v2 is not None:
+            consensus = await team_model_serving.market_spreads(db, list({g.id: g for _, g in rows if g.sport == 'nfl'}.values()))
     promoted, selected = {}, {'status':'retained_baseline'}
     if any(game.sport=='nfl' and line.market=='moneyline' for line,game in rows):
         from src.services.model_deployment import forecasts as approved_forecasts
@@ -516,20 +524,36 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
         home_line, game = home_entry
         away_line, _ = away_entry
 
+        v2 = None
+        if game.sport == 'nfl' and team_v2 is not None:
+            from src.services import team_model_serving
+            v2 = team_model_serving.project(team_v2, game, consensus.get(game.id))
         home_rating_row = ratings.get(game.home_team_id)
         away_rating_row = ratings.get(game.away_team_id)
-        if home_rating_row is None or away_rating_row is None:
+        if v2 is None and (home_rating_row is None or away_rating_row is None):
             # No Elo history for one side yet (brand-new team, or the
             # sport's bootstrap hasn't run) - omit rather than assume the
             # 1500 default means something.
             continue
-        home_rating, away_rating = home_rating_row.rating, away_rating_row.rating
+        home_rating, away_rating = (home_rating_row.rating, away_rating_row.rating) if home_rating_row and away_rating_row else (None, None)
         home_name = teams[game.home_team_id].name if game.home_team_id in teams else "Home"
         away_name = teams[game.away_team_id].name if game.away_team_id in teams else "Away"
         matchup = f"{away_name} @ {home_name}"
 
         distribution_id = None
-        if market == "moneyline":
+        if v2 is not None:
+            from src.services import team_model
+            p2 = team_v2['params']
+            if market == "moneyline":
+                baseline_home_prob = home_model_prob = v2['home_win_probability']
+                if str(game.id) in promoted:
+                    home_model_prob = promoted[str(game.id)]['home_probability']
+                home_selection, away_selection = f"{home_name} ML", f"{away_name} ML"
+            else:
+                baseline_home_prob = home_model_prob = team_model.cover_probability(p2, v2['margin'], home_line.line or 0.0)
+                home_selection = f"{home_name} {home_line.line:+.1f}" if home_line.line is not None else home_name
+                away_selection = f"{away_name} {away_line.line:+.1f}" if away_line.line is not None else away_name
+        elif market == "moneyline":
             baseline_home_prob = moneyline_probability(home_rating, away_rating)
             home_model_prob = calibrate_home_probability(baseline_home_prob, game.sport, market)
             if game.sport=='nfl' and str(game.id) in promoted:
@@ -557,6 +581,10 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
             ),
             market=market, source=source, matchup=matchup, game=game,
         )
+        if v2 is not None:
+            for row in out[-2:]:
+                row['model_version'] = row.get('model_version') or team_v2['recipe']
+                row['team_model'] = {k: v2[k] for k in ('model_margin', 'market_margin', 'margin', 'market_weight')}
         if market=='moneyline' and game.sport=='nfl' and str(game.id) in promoted:
             for row,baseline in zip(out[-2:],(baseline_home_prob,1.0-baseline_home_prob)):
                 row['model_version']=selected['version']
@@ -663,6 +691,38 @@ async def odds_history(
             for row in rows
         ],
     }
+
+
+@router.get("/team-projections/nfl")
+async def nfl_team_projections(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """NFL team model v2: power ratings (points vs an average team) and upcoming game lines.
+
+    Research projections; the market-regressed line is the model's best
+    estimate, not a recommendation. No market line means the raw model.
+    """
+    from datetime import timedelta
+    from src.services import team_model_serving
+    state = await team_model_serving.state(db)
+    if state is None:
+        return {'status': 'model_unavailable', 'ratings': [], 'games': []}
+    now = datetime.now(timezone.utc)
+    upcoming = (await db.scalars(select(Game).where(
+        Game.sport == 'nfl', Game.status == 'scheduled', Game.game_time.is_not(None),
+        Game.game_time > now, Game.game_time <= now + timedelta(days=8)).order_by(Game.game_time))).all()
+    spreads = await team_model_serving.market_spreads(db, upcoming)
+    games = []
+    for g in upcoming:
+        row = team_model_serving.project(state, g, spreads.get(g.id))
+        if row:
+            games.append({**row, 'game_id': str(g.id), 'week': g.week, 'game_time': g.game_time.isoformat()})
+    ev = state['evidence']['test_metrics']
+    return {'status': 'research', 'model_version': state['recipe'], 'season': state['season'],
+            'replayed_games': state['replayed_games'],
+            'ratings': [{'team': t, 'rating': round(v, 2)} for t, v in sorted(state['ratings'].items(), key=lambda kv: -kv[1])],
+            'games': games,
+            'evidence': {'test_seasons': state['evidence']['test'], 'model_brier': ev['rebuilt_raw']['brier'],
+                         'previous_elo_brier': ev['serving_elo']['brier'], 'market_brier': ev['market_close']['brier'],
+                         'regressed_brier': ev['rebuilt_market_regressed']['brier']}}
 
 
 @router.get("/rankings/{sport}")

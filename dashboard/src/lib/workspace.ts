@@ -155,3 +155,9 @@ export function meterSegments(probability: number | null | undefined, full = 0.4
 export function pct(value: number | null | undefined): string {
   return value == null || !Number.isFinite(value) ? '—' : `${Math.round(value * 100)}%`;
 }
+
+/** Where an engine week's game environment came from. */
+export function environmentLabel(environment: string): string {
+  return environment === 'market_line' ? 'market line'
+    : environment === 'team_model_no_line' ? 'team-model projection (no line yet)' : 'team-average environment (no line yet)';
+}

@@ -1,4 +1,4 @@
-import { availabilityLabel, fantasyToolHref, pct, playerResearchHref, pts, type Overview } from "@/lib/workspace";
+import { availabilityLabel, environmentLabel, fantasyToolHref, pct, playerResearchHref, pts, type Overview } from "@/lib/workspace";
 import { DistributionCurve, Meter } from "./OutcomeCharts";
 import { BOOM_BUST } from "./WorkspaceStartSit";
 
@@ -74,7 +74,7 @@ export function WorkspacePlayerProfile({ overview, playerId }: { overview: Overv
             <td className="px-5 py-1.5 text-right"><span className={`inline-block min-w-12 rounded px-2 py-0.5 text-center tabular-nums ${heatClass(g.points)}`}>{g.points.toFixed(1)}</span></td><td className="px-5 py-1.5 text-xs text-slate-500">Actual · league scoring</td></tr>)}
           {player.engine_weeks.length > 0 && <tr><td colSpan={3} className="border-t border-dashed border-sky-700/60 px-5 py-1 text-xs font-medium text-sky-300">Projected</td></tr>}
           {player.engine_weeks.map(w => <tr key={`p${w.week}`} className="border-t border-slate-800/70"><td className="px-5 py-1.5 tabular-nums">{w.week}</td>
-            <td className="px-5 py-1.5 text-right"><span className="inline-block min-w-12 rounded border border-sky-600/60 px-2 py-0.5 text-center tabular-nums text-sky-200">{w.points.toFixed(1)}</span></td><td className="px-5 py-1.5 text-xs text-slate-500">Engine research · {w.environment === "market_line" ? "market line" : "team-average environment"}</td></tr>)}
+            <td className="px-5 py-1.5 text-right"><span className="inline-block min-w-12 rounded border border-sky-600/60 px-2 py-0.5 text-center tabular-nums text-sky-200">{w.points.toFixed(1)}</span></td><td className="px-5 py-1.5 text-xs text-slate-500">Engine research · {environmentLabel(w.environment)}</td></tr>)}
         </tbody>
       </table>}
     </section>
