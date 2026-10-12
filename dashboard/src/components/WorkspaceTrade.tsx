@@ -5,6 +5,7 @@ import { tradeBlockerText, tradePackageOwner, type ResearchContext } from "@/lib
 import { WorkspaceTradePicker } from "@/components/WorkspaceTradePicker";
 import type { TradeResult } from "@/lib/workspace-api.generated";
 import { SnapshotWindow } from "@/components/SnapshotWindow";
+import { WorkspaceTradeOutlook } from "@/components/WorkspaceTradeOutlook";
 
 export function WorkspaceTrade({ overview }: { overview: ResearchContext }) {
   const router = useRouter();
@@ -36,9 +37,11 @@ export function WorkspaceTrade({ overview }: { overview: ResearchContext }) {
     } catch { if (generation.current === requestedGeneration) setError('Trade preview unavailable. Refresh and retry.'); }
     finally { if (generation.current === requestedGeneration) setBusy(false); }
   }
-  return <section aria-label="Trade package preview" className="rounded-lg border border-slate-700 p-4">
-    <h3 className="text-lg font-semibold">Trade package · lineup-impact research</h3>
-    <button disabled={busy || refreshing} onClick={() => {setResult(null);setError(null);startRefresh(() => router.refresh());}} className="mt-3 min-h-11 rounded border border-slate-600 px-3 text-sm">{refreshing ? 'Refreshing evidence…' : 'Refresh trade evidence'}</button>
+  return <section aria-label="Trade package preview" className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <h3 className="text-lg font-semibold">Build a trade <span className="ml-1 rounded bg-sky-500/15 px-2 py-0.5 align-middle text-[11px] font-medium uppercase tracking-wider text-sky-300">Lineup-impact research</span></h3>
+      <button disabled={busy || refreshing} onClick={() => {setResult(null);setError(null);startRefresh(() => router.refresh());}} className="min-h-11 rounded-lg border border-slate-700 px-3 text-sm hover:border-slate-500">{refreshing ? 'Refreshing evidence…' : 'Refresh trade evidence'}</button>
+    </div>
     <p className="mt-2 text-xs text-slate-400">Refresh clears the previous result. Selections stay while this panel remains open; review ownership and locks again before evaluating. An expired or unavailable checkpoint hides this panel and may clear the draft.</p>
     <p className="my-3 text-sm text-slate-300">Choose what each team gives. Each package must belong to one of two distinct rosters. Up to six players per side. For uneven trades, explicitly balance each roster with add/drop plans below. Unrostered players are not guaranteed claimable; no FAAB, waiver timing or platform eligibility is inferred.</p>
     <div className="grid gap-4 md:grid-cols-2">{[{label:'A', ids:a, other:b, set:setA}, {label:'B', ids:b, other:a, set:setB}].map(side => <WorkspaceTradePicker key={side.label} label={side.label} ids={side.ids} other={side.other} players={players} busy={busy || refreshing} onChange={ids=>{side.set(ids);setPlans(emptyPlans);setResult(null);setError(null);}} />)}</div>
@@ -57,10 +60,11 @@ export function WorkspaceTrade({ overview }: { overview: ResearchContext }) {
         </div>;
       })}</div>}
     </details>
-    <button disabled={busy || refreshing || !ownerA || !ownerB || ownerA === ownerB} onClick={evaluate} className="mt-4 min-h-11 rounded border border-emerald-600 px-4 disabled:opacity-40">{busy ? 'Checking saved evidence…' : 'Evaluate saved roster impact'}</button>
+    <button disabled={busy || refreshing || !ownerA || !ownerB || ownerA === ownerB} onClick={evaluate} className="mt-4 min-h-11 w-full rounded-lg bg-emerald-500 px-4 font-semibold text-slate-950 hover:bg-emerald-400 disabled:bg-slate-800 disabled:text-slate-500 sm:w-auto">{busy ? 'Checking saved evidence…' : 'Evaluate saved roster impact'}</button>
     {error && <p role="alert" className="mt-3 text-amber-200">{error}</p>}
-    {result && <SnapshotWindow expiresAt={result.expires_at}><div role="status" className="mt-4 space-y-2 text-sm">
-      <p>{result.status.replaceAll('_',' ')}</p>
+    {result && <SnapshotWindow expiresAt={result.expires_at}><div role="status" className="mt-6 space-y-2 text-sm">
+      {result.outlook && <WorkspaceTradeOutlook outlook={result.outlook} a={a} b={b} players={players} />}
+      <h4 className="pt-4 font-semibold">History-based check <span className="text-xs font-normal text-slate-500">· {result.status.replaceAll('_',' ')}</span></h4>
       {result.blockers.map(reason => <p key={reason} className="text-amber-200">{tradeBlockerText(reason)}</p>)}
       {[result.side_a,result.side_b].map((side,i) => side && <p key={`size-${i}`}>{side.team} roster size: {side.roster_size_before ?? 'unknown'} → {side.roster_size_after ?? 'unknown'}</p>)}
       {[result.side_a,result.side_b].map((side,i) => side && (side.missing_players.length > 0 || side.availability_review_players.length > 0) && <details key={`evidence-${i}`} className="rounded border border-slate-700 p-3"><summary className="cursor-pointer text-emerald-200">{side.team}: players needing review</summary>

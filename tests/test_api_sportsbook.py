@@ -527,3 +527,12 @@ async def test_calibration_returns_only_the_latest_report_per_sport_and_market(d
         assert filtered_body["reports"][0]["sport"] == "ncaaf"
     finally:
         app.dependency_overrides.clear()
+
+
+async def test_shadow_research_scorecards_reads_the_latest_grade(db):
+    # Regression: the route called the async live-calibration handler without awaiting it (HTTP 500).
+    async with await _client(db) as client:
+        response = await client.get('/calibration/research')
+    assert response.status_code == 200
+    assert response.json() == {'status': 'awaiting_grading', 'graded_at': None, 'shadow_reports': [],
+                               'automatic_deployment': False}

@@ -13,6 +13,20 @@ const API_INTERNAL_URL = process.env.API_INTERNAL_URL || "http://api:8000";
 const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
+  // Workspace cutover: retired routes answer with a real 307 to the matching
+  // workspace screen. Query strings (e.g. ?league=) pass through unchanged and
+  // the workspace allowlists what it reads.
+  async redirects() {
+    const fantasy = (tool) => `/workspace?view=fantasy&tool=${tool}`;
+    return [
+      { source: "/", destination: "/workspace", permanent: false },
+      { source: "/fantasy", destination: fantasy("team"), permanent: false },
+      { source: "/fantasy/matchup", destination: fantasy("overview"), permanent: false },
+      { source: "/fantasy/values", destination: fantasy("players"), permanent: false },
+      { source: "/fantasy/trade", destination: fantasy("trade"), permanent: false },
+      { source: "/nfl-predictor", destination: "/experimental", permanent: false },
+    ];
+  },
   async rewrites() {
     return [
       // Sports v1 intentionally includes the /api prefix in FastAPI so its

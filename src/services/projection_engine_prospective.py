@@ -60,6 +60,39 @@ def archive_root() -> Path:
     return Path(get_settings().raw_archive_dir) / "projection-engine"
 
 
+def depth_version() -> str:
+    """Identity of the depth/status variant: v1's sources plus the adjustment."""
+    root = Path(__file__).resolve().parent
+    return hashlib.sha256((version() + ast.dump(ast.parse((root / "projection_depth.py").read_text())))
+                          .encode()).hexdigest()
+
+
+VARIANTS = {"v1": ("forecasts", "reports"), "depth": ("depth/forecasts", "depth/reports")}
+
+
+def _record(p, game, recipe: str, v: str, now: datetime, extra: dict | None = None) -> dict:
+    return {"id": hashlib.sha256(f"{v}:{p.game_id}:{p.player_id}".encode()).hexdigest(),
+            "recipe": recipe, "version": v, "captured_at": now.isoformat(),
+            "game_id": str(p.game_id), "season": game.season, "week": game.week,
+            "kickoff": game.game_time.isoformat(), "player_id": str(p.player_id),
+            "team_id": str(p.team_id), "position": p.position,
+            "stats": {k: round(val, 4) for k, val in p.stats.items()},
+            "team_pass_attempts": round(p.team_pass_attempts, 3),
+            "team_carries": round(p.team_carries, 3), "implied_points": round(p.implied_points, 3),
+            "games_used": p.games_used, "conditional_on_playing": True, "serving_promoted": False,
+            **(extra or {})}
+
+
+async def latest_sleeper_catalog(db) -> tuple[dict, datetime | None]:
+    """Newest Sleeper (not ESPN) player catalog snapshot, with its sync time."""
+    row = (await db.scalars(select(SleeperLeagueSnapshot).join(
+        SleeperLeague, SleeperLeague.league_id == SleeperLeagueSnapshot.league_id).where(
+        SleeperLeague.sport == "nfl", SleeperLeague.platform == "sleeper",
+        SleeperLeagueSnapshot.kind == "player_metadata").order_by(
+        SleeperLeagueSnapshot.synced_at.desc()).limit(1))).first()
+    return (row.payload if row and isinstance(row.payload, dict) else {}), (row.synced_at if row else None)
+
+
 async def capture(db, *, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     games = (await db.scalars(select(Game).where(
@@ -73,19 +106,32 @@ async def capture(db, *, now: datetime | None = None) -> dict:
     projections = await project(db, list(games), now)
     written = 0
     for p in projections.values():
-        game = by_id[p.game_id]
-        record_id = hashlib.sha256(f"{v}:{p.game_id}:{p.player_id}".encode()).hexdigest()
-        record = {"id": record_id, "recipe": RECIPE, "version": v, "captured_at": now.isoformat(),
-                  "game_id": str(p.game_id), "season": game.season, "week": game.week,
-                  "kickoff": game.game_time.isoformat(), "player_id": str(p.player_id),
-                  "team_id": str(p.team_id), "position": p.position,
-                  "stats": {k: round(val, 4) for k, val in p.stats.items()},
-                  "team_pass_attempts": round(p.team_pass_attempts, 3),
-                  "team_carries": round(p.team_carries, 3), "implied_points": round(p.implied_points, 3),
-                  "games_used": p.games_used, "conditional_on_playing": True, "serving_promoted": False}
-        written += bool(publish(archive_root() / "forecasts" / f"{record_id}.json", record))
-    return {"status": "captured", "version": v, "games": len(games),
-            "projected": len(projections), "captured": written}
+        record = _record(p, by_id[p.game_id], RECIPE, v, now)
+        written += bool(publish(archive_root() / "forecasts" / f"{record['id']}.json", record))
+    out = {"status": "captured", "version": v, "games": len(games),
+           "projected": len(projections), "captured": written}
+    # Depth/status variant (E3 amendment): only with a catalog that carries
+    # depth fields and is at most two days old; otherwise not captured.
+    catalog, synced_at = await latest_sleeper_catalog(db)
+    has_depth = any(isinstance(i, dict) and "depth_chart_order" in i for i in catalog.values())
+    if not has_depth or synced_at is None or now - synced_at > timedelta(days=2):
+        out["depth"] = {"status": "no_current_depth_catalog", "captured": 0}
+        return out
+    from src.services import projection_depth
+    depth = await projection_depth.depth_inputs(db, catalog)
+    adjusted, removed = await projection_depth.project(db, list(games), now, depth)
+    dv, depth_written = depth_version(), 0
+    for p in adjusted.values():
+        d = depth.get(p.player_id)
+        record = _record(p, by_id[p.game_id], projection_depth.RECIPE, dv, now, {
+            "depth_catalog_synced_at": synced_at.isoformat(),
+            "depth_input": None if d is None else {
+                "status": d.status, "injury_status": d.injury_status,
+                "depth_chart_position": d.depth_position, "depth_chart_order": d.depth_order}})
+        depth_written += bool(publish(archive_root() / "depth" / "forecasts" / f"{record['id']}.json", record))
+    out["depth"] = {"status": "captured", "version": dv, "projected": len(adjusted),
+                    "removed": len(removed), "captured": depth_written}
+    return out
 
 
 def week_bootstrap_ci(diffs_by_week: dict[int, list[float]], draws: int = 4000, seed: int = 7):
@@ -147,10 +193,11 @@ def promotion_check(rows: list[dict]) -> dict:
             "pool": overall, "positions": positions, "serving_promoted": False}
 
 
-async def report(db) -> dict:
+async def report(db, variant: str = "v1") -> dict:
     root = archive_root()
-    current = version()
-    engine = [json.loads(p.read_text()) for p in sorted((root / "forecasts").glob("*.json"))]
+    forecasts_dir, reports_dir = VARIANTS[variant]
+    current = version() if variant == "v1" else depth_version()
+    engine = [json.loads(p.read_text()) for p in sorted((root / forecasts_dir).glob("*.json"))]
     engine = {(r["game_id"], r["player_id"]): r for r in engine if r["version"] == current}
     provider_dir = Path(get_settings().raw_archive_dir) / "fantasy-prospective" / "provider-weekly"
     sleeper = [json.loads(p.read_text()) for p in sorted(provider_dir.glob("*.json"))]
@@ -191,9 +238,23 @@ async def report(db) -> dict:
                      "actual": result["actual"], "sleeper": r["prediction"]["points"],
                      "engine": round(points, 2), "sleeper_error": result["absolute_error"],
                      "engine_error": abs(points - result["actual"])})
-    out = {"generated_at": datetime.now(timezone.utc).isoformat(), "recipe": RECIPE,
-           "version": current, "engine_forecasts": len(engine), "statuses": statuses,
+    from src.services.fantasy_outcomes import load_model
+    model = load_model() or {}
+    weights = model.get("candidate_blend_weights", {})
+    blended = [{**r, "engine": round(w * r["engine"] + (1 - w) * r["sleeper"], 2),
+                "engine_error": abs(w * r["engine"] + (1 - w) * r["sleeper"] - r["actual"])}
+               for r in rows if (w := weights.get(r["position"])) is not None]
+    # Only weeks after the weights were fitted are prospective for the blend.
+    fitted = model.get("fitted_at")
+    fitted_week = max(model.get("fit_data", {}).get("paired_weeks", [0]) or [0])
+    out_blend = {"weights": weights, "fitted_at": fitted,
+                 "prospective_weeks_after": fitted_week,
+                 "all_paired": summarize([r for r in blended if r["week"] > fitted_week]),
+                 "promotion": promotion_check([r for r in blended if r["week"] > fitted_week])}
+    out = {"generated_at": datetime.now(timezone.utc).isoformat(), "variant": variant,
+           "candidate_blend": out_blend,
+           "recipe": RECIPE if variant == "v1" else RECIPE + "_depth", "version": current, "engine_forecasts": len(engine), "statuses": statuses,
            "all_paired": summarize(rows), "promotion": promotion_check(rows),
            "status": "prospective_research", "serving_promoted": False}
-    publish(root / "reports" / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}.json", out)
+    publish(root / reports_dir / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}.json", out)
     return out

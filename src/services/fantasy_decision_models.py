@@ -171,6 +171,45 @@ def input_deadline(meta, proj, matchup, rosters, platform, now):
     return min(row.synced_at+timedelta(hours=hours) for row,hours in sources)
 
 
+ENGINE_MAX_AGE=timedelta(hours=3)
+
+
+def engine_research(players,resolved,checkpoint,league,week,now):
+    """Attach engine research projections (projection_engine_serving), never decisions.
+
+    Weekly points for the selected week, the next weeks and a remaining-season
+    sum over games not yet started. Conditional on playing; not promoted.
+    """
+    from src.services.engine_research import player_points
+    fresh=(checkpoint is not None and checkpoint.get('status')=='research' and
+           timedelta(0)<=now-datetime.fromisoformat(checkpoint['generated_at'])<=ENGINE_MAX_AGE)
+    for p in players:
+        canonical=resolved.get(p['player_id'])
+        if p.get('position') not in ('QB','RB','WR','TE'):
+            p['engine']={'status':'position_not_modeled'};continue
+        if not fresh:
+            p['engine']={'status':'missing_or_stale_engine_research'};continue
+        weeks=checkpoint['players'].get(str(canonical.id)) if canonical else None
+        if not weeks:
+            p['engine']={'status':'not_projected' if canonical else 'unresolved_identity',
+                         'generated_at':checkpoint['generated_at']};continue
+        scoring,gaps=player_scoring(league,p['position'])
+        weights={CORE[k]:w for k,w in offensive_weights(scoring).items() if k in CORE}
+        upcoming={g['id'] for g in p.get('next_games',[]) if g.get('kickoff') and datetime.fromisoformat(g['kickoff'])>now}
+        rows=[]
+        for w,entry in sorted(weeks.items(),key=lambda kv:int(kv[0])):
+            if int(w)<week or entry['game_id'] not in upcoming:continue
+            meta=checkpoint['games'].get(entry['game_id'],{})
+            rows.append({'week':int(w),'points':player_points(entry,weights),
+                         'environment':meta.get('environment','unknown')})
+        p['engine']={'status':'research_partial_scoring' if gaps else 'research',
+            'generated_at':checkpoint['generated_at'],'version':checkpoint.get('engine_version'),
+            'week_points':next((r['points'] for r in rows if r['week']==week),None),
+            'weeks':rows[:6],'ros_points':round(sum(r['points'] for r in rows),2) if rows else None,
+            'ros_games':len(rows),'ros_lined_games':sum(r['environment']=='market_line' for r in rows),
+            'conditional_on_playing':True,'serving_promoted':False}
+
+
 async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catalog_limit=50,
                 selected_player_ids=()):
     if catalog_offset < 0 or not 1 <= catalog_limit <= 100:
@@ -273,6 +312,9 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
                 'scope':'current_week_only_not_ros_or_market_value'},
             'next_games':[{'id':str(g.id),'week':g.week,'kickoff':g.game_time.isoformat() if g.game_time else None,'status':g.status} for g in pg if g.status=='scheduled'],
             'identity_status':'exact' if canonical else 'unresolved','ros':ros_value(h,pg,now,schedule_complete=schedule_coverage['complete'] and team is not None),
+            'nfl_team_id':str(team) if team else None,'nfl_opponent_id':str(opponent_id) if opponent_id else None,
+            'week_game_status':('no_game_this_week' if team and not weekly_games else weekly_games[0].status if len(weekly_games)==1 else None),
+            'week_kickoff':weekly_games[0].game_time.isoformat() if len(weekly_games)==1 and weekly_games[0].game_time else None,
             'locked':len([g for g in pg if g.week==week])!=1 or any(g.week==week and (g.game_time is None or g.game_time<=now or g.status!='scheduled') for g in pg)})
     # Event evidence is collected elsewhere; only bind its archived observations
     # during background model construction, never during a preview GET.
@@ -289,6 +331,8 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
         p['game_availability']=availability.get(canonical.id,{}) if canonical else {
             'status':'team_unit_not_individual' if p['position'] in ('DEF','DST') else 'missing_provider_identity',
             'hold_recommendation':False,'official_game_status_verified':False}
+    from src.services.engine_research import latest as engine_latest
+    engine_research(players,resolved,await engine_latest(db),league,week,now)
     by_id={p['player_id']:p for p in players}
     from src.services.fantasy_score_history import distributions,scoring_hash
     official_rules=league.raw.get('scoringSettings') if league.platform=='espn' else None
@@ -352,6 +396,14 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
     from src.services.fantasy_simulation import evaluate
     simulation=evaluate(players,list(map(str,mymatch.get('starters',[]))),
         list(map(str,opponent.get('starters',[]))) if opponent else [],league.roster_positions)
+    from src.services.fantasy_outcomes import research as outcome_research
+    from src.services.waiver_guidance import guidance as waiver_guidance
+    recorded={str(k):v for r in matchrows if r.get('roster_id') in (mine.roster_id,(opponent or {}).get('roster_id'))
+              for k,v in (r.get('players_points') or {}).items()}
+    outcomes=outcome_research(by_id,list(map(str,mymatch.get('starters',[]))),
+        list(map(str,opponent.get('starters',[]))) if opponent else [],
+        list(map(str,mine.players)),league.roster_positions,recorded,now) if matchup.week==week else {
+        'status':'withheld','reason':'matchup_week_mismatch'}
     from src.services.fantasy_locks import lineup as locked_lineup, waivers as locked_waivers
     starters=list(map(str,mymatch.get('starters',[])))
     decisions_fresh=not stale and proj.week==week
@@ -368,13 +420,18 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
         'planning_week':planning_weeks[0] if planning_weeks else None,
         'planning_status':'aligned' if planning_weeks and planning_weeks[0]==week else 'awaiting_matching_week_snapshots',
         'lineup_simulation':simulation,
+        'outcome_simulation':outcomes,
         'lineup_decision':lineup_decision,
         'matchup_rosters':{'mine':mymatch,'opponent':opponent},
         'fallback_rankings':[{ 'player_id':p['player_id'],'name':p['name'],'tier':p['decision_tier'],
             'points':p['decision_points'],'locked':p['locked']} for p in sorted(players,
                 key=lambda p:(p['decision_points'] is None,-(p['decision_points'] or 0),p['name']))],
         'rosters':[{'roster_id':r.roster_id,'name':r.team_name or str(r.roster_id),'is_mine':r is mine,
-                    'player_ids':list(map(str,r.players))} for r in rosters],
+                    'player_ids':list(map(str,r.players)),
+                    'waiver_position':(r.settings or {}).get('waiver_position')} for r in rosters],
+        'waiver_guidance':waiver_guidance(players,list(map(str,mine.players)),owned,league.roster_positions),
+        'waiver_settings':{'platform':league.platform,'waiver_type':(league.settings or {}).get('waiver_type'),
+                           'waiver_clear_days':(league.settings or {}).get('waiver_clear_days')},
         'input_timestamps':{kind:row.synced_at.isoformat() for kind,row in latest.items() if kind in ('player_metadata','projections','matchups')},
         'model_version':'fantasy_decisions_v4','recipe_version':prospective_version(),
         'serving_replaced':False,'scoring_settings':league.scoring_settings,

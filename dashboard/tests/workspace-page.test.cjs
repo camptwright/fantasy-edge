@@ -18,7 +18,7 @@ const helpers=load('src/lib/workspace.ts',require);
 async function page(tool, status='snapshot_available', view='fantasy') {
   const calls=[];
   const overview={status,generated_at:null,expires_at:null,week:5,starters:[],notes:[],comparison_players:[],league_id:'a',matchup:{mine:null},lineup_changes:{status:'withheld',reason:'No evidence'}};
-  const fake = (name) => ({[name]: () => React.createElement('div',{'data-tool':name})});
+  const fake = () => new Proxy({}, {get: (_, name) => typeof name === 'string' ? () => React.createElement('div',{'data-tool':name}) : undefined});
   const module=load('src/app/workspace/page.tsx',id => {
     if(id==='@/lib/workspace') return helpers;
     if(id==='next/link') return {default:({children,...props})=>React.createElement('a',{href:props.href},children)};
@@ -27,18 +27,18 @@ async function page(tool, status='snapshot_available', view='fantasy') {
       return path.endsWith('/overview') ? overview : {items:[{league_id:'a',name:'My league',platform:'sleeper',sport:'nfl'}]};
     }};
     if(id==='@/components/SnapshotWindow') return {SnapshotWindow:({children})=>children};
-    if(id.startsWith('@/components/')) return fake(id.split('/').pop());
+    if(id.startsWith('@/components/')) return fake();
     return require(id);
   });
   return {html:renderToStaticMarkup(await module.default({searchParams:Promise.resolve({tool,view,league:'a'})})),calls};
 }
 test('fantasy screens render only their requested tools with two bounded reads',async()=>{
-  const expected={overview:['WorkspaceDailyBrief','WorkspaceMatchup'],team:['WorkspaceLineupReview','WorkspaceKeeper','WorkspaceRoster'],waivers:['WorkspaceResearchStatus','WorkspaceRoster'],players:['WorkspaceResearchStatus','WorkspaceComparison'],trade:['WorkspaceTrade']};
+  const expected={overview:['WorkspaceMatchup','QuickActions','WorkspaceDailyBrief','PositionStrength','WorkspaceOutlook'],startsit:['WorkspaceStartSit'],team:['WorkspaceRoster','WorkspaceLineupReview','WorkspaceKeeper'],waivers:['WorkspaceResearchStatus','WorkspaceEngineWaivers','WorkspaceRoster'],players:['WorkspaceResearchStatus','WorkspaceComparison'],trade:['WorkspaceTrade'],player:['WorkspacePlayerProfile']};
   for(const [tool,names] of Object.entries(expected)) {
     const {html,calls}=await page(tool);
     assert.equal(calls.length,2);
     assert.deepEqual([...html.matchAll(/data-tool="([^"]+)"/g)].map(m=>m[1]),names);
-    assert.match(html,new RegExp(`tool=${tool}`));
+    assert.match(html,new RegExp(`tool=${tool === 'player' ? 'team' : tool}`));
     assert.match(html,/aria-label="Fantasy tools"/);
   }
 });

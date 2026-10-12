@@ -1018,8 +1018,9 @@ def active_slate_validation():
 
 
 @router.get('/calibration/research')
-def shadow_research_scorecards():
-    report = live_calibration()
+async def shadow_research_scorecards(db: AsyncSession = Depends(get_db)):
+    from src.services.forecast_evidence import latest_grade
+    report = await latest_grade(db)
     return {'status': report.get('status'), 'graded_at': report.get('graded_at'),
         'shadow_reports': report.get('shadow_reports', []), 'automatic_deployment': False}
 

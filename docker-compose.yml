@@ -123,6 +123,8 @@ services:
     environment:
       NODE_ENV: production
       FANTASY_API_URL: http://api:8000
+      # Workspace cutover: the main API mounts the same /api/v2 read routes.
+      FANTASY_WORKSPACE_API_URL: http://api:8000
       FANTASY_API_TOKEN: "${FANTASY_API_TOKEN:?set FANTASY_API_TOKEN in .env}"
       # Remote dashboard remains fail-closed in middleware when unset.
       FANTASY_LOCAL_ONLY: "false"

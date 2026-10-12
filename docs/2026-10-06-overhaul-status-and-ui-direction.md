@@ -227,3 +227,219 @@ Amendment to E3:
   vacated-volume path when the starter is out).
 - The RB gap vs Sleeper is better addressed by E5 (accuracy-weighted blend
   with Sleeper/RotoWire) than by the engine alone.
+
+## October 12 — overhaul review from the top; fantasy area finished to research parity
+
+### Review of all six workstreams (what was improved, what is still open)
+
+| Workstream | Finding on review | Action this pass |
+| --- | --- | --- |
+| 1 Foundation | Sleeper catalog ingest trimmed `active`, so the catalog's "active players only" filter was a silent no-op; depth/status fields discarded | Ingest keeps `status`, `active`, `depth_chart_position/order`; daily create-only archive `raw/sleeper-depth-status/YYYYMMDD.json` (point-in-time evidence; the catalog snapshot itself is overwritten) |
+| 2 Fantasy workflows | On game days nearly every value is "Unknown/locked"; nothing looked past the current week; waivers had no rest-of-season view; no dedicated player screen | Engine research for this week → Week 18 attached to every QB/RB/WR/TE in the snapshot; ROS waiver research; player detail screen; roster outlook |
+| 3 Visual | Developer-console look: repeated slogans and paragraphs, no rail, evidence dumped inline | Shell + Fantasy home rebuilt (below). Still not screenshot-verified against WalterPicks/FantasyPros (no signed-in references supplied) |
+| 4 Models | v1 engine's flaws were backups/fringe/moved players (E3 amendment) | Depth/status variant built and captured prospectively beside v1 |
+| 5 Markets | Unchanged; still links to legacy pages styled as cards | Open (visual step 3) |
+| 6 Cutover | Unchanged | Open |
+
+### Depth/status variant (E3 amendment implemented)
+
+`src/services/projection_depth.py` post-adjusts v1 output (so v1's version and
+its prospective cohort are untouched): removes Out/IR/PUP/suspended/NFI and
+non-Active players, players whose catalog team differs, and players off a
+populated depth chart; only the top active depth-chart QB keeps pass volume
+(the next QB inherits it when the starter is out); team targets and carries
+are capped at the projected team volume, with vacated volume refilled up to
+×1.5. Questionable/Doubtful stay in (participation probability is E3 proper).
+
+Sanity check only — weeks 4–5 of 2026 using *today's* catalog (leaky: it
+knows post-game injuries and depth changes), not evidence of skill:
+
+| Week | Pool MAE v1 | Pool MAE depth | QB MAE v1 → depth | Removed but scored |
+| --- | --- | --- | --- | --- |
+| 4 | 6.09 | 5.27 | 8.97 → 2.49 | 28 of 290 removed |
+| 5 | 6.21 | 4.38 | 10.01 → 3.00 | 12 of 255 removed |
+
+The direction and size match the diagnosis (backup QBs and fringe players were
+the error). Qualification is prospective only: `capture` now freezes a second
+variant under `raw/projection-engine/depth/` (own version: v1 sources +
+`projection_depth.py`) whenever a Sleeper catalog with depth fields is at most
+two days old; `report(db, "depth")` grades it with the same harness. First
+depth catalog arrives with the next daily Sleeper catalog fetch (~00:13 UTC).
+
+### Engine research in the fantasy product
+
+- `projection_engine_serving.py` (scheduled with the 30-minute engine task):
+  depth variant over every remaining regular-season game, stored in derived
+  checkpoint `projection_engine:research`. Games without a market line use
+  each team's mean implied points over its last 8 lined games
+  (`team_average_no_line`, labeled in the UI with outlined cells). The nearest
+  game per team applies all designations; later weeks only multi-game ones
+  (an Out covers one game). First run: 553 players, 170 games, 15 lined.
+- `fantasy_decision_models.engine_research` scores it with each league's own
+  scoring (ESPN position overrides included) for the selected week, the next
+  weeks and ROS over not-yet-started games; stale (>3 h), unresolved, K/DEF
+  are explicit statuses, never zero. Reader split into `engine_research.py`
+  and registered in `projection_identity.PREDICTION` (the versioned-dependency
+  tripwire caught the first attempt). This changes the fantasy prediction
+  version, so a new fantasy prospective cohort starts (expected by design).
+- Workspace API: `engine_*` fields on every player; `engine_waivers` = top 3
+  unrostered per position by engine ROS vs your weakest same-position player.
+
+### Shell and Fantasy screens (visual step 1 + parts of step 2)
+
+- Desktop navigation rail with nested Fantasy tools; mobile sticky header and
+  bottom tab bar; compact page header (league · week, freshness badge,
+  "Research only" chip); league chips; repeated slogans and paragraphs moved
+  into one "Evidence and limitations" disclosure.
+- Overview/Today: matchup scorecard (recorded score, provider pregame, engine
+  offense total with coverage n/m, starter table with provider and engine
+  columns), numbered priorities (now including engine ROS waiver research),
+  roster outlook heat table (next 5 weeks + ROS).
+- My team: compact roster table (provider, engine this week, next 4 weeks,
+  ROS) above lineup review and keeper review.
+- Waivers: rest-of-season targets table above the weekly lock-preserving moves.
+- Player screen (`tool=player&player=…`): header chips, stat tiles, weekly
+  engine bars, evidence list. Reached from every player row.
+
+Verification: 994 backend tests pass (1 skipped), 40 frontend tests,
+TypeScript and lint clean; deployed api/worker/evaluation/beat and the
+workspace preview.
+
+### Still open in the fantasy area (genuine gaps, not waits)
+
+- FAAB bid ranges: no bid model; league transaction history (`waiver_bid`)
+  could support an evidence view of past winning bids — not built.
+- Keeper surplus pricing: needs next-season ADP/pick evidence (unchanged).
+- Win-probability lineup mode and correlated simulation (E4) and the
+  accuracy-weighted Sleeper/engine blend (E5).
+- Screenshot-based visual parity with WalterPicks/FantasyPros and browser
+  acceptance at phone/desktop widths with keyboard checks (needs Chrome).
+
+## October 12 (later) — E4 simulation, E5 blend, waiver guidance, reference-matched screens, Markets
+
+Owner direction: FAAB and keeper pricing deferred (no league uses FAAB);
+waiver guidance, win-probability lineups, correlated simulation and the
+Sleeper/engine blend required; visual matching from public screenshots.
+
+### E4 correlated simulation + E5 blend (`fantasy_outcomes.py`, `scripts/fit_fantasy_outcomes.py`)
+
+- Marginals: per position, sd = a + b·mean with empirical standardized-residual
+  quantiles (skew and bust mass from data), fitted on 1,191 frozen pre-kickoff
+  Sleeper projections graded on platform finals (2026 weeks 2–5).
+- Dependence: Gaussian copula with pair-type correlations from nflverse 2025
+  residuals — same:QB-WR +0.33, same:QB-TE +0.35, opp:QB-QB +0.20,
+  same:RB-RB −0.09, opp:TE-TE −0.13; K/DEF independent (stated).
+- Leave-one-week-out checks: p10/p90 coverage 11.1% / 10.8% (target 10/10);
+  24 held-out head-to-head matchups: Brier 0.2226 correlated, 0.2230
+  independent, 0.25 coin flip — direction right, sample far too small to call
+  it validated.
+- Blend: the squared-error-optimal engine weights (QB 0.10, RB 0.12, WR 0.07,
+  TE 0.20 after shrinkage) did **not** beat Sleeper out of sample with the v1
+  engine (MAE 5.881 vs 5.865), so the applied blend is provider-only
+  (`blend_status: provider_only_blend_not_better_out_of_sample`). The
+  candidate weights are graded prospectively in every engine report
+  (`candidate_blend`, weeks after the fit only); the depth variant is the
+  likelier winner.
+- In the snapshot: win probability vs the opponent, the max-win-probability
+  lineup over unlocked slots (chosen on half the draws, reported on the
+  other), player p10/p50/p90, boom/bust and a density for charts. Finished
+  games enter at recorded platform points; any started-but-unfinished game
+  withholds the estimate (no remaining-points model). Model file and module
+  are part of the fantasy prediction identity.
+
+### Waiver guidance (`waiver_guidance.py`, no FAAB)
+
+Raw ROS points ranked backup QBs first; replaced by marginal lineup value:
+for every remaining week the best offensive lineup is solved with and without
+each add/drop, gains summed (byes and unavailability count as zero). Best drop
+per add, required K/DEF never dropped, K/DEF streaming from provider weekly
+projections (top 3). Tiers by explicit thresholds; Sleeper rolling-waiver
+priority and clear days shown. Live: TE upgrades, bye-week QB cover, IR drops.
+
+### Reference-based visual decisions (App Store screenshots, Oct 12)
+
+Sources: WalterPicks iOS listing (id1521523140) and FantasyPros iOS listing
+(id1141119371); 12 screenshots reviewed, 6 substantive.
+
+| Reference pattern | Decision |
+| --- | --- |
+| FantasyPros dark navy surfaces | Adopted: Tailwind `slate` retinted navy app-wide; Fantasy Edge emerald accent kept for identity |
+| FP My Playbook quick tiles (Lineup/Waiver/Trade/League) | Adopted on Today: Lineup, Start/Sit, Waivers, Trade |
+| FP matchup card with win bar | Adopted: recorded scores + simulated win-probability bar and ranges |
+| FP Power Rankings ring + positional bars | Adopted as "League strength" from engine ROS starters (research label) |
+| FP rankings Upside/Bust 5-segment meters | Adopted in roster table and player screens from simulated boom/bust |
+| WalterPicks "Who do I start?" bars + boom/bust curve | Adopted as the Start/Sit tool, with max-win lineup on top |
+| WalterPicks gamelog heat table with "Projected" divider | Adopted on player screen: league-scored results, then engine weeks |
+| WalterPicks trade value bars + per-position delta tiles | Not yet built (next) |
+| WalterPicks white/blue light theme, photos, AI copy | Rejected: dark theme kept; no player photos (no licensed source); no AI/consensus claims |
+
+### Markets in the shell (visual step 3, first slice)
+
+Native Markets summary: actionable vs research signal counts, ledger counts,
+briefing, upcoming signals table (actionable first, exclusion reason on every
+research row), then links to full tools. Live: 0 actionable, 258 research.
+
+Verification: 1,007 backend tests (1 skipped), 42 frontend tests, tsc/lint
+clean; deployed; release audit matched.
+
+### Overhaul status after this pass
+
+Not complete. Open: trade screen redesign (WalterPicks tiles), native
+ledger/parlay screens, Research/Settings native views, prospective
+qualification of the depth variant and candidate blend (needs ≥6 graded
+weeks), larger win-probability validation sample, phone-width/keyboard
+acceptance in a real browser, and cutover (duplicate route retirement).
+
+## October 12 (final) — trade redesign, native Research/Settings/ledger, cutover
+
+### Trade screen (WalterPicks trade value bars + position delta tiles)
+
+`src/services/trade_outlook.py` (request-time, outside the versioned
+prediction): for each side the best offensive lineup is re-solved every
+remaining week before and after the trade (plus any explicit add/drop plan);
+byes and missing engine research count as zero and are named. Output: summed
+lineup gain, per-position split by the starting player's position, weekly
+gains, and per-player engine ROS points. The trade preview returns it as
+`outlook`; `WorkspaceTradeOutlook.tsx` renders value bars, QB/RB/WR/TE delta
+tiles and a diverging weekly bar strip above the existing history-based check.
+Live example: Zay Flowers for Jahmyr Gibbs → +27.2 / −38.4 lineup points.
+
+### Native Research and Settings
+
+- `GET /api/v2/fantasy/engine-qualification` reads the latest saved prospective
+  reports (v1, v1 + Sleeper blend, depth variant) and the win-probability check;
+  missing/unreadable reports are statuses, never zeros. Never promotes.
+- Research: calibration gates, daily evaluation, NFL lab forecasts, qualification
+  progress toward 6 graded weeks, win-probability check, calibration table.
+- Settings: service status/alerts, Odds API remaining, provider daily budgets.
+- Fixed a live HTTP 500: `/calibration/research` called the now-async live
+  calibration handler without awaiting it.
+
+### Win-probability sample now grows prospectively
+
+`src/services/outcome_prospective.py`, run by the 30-minute engine research
+task: freezes each league's pregame win probability (only while no starter's
+game has begun), then grades the latest pregame capture per matchup once the
+NFL week is final and settled (24 h) against the platform matchup snapshot.
+Brier vs coin flip is shown on Research. First captures: week 6.
+
+### Cutover
+
+- Every route renders inside the new shell (`WorkspaceNav` in the root layout);
+  full tools (Best Bets, Board, Ledger, Parlays, Calibration, Providers,
+  Operations, Experiments, Fantasy evidence) highlight their workspace.
+- Retired with HTTP 307 redirects (league query preserved): `/` → Today,
+  `/fantasy` → My team, `/fantasy/matchup` → Overview, `/fantasy/values` →
+  Players, `/fantasy/trade` → Trade, `/nfl-predictor` → Experiments.
+- Deleted the legacy fantasy UI (old Nav/FantasyNav, AdviceButton, legacy trade
+  calculator/values views) and its Next API proxies.
+- Production dashboard gets `FANTASY_WORKSPACE_API_URL=http://api:8000` (the
+  main API mounts the same v2 routes); Cloudflare Access gating unchanged.
+- Ledger and Parlay screens restyled to the shell (tiles, table, no raw JSON).
+
+### Status
+
+Overhaul complete for the build work. Time-gated only: depth variant and blend
+qualification (6 graded weeks), win-probability sample growth. Deferred by the
+owner: FAAB, keeper value pricing. Still owner-side: real-browser keyboard and
+phone acceptance through Chrome.

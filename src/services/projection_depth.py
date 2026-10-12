@@ -1,0 +1,170 @@
+"""Depth-chart and roster-status adjustment for projection engine v1 (E3 amendment).
+
+The v1 walk-forward's real flaws were healthy backups and fringe players
+getting a typical player's share, and a per-team share cap failed because
+the engine could not tell who was active (docs/2026-10-06-overhaul-status-
+and-ui-direction.md, "E3 amended"). Sleeper's catalog carries the missing
+inputs: `status`, `injury_status`, `team`, `depth_chart_position`,
+`depth_chart_order`. This module post-adjusts v1 output with them:
+
+1. Unavailable: a non-Active status or a definitive designation (Out, IR,
+   PUP, suspended, NFI) removes the player. Questionable/Doubtful stay in:
+   participation probability is E3 proper, not this rule.
+2. Moved: a player whose catalog team is no longer the projected team is
+   removed from that team.
+3. Off the depth chart: removed, but only where the team has depth-charted
+   players at that position, so a missing chart never empties a team.
+4. QB: only the highest active depth-chart QB keeps pass volume. When the
+   starter is removed, the next active QB inherits the starter's attempts.
+5. Team volume: remaining players' targets and carries are scaled together
+   so the team sums to min(original sum, projected team volume), with the
+   boost from vacated volume capped at MAX_BOOST.
+
+No historical depth charts exist, so this variant cannot be backtested; it
+is captured prospectively beside v1 under its own version and graded by the
+same harness. Never promoted automatically.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections import defaultdict
+from dataclasses import dataclass, replace
+from datetime import datetime
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.models.facts import Game
+from src.models.identity import Team
+from src.services.game_environment import environments
+from src.services.projection_engine import DEFAULT, Params, Projection, compute, load_history
+
+RECIPE = "projection_engine_v1_depth"
+UNAVAILABLE = {"Out", "IR", "PUP", "Sus", "NFI", "NA", "DNR", "COV"}
+# Designations that span more than one game, for projecting later weeks.
+LONG_TERM = UNAVAILABLE - {"Out"}
+MAX_BOOST = 1.5
+RECEIVING = ("targets", "receptions", "receiving_yards", "receiving_touchdowns", "receiving_2pt_conversions")
+RUSHING = ("rushing_attempts", "rushing_yards", "rushing_touchdowns", "rushing_2pt_conversions")
+PASSING = ("passing_attempts", "passing_completions", "passing_yards", "passing_touchdowns",
+           "passing_interceptions", "passing_2pt_conversions")
+ALIAS = {"LA": "LAR", "WSH": "WAS", "JAC": "JAX"}
+
+
+@dataclass(frozen=True)
+class DepthStatus:
+    team_id: uuid.UUID | None
+    status: str | None
+    injury_status: str | None
+    depth_position: str | None
+    depth_order: int | None
+
+    def available(self, unavailable: frozenset[str] | set[str] = UNAVAILABLE) -> bool:
+        return (self.status in (None, "Active")) and self.injury_status not in unavailable
+
+
+def _scale(stats: dict[str, float], keys: tuple[str, ...], factor: float) -> dict[str, float]:
+    return {k: (v * factor if k in keys else v) for k, v in stats.items()}
+
+
+def _touches(stats: dict[str, float]) -> float:
+    return stats.get("targets", 0.0) + stats.get("rushing_attempts", 0.0) + 0.1 * stats.get("passing_attempts", 0.0)
+
+
+def adjust(projections: dict[uuid.UUID, Projection], depth: dict[uuid.UUID, DepthStatus],
+           targets_per_attempt: float, unavailable: set[str] = UNAVAILABLE,
+           ) -> tuple[dict[uuid.UUID, Projection], dict[uuid.UUID, str]]:
+    """Pure core. Returns (adjusted projections, {removed player: reason}).
+
+    Players with no catalog entry are kept unchanged: unknown is not inactive.
+    `unavailable` is the set of designations that remove a player; later
+    weeks use LONG_TERM, since an Out designation covers one game.
+    """
+    removed: dict[uuid.UUID, str] = {}
+    by_team: dict[tuple, list[Projection]] = defaultdict(list)
+    for p in projections.values():
+        by_team[(p.game_id, p.team_id)].append(p)
+    out: dict[uuid.UUID, Projection] = {}
+    for (_, team_id), members in by_team.items():
+        charted = {p.position for p in members
+                   if (d := depth.get(p.player_id)) and d.team_id == team_id and d.depth_order is not None}
+        keep: list[Projection] = []
+        for p in members:
+            d = depth.get(p.player_id)
+            if d is None:
+                keep.append(p)
+            elif not d.available(unavailable):
+                removed[p.player_id] = "unavailable"
+            elif d.team_id is not None and d.team_id != team_id:
+                removed[p.player_id] = "moved_team"
+            elif d.depth_order is None and p.position in charted:
+                removed[p.player_id] = "off_depth_chart"
+            else:
+                keep.append(p)
+        # QB: one passer. Rank active QBs by depth order (unknown last), then
+        # by projected attempts; the starter takes the team's QB attempts.
+        qbs = sorted((p for p in members if p.position == "QB"),
+                     key=lambda p: -p.stats.get("passing_attempts", 0.0))
+        team_attempts = qbs[0].stats.get("passing_attempts", 0.0) if qbs else 0.0
+        active_qbs = sorted((p for p in keep if p.position == "QB"), key=lambda p: (
+            (depth[p.player_id].depth_order if p.player_id in depth and depth[p.player_id].depth_order is not None else 99),
+            -p.stats.get("passing_attempts", 0.0)))
+        stats = {p.player_id: dict(p.stats) for p in keep}
+        for i, qb in enumerate(active_qbs):
+            own = stats[qb.player_id].get("passing_attempts", 0.0)
+            factor = (team_attempts / own if own > 0 else 0.0) if i == 0 else 0.0
+            stats[qb.player_id] = _scale(stats[qb.player_id], PASSING, factor)
+        # Team volume: cap at the projected team total, refill vacated volume.
+        cap = {"targets": members[0].team_pass_attempts * targets_per_attempt,
+               "rushing_attempts": members[0].team_carries}
+        for stat, keys in (("targets", RECEIVING), ("rushing_attempts", RUSHING)):
+            original = sum(p.stats.get(stat, 0.0) for p in members)
+            current = sum(s.get(stat, 0.0) for s in stats.values())
+            if current <= 0:
+                continue
+            factor = min(min(original, cap[stat]) / current, MAX_BOOST)
+            for pid in stats:
+                stats[pid] = _scale(stats[pid], keys, factor)
+        for p in keep:
+            before, after = _touches(p.stats), _touches(stats[p.player_id])
+            if before > 0:
+                stats[p.player_id]["fumbles_lost"] = p.stats.get("fumbles_lost", 0.0) * after / before
+            out[p.player_id] = replace(p, stats=stats[p.player_id])
+    return out, removed
+
+
+async def depth_inputs(db: AsyncSession, catalog: dict[str, dict]) -> dict[uuid.UUID, DepthStatus]:
+    """Sleeper catalog (player_id -> fields) to canonical player ids."""
+    from src.services.player_identity import resolve_platform_players
+    relevant = {pid: info for pid, info in catalog.items()
+                if isinstance(info, dict) and info.get("position") in ("QB", "RB", "WR", "TE")}
+    resolved = await resolve_platform_players(db, "sleeper", sorted(relevant))
+    teams = (await db.scalars(select(Team).where(Team.sport == "nfl"))).all()
+    team_by_abbr = {ALIAS.get(t.nflverse_abbr, t.nflverse_abbr): t.id for t in teams if t.nflverse_abbr}
+    out = {}
+    for pid, player in resolved.items():
+        info = relevant[pid]
+        abbr = info.get("team")
+        order = info.get("depth_chart_order")
+        out[player.id] = DepthStatus(
+            team_id=team_by_abbr.get(ALIAS.get(abbr, abbr)) if abbr else None,
+            status=info.get("status"), injury_status=info.get("injury_status"),
+            depth_position=info.get("depth_chart_position"),
+            depth_order=int(order) if isinstance(order, (int, float)) else None)
+    return out
+
+
+async def project(db: AsyncSession, target_games: list[Game], cutoff: datetime,
+                  depth: dict[uuid.UUID, DepthStatus], *, params: Params = DEFAULT):
+    """v1 projections for target_games, then the depth/status adjustment."""
+    seasons = sorted({g.season for g in target_games} | {min(g.season for g in target_games) - 1})
+    history = await load_history(db, seasons, cutoff)
+    env = await environments(db, [g.id for g in target_games], as_of=cutoff)
+    targets = [(g, env[g.id].home_points, env[g.id].away_points, env[g.id].home_spread)
+               for g in target_games if g.id in env]
+    base = compute(history, targets, cutoff, params)
+    teams = [t for t in history.teams.values() if t.kickoff < cutoff]
+    attempts = sum(t.pass_attempts for t in teams)
+    tpa = sum(t.targets for t in teams) / attempts if attempts else 1.0
+    return adjust(base, depth, tpa)

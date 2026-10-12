@@ -94,8 +94,15 @@ def projection_engine_research():
         async with get_worker_db() as db:
             captured=await capture(db)
             graded=await report(db)
-        return {'capture':captured,'statuses':graded['statuses'],
-                'promotion_blockers':graded['promotion']['blockers'],'serving_promoted':False}
+            depth=await report(db,'depth')
+            from src.services.projection_engine_serving import refresh
+            research=await refresh(db)
+            from src.services import outcome_prospective
+            win=await outcome_prospective.capture(db)
+            win_report=await outcome_prospective.report(db)
+        return {'capture':captured,'win_probability':{'captured':win,'statuses':win_report['statuses']},'statuses':graded['statuses'],
+                'promotion_blockers':graded['promotion']['blockers'],
+                'depth_statuses':depth['statuses'],'research':research,'serving_promoted':False}
     return asyncio.run(run())
 
 

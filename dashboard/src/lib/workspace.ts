@@ -8,6 +8,14 @@ export type Workspace = typeof WORKSPACES[number]["id"];
 export function workspaceView(value?: string): Workspace {
   return WORKSPACES.find(view => view.id === value)?.id ?? "today";
 }
+/** Which workspace owns a full-tool route, for navigation state outside /workspace. */
+export function routeWorkspace(pathname: string | null): Workspace {
+  const top = (pathname ?? "/").split("/")[1] ?? "";
+  if (["best-bets", "board", "ledger", "parlays", "recommendations"].includes(top)) return "markets";
+  if (["experimental", "calibration", "nfl-predictor"].includes(top) || pathname?.startsWith("/fantasy/models")) return "research";
+  if (["providers", "operations"].includes(top)) return "settings";
+  return top === "fantasy" ? "fantasy" : "today";
+}
 export function workspaceHref(view: Workspace, league?: string): string {
   const query = new URLSearchParams({ view });
   if (league) query.set("league", league);
@@ -18,12 +26,32 @@ export function fantasyHref(path: string, league?: string): string {
 }
 export const FANTASY_TOOLS = [
   {id: 'overview', label: 'Overview'}, {id: 'team', label: 'My team'},
+  {id: 'startsit', label: 'Start/Sit'},
   {id: 'waivers', label: 'Waivers'}, {id: 'players', label: 'Players'},
   {id: 'trade', label: 'Trade analyzer'},
 ] as const;
-export type FantasyTool = typeof FANTASY_TOOLS[number]['id'];
+/** `player` is a detail screen reached from rows, not a tab. */
+export type FantasyTool = typeof FANTASY_TOOLS[number]['id'] | 'player';
 export function fantasyTool(value?: string): FantasyTool {
+  if (value === 'player') return 'player';
   return FANTASY_TOOLS.find(tool => tool.id === value)?.id ?? 'overview';
+}
+export function playerProfileHref(league: string | undefined, player: string): string {
+  return `${fantasyToolHref('player', league)}&${new URLSearchParams({player})}`;
+}
+/** Points for display: one decimal, or an em dash for unknown (never zero). */
+export function pts(value: number | null | undefined): string {
+  return value == null || !Number.isFinite(value) ? '—' : value.toFixed(1);
+}
+export function ageLabel(iso: string | null | undefined, now: number): string {
+  const at = iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(at)) return 'age unknown';
+  const minutes = Math.max(0, Math.round((now - at) / 60000));
+  return minutes < 1 ? 'just now' : minutes < 60 ? `${minutes} min ago` : `${Math.round(minutes / 60)} h ago`;
+}
+/** Engine weekly points for weeks [first, first+count), null where no game/projection (bye or missing). */
+export function engineWeeks(player: {engine_weeks: {week:number; points:number; environment:string}[]}, first: number, count: number) {
+  return Array.from({length: count}, (_, i) => player.engine_weeks.find(w => w.week === first + i) ?? null);
 }
 export function fantasyToolHref(tool: FantasyTool, league?: string): string {
   return `${workspaceHref('fantasy', league)}&${new URLSearchParams({tool})}`;
@@ -49,6 +77,8 @@ export function dailyReview(overview: Overview): {title: string; detail: string;
   if (unknown) rows.push({title: `${unknown} unpriced roster player${unknown === 1 ? '' : 's'}`, detail: 'Unknown points are not zero. Review identity, scoring and history coverage.', tool: 'team', attention: true});
   const changes = overview.lineup_changes;
   rows.push({title: changes.status === 'available' && changes.start.length ? `${changes.start.length} candidate lineup change${changes.start.length === 1 ? '' : 's'}` : 'Review your lineup', detail: changes.reason, tool: 'team', attention: false});
+  const engineAdds = (overview.engine_waivers?.rows ?? []).filter(r => r.ros_gain != null && r.ros_gain > 0);
+  if (engineAdds.length) rows.push({title: `${engineAdds.length} waiver add${engineAdds.length === 1 ? '' : 's'} would improve your starting lineup`, detail: `Waiver guidance (engine research), led by ${engineAdds[0].add.name} for ${engineAdds[0].compare?.name ?? 'a bench player'}: +${engineAdds[0].ros_gain!.toFixed(1)} lineup points over the remaining weeks. Not validated; nothing is claimed for you.`, tool: 'waivers', attention: false});
   rows.push({title: overview.waivers.moves.length ? `${overview.waivers.moves.length} waiver alternative${overview.waivers.moves.length === 1 ? '' : 's'} to compare` : 'Explore waiver coverage', detail: 'Each add/drop is an alternative, not a combined plan. Check platform availability and waiver rules.', tool: 'waivers', attention: false});
   return rows;
 }
@@ -116,4 +146,12 @@ export function availabilityLabel(status?: string): string {
     case 'reported_restriction_requires_review': return 'Reported restriction — review before lineup or trade decisions';
     default: return 'Not supplied — availability unconfirmed';
   }
+}
+
+/** 0-5 filled segments for a probability; caps at `full` (FantasyPros-style meter). */
+export function meterSegments(probability: number | null | undefined, full = 0.4): number | null {
+  return probability == null || !Number.isFinite(probability) ? null : Math.max(0, Math.min(5, Math.round(probability / full * 5)));
+}
+export function pct(value: number | null | undefined): string {
+  return value == null || !Number.isFinite(value) ? '—' : `${Math.round(value * 100)}%`;
 }

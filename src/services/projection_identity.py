@@ -25,6 +25,9 @@ PREDICTION = {
     'result_eligibility': None,
     'lab_availability': None,
     'injury_evidence': {'game_snapshots', 'for_game'},
+    'engine_research': None,
+    'fantasy_outcomes': None,
+    'waiver_guidance': None,
 }
 CAPTURE = {
     'fantasy_prospective': {'candidates', 'capture_forecasts'},
@@ -103,7 +106,9 @@ def manifest(root=ROOT, runtime=None):
     prediction = {'code': components(PREDICTION), 'runtime': runtime,
         'identity_rules': semantic_component(Path(__file__).read_text()),
         'espn_scoring_constants': semantic_component((root / 'src/ingest/espn_fantasy_constants.py').read_text()),
-        'player_crosswalk': digest(json.loads((root / 'config/nfl_player_lab_ids.json').read_text()))}
+        'player_crosswalk': digest(json.loads((root / 'config/nfl_player_lab_ids.json').read_text())),
+        'outcome_model': digest(json.loads((root / 'config/fantasy_outcome_model.json').read_text()))
+        if (root / 'config/fantasy_outcome_model.json').exists() else None}
     capture = {'code': components(CAPTURE)}
     evaluator = {'code': components(EVALUATOR), 'runtime': runtime}
     prediction_version = digest(prediction)

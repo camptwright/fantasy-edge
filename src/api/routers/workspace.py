@@ -84,6 +84,31 @@ class TradeSide(BaseModel):
     availability_review_players: list[str] = Field(default_factory=list)
 
 
+class TradeWeek(BaseModel):
+    week: int
+    gain: float
+
+
+class TradeOutlookSide(BaseModel):
+    team: str | None = None
+    status: str
+    weeks: int | None = None
+    lineup_gain: float | None = None
+    by_position: dict[str, float] = Field(default_factory=dict)
+    weekly: list[TradeWeek] = Field(default_factory=list)
+    unmodeled_players: list[str] = Field(default_factory=list)
+
+
+class TradeOutlook(BaseModel):
+    status: str
+    side_a: TradeOutlookSide | None = None
+    side_b: TradeOutlookSide | None = None
+    player_ros_points: dict[str, float | None] = Field(default_factory=dict)
+    note: str = ('Engine research: each remaining week your best offensive lineup is re-solved before and after the trade '
+                 '(byes and missing projections count as zero), summed by the starting player\'s position. '
+                 'Not validated, not market value, and not acceptance advice.')
+
+
 class TradeResult(BaseModel):
     status: str
     actionable: Literal[False] = False
@@ -92,6 +117,7 @@ class TradeResult(BaseModel):
     expires_at: datetime
     side_a: TradeSide | None = None
     side_b: TradeSide | None = None
+    outlook: TradeOutlook | None = None
     note: str = 'Conditional offensive lineup points per game, not ROS gains, market fairness or acceptance advice. No byes, injury recovery, keeper pricing or transaction processing modeled.'
 
 
@@ -132,6 +158,7 @@ def trade_context(data: dict, request: TradeRequest) -> TradeResult:
     raw = compare({**data, 'players': safe_players}, request.side_a, request.side_b, adjustments=plans)
     result.status = raw['status']
     result.blockers = raw.get('blockers', [])
+    result.outlook = trade_outlook_context(data, by_id, request, plans)
     for key in ('side_a', 'side_b'):
         if raw.get(key):
             setattr(result, key, TradeSide(team=raw[key]['team'],
@@ -142,6 +169,23 @@ def trade_context(data: dict, request: TradeRequest) -> TradeResult:
                 roster_size_before=raw[key].get('roster_size_before'), roster_size_after=raw[key].get('roster_size_after'), conditional_lineup_gain=
                 finite_points(raw[key].get('conditional_lineup_gain')) if result.status == 'research_candidate' else None))
     return result
+
+
+def trade_outlook_context(data: dict, by_id: dict, request: TradeRequest, plans: dict) -> TradeOutlook:
+    from src.services.trade_outlook import outlook
+    raw = outlook(data, request.side_a, request.side_b, plans)
+    if raw['status'] != 'research':
+        return TradeOutlook(status=raw['status'])
+    def side(row):
+        if row.get('status') != 'research':
+            return TradeOutlookSide(team=row.get('team'), status=row.get('status', 'unavailable'))
+        return TradeOutlookSide(team=row.get('team'), status='research', weeks=row['weeks'],
+            lineup_gain=finite_points(row['lineup_gain']),
+            by_position={k: v for k, v in row['by_position'].items() if finite_points(v) is not None},
+            weekly=[TradeWeek(**w) for w in row['weekly']],
+            unmodeled_players=[by_id.get(pid, {}).get('name') or pid for pid in row['unmodeled_player_ids']])
+    return TradeOutlook(status='research', side_a=side(raw['side_a']), side_b=side(raw['side_b']),
+                        player_ros_points={k: finite_points(v) for k, v in raw['player_ros_points'].items()})
 
 
 @router.post('/leagues/{league_id}/trade-preview', response_model=TradeResult)
@@ -307,6 +351,9 @@ class Overview(BaseModel):
     roster_players: list['PlayerDetail'] = Field(default_factory=list)
     comparison_players: list['PlayerDetail'] = Field(default_factory=list)
     waivers: 'WaiverView' = Field(default_factory=lambda: WaiverView())
+    engine_waivers: 'EngineWaivers' = Field(default_factory=lambda: EngineWaivers())
+    outcomes: 'OutcomeView' = Field(default_factory=lambda: OutcomeView())
+    strength: 'StrengthView' = Field(default_factory=lambda: StrengthView())
     research: FantasyResearch = Field(default_factory=FantasyResearch)
 
 
@@ -329,6 +376,33 @@ class SpecialistResearch(BaseModel):
     horizon_status: str
     scope: str
     serving_promoted: Literal[False] = False
+
+
+class GameLogWeek(BaseModel):
+    week: int
+    points: float
+
+
+class PositionStrength(BaseModel):
+    position: str
+    value: float | None = None
+    rank: int | None = None
+    teams: int = 0
+    league_best: float | None = None
+
+
+class StrengthView(BaseModel):
+    status: str = 'unavailable'
+    scope: str = 'engine_ros_research_best_starters_by_position_not_validated'
+    overall_rank: int | None = None
+    teams: int = 0
+    positions: list[PositionStrength] = Field(default_factory=list)
+
+
+class EngineWeek(BaseModel):
+    week: int
+    points: float
+    environment: str
 
 
 class PlayerDetail(BaseModel):
@@ -362,6 +436,111 @@ class PlayerDetail(BaseModel):
     roster_names: list[str] = Field(default_factory=list)
     roster_id: str | None = None
     specialist_ros_research: SpecialistResearch | None = None
+    # Engine research (projection_engine_serving): conditional on playing,
+    # not prospectively qualified, never a decision input.
+    engine_status: str = 'unknown'
+    engine_week_points: float | None = None
+    engine_ros_points: float | None = None
+    engine_ros_games: int = 0
+    engine_ros_lined_games: int = 0
+    engine_weeks: list[EngineWeek] = Field(default_factory=list)
+    engine_generated_at: str | None = None
+    game_log: list[GameLogWeek] = Field(default_factory=list)
+
+
+class EngineWaiverRow(BaseModel):
+    add: PlayerDetail
+    compare: PlayerDetail | None = None
+    ros_gain: float | None = None
+    week: int | None = None
+    week_gain: float | None = None
+    tier: Literal['priority', 'consider', 'depth', 'stream'] = 'depth'
+    reasons: list[str] = Field(default_factory=list)
+
+
+class EngineWaivers(BaseModel):
+    status: str = 'unavailable'
+    scope: str = 'engine_research_ros_not_validated'
+    rows: list[EngineWaiverRow] = Field(default_factory=list)
+    waiver_type: str = 'unknown'
+    waiver_position: int | None = None
+    teams: int | None = None
+    waiver_clear_days: int | None = None
+    tier_rule: str = ('priority: adds >= 15 starting-lineup points over the remaining weeks; consider: >= 5; '
+                      'depth: positive but smaller; stream: K/DEF weekly provider gain. '
+                      'Engine research thresholds, not validated value.')
+
+
+class PlayerRange(BaseModel):
+    density: list[float] = Field(default_factory=list)  # 2-point bins from -4 to 50
+    mean: float | None = None
+    p10: float | None = None
+    p50: float | None = None
+    p90: float | None = None
+    boom_probability: float | None = None
+    bust_probability: float | None = None
+    basis: str = 'unknown'
+
+
+class LineupChange(BaseModel):
+    slot: str
+    start: str
+    start_name: str
+    replaces: str
+    replaces_name: str
+
+
+class OutcomeView(BaseModel):
+    status: str = 'unavailable'
+    reason: str = 'No outcome simulation in this snapshot.'
+    validated: Literal[False] = False
+    win_probability: float | None = None
+    monte_carlo_standard_error: float | None = None
+    mean: float | None = None
+    opponent_mean: float | None = None
+    p10: float | None = None
+    p90: float | None = None
+    opponent_p10: float | None = None
+    opponent_p90: float | None = None
+    best_win_probability: float | None = None
+    best_expected_points: float | None = None
+    best_changes: list[LineupChange] = Field(default_factory=list)
+    known_final_starters: int = 0
+    blockers: list[str] = Field(default_factory=list)
+    player_ranges: dict[str, PlayerRange] = Field(default_factory=dict)
+    blend_status: str | None = None
+    validation_matchups: int | None = None
+    validation_brier: float | None = None
+    coin_flip_brier: float | None = None
+    assumptions: list[str] = Field(default_factory=list)
+
+
+def outcome_context(data: dict, by_id: dict) -> OutcomeView:
+    stored = data.get('outcome_simulation') or {}
+    model = stored.get('model') or {}
+    matchups = ((model.get('validation') or {}).get('matchups') or {})
+    view = OutcomeView(status=stored.get('status', 'unavailable'), reason=stored.get('reason') or OutcomeView().reason,
+        blend_status=model.get('blend_status'), validation_matchups=matchups.get('n'),
+        validation_brier=(matchups.get('correlated') or {}).get('brier'),
+        coin_flip_brier=(matchups.get('coin') or {}).get('brier'), assumptions=stored.get('assumptions', []),
+        blockers=[f"{b.get('name')}: {str(b.get('reason')).replace('_', ' ')}" for b in stored.get('blockers', [])])
+    if view.status != 'estimated_research':
+        return view
+    current = stored.get('current') or {}
+    for key in ('win_probability', 'monte_carlo_standard_error', 'mean', 'opponent_mean', 'p10', 'p90',
+                'opponent_p10', 'opponent_p90'):
+        setattr(view, key, finite_points(current.get(key)))
+    best = stored.get('max_win_probability_lineup') or {}
+    view.best_win_probability = finite_points(best.get('win_probability'))
+    view.best_expected_points = finite_points(best.get('expected_points'))
+    name = lambda pid: (by_id.get(pid) or {}).get('name') or 'Unresolved player'
+    view.best_changes = [LineupChange(slot=c['slot'], start=c['start'], start_name=name(c['start']),
+                                      replaces=c['replaces'], replaces_name=name(c['replaces']))
+                         for c in best.get('changes', [])]
+    view.known_final_starters = stored.get('known_final_starters', 0)
+    view.player_ranges = {pid: PlayerRange(**{k: v if k in ('basis', 'density') else finite_points(v) for k, v in r.items()})
+                          for pid, r in (stored.get('player_ranges') or {}).items()}
+    return view
 
 
 class WaiverMove(BaseModel):
@@ -412,7 +591,109 @@ def player_detail(player: dict) -> PlayerDetail:
         ros_points=finite_points(ros.get('full_ros_value')) if full_ros else None,
         known_schedule_subtotal=finite_points(ros.get('known_schedule_subtotal')),
         known_remaining_games=ros.get('known_remaining_games'), unknown_kickoffs=ros.get('unknown_kickoffs'),
-        through_week=ros.get('through_week'))
+        through_week=ros.get('through_week'), **engine_detail(player.get('engine') or {}),
+        game_log=[GameLogWeek(week=r['week'], points=r['points'])
+                  for r in (player.get('distribution_evidence') or {}).get('evidence', [])
+                  if isinstance(r.get('week'), int) and finite_points(r.get('points')) is not None])
+
+
+def engine_detail(engine: dict) -> dict:
+    research = engine.get('status') in ('research', 'research_partial_scoring')
+    return {'engine_status': engine.get('status', 'unknown'),
+            'engine_week_points': finite_points(engine.get('week_points')) if research else None,
+            'engine_ros_points': finite_points(engine.get('ros_points')) if research else None,
+            'engine_ros_games': engine.get('ros_games', 0) if research else 0,
+            'engine_ros_lined_games': engine.get('ros_lined_games', 0) if research else 0,
+            'engine_weeks': [EngineWeek(**w) for w in engine.get('weeks', []) if finite_points(w.get('points')) is not None] if research else [],
+            'engine_generated_at': engine.get('generated_at')}
+
+
+def strength_context(data: dict, by_id: dict) -> StrengthView:
+    """Rank each roster's best starters per position by engine ROS research.
+
+    Uses the league's starting counts (FLEX excluded). A roster whose needed
+    starters lack engine research is not ranked at that position.
+    """
+    rosters = data.get('rosters', [])
+    slots = [s for s in data.get('roster_positions', []) if s in ('QB', 'RB', 'WR', 'TE')]
+    if not rosters or not slots or sum(r.get('is_mine') is True for r in rosters) != 1:
+        return StrengthView()
+    def ros(pid):
+        e = (by_id.get(pid) or {}).get('engine') or {}
+        return finite_points(e.get('ros_points')) if e.get('status') == 'research' else None
+    values = {}
+    for r in rosters:
+        ids = [str(pid) for pid in r.get('player_ids', [])]
+        for pos in dict.fromkeys(slots):
+            need = slots.count(pos)
+            best = sorted((v for pid in ids if (by_id.get(pid) or {}).get('position') == pos
+                           and (v := ros(pid)) is not None), reverse=True)[:need]
+            values[(r['roster_id'], pos)] = round(sum(best), 1) if len(best) == need else None
+    mine = next(r for r in rosters if r.get('is_mine') is True)['roster_id']
+    out = []
+    for pos in dict.fromkeys(slots):
+        scores = [values[(r['roster_id'], pos)] for r in rosters if values[(r['roster_id'], pos)] is not None]
+        own = values[(mine, pos)]
+        out.append(PositionStrength(position=pos, value=own, teams=len(scores),
+                                    rank=1 + sum(v > own for v in scores) if own is not None else None,
+                                    league_best=max(scores) if scores else None))
+    totals = {r['roster_id']: sum(values[(r['roster_id'], p)] for p in dict.fromkeys(slots))
+              for r in rosters if all(values[(r['roster_id'], p)] is not None for p in dict.fromkeys(slots))}
+    overall = 1 + sum(v > totals[mine] for v in totals.values()) if mine in totals else None
+    return StrengthView(status='research', overall_rank=overall, teams=len(totals), positions=out)
+
+
+WAIVER_TYPES = {0: 'rolling', 1: 'reverse_standings', 2: 'faab'}
+
+
+def engine_waiver_context(data: dict, by_id: dict) -> EngineWaivers:
+    """Present background waiver guidance (src/services/waiver_guidance.py); no computation here.
+
+    Every row is revalidated against this checkpoint's ownership: the add must
+    be unrostered and the drop on your roster, or the row is skipped.
+    """
+    mine = [r for r in data.get('rosters', []) if r.get('is_mine') is True]
+    if len(mine) != 1:
+        return EngineWaivers(status='owner_roster_unresolved')
+    settings = data.get('waiver_settings') or {}
+    context = dict(waiver_type=WAIVER_TYPES.get(settings.get('waiver_type'), 'unknown'),
+                   waiver_position=mine[0].get('waiver_position'), teams=len(data.get('rosters', [])) or None,
+                   waiver_clear_days=settings.get('waiver_clear_days'))
+    stored = data.get('waiver_guidance') or {}
+    if stored.get('status') != 'research':
+        return EngineWaivers(status=stored.get('status', 'unavailable'), **context)
+    owned = {str(pid) for r in data.get('rosters', []) for pid in r.get('player_ids', [])}
+    my_ids = set(map(str, mine[0].get('player_ids', [])))
+    rows = []
+    for row in stored.get('rows', []):
+        add, drop = by_id.get(row['add_id']), by_id.get(row['drop_id'])
+        if not add or not drop or row['add_id'] in owned or add.get('roster_ids') != [] or row['drop_id'] not in my_ids:
+            continue
+        gain, week_gain = finite_points(row.get('lineup_gain')), finite_points(row.get('week_gain'))
+        if row.get('stream'):
+            rows.append(EngineWaiverRow(add=player_detail(add), compare=player_detail(drop), week_gain=week_gain,
+                tier='stream', reasons=[f'Provider projects {week_gain:+.1f} this week over {drop.get("name")}; '
+                                        'K/DEF rest-of-season is not modeled.']))
+            continue
+        if gain is None:
+            continue
+        reasons = [f'Adds {gain:+.1f} points to your best starting lineup across the next {row.get("weeks")} '
+                   f'weeks (improves {row.get("weeks_improved")} of them) by replacing {drop.get("name")}.']
+        if drop.get('position') != add.get('position'):
+            reasons.append(f'Cross-position swap ({drop.get("position")} for {add.get("position")}).')
+        if add.get('injury_status'):
+            reasons.append(f'Added player has a {add["injury_status"]} designation.')
+        if ((add.get('engine') or {}).get('ros_lined_games') or 0) <= 1:
+            reasons.append('Most weeks use team-average environments (no market lines yet).')
+        rows.append(EngineWaiverRow(add=player_detail(add), compare=player_detail(drop), ros_gain=gain,
+            week=row.get('week'), week_gain=week_gain, reasons=reasons,
+            tier='priority' if gain >= 15 else 'consider' if gain >= 5 else 'depth'))
+    if not rows:
+        return EngineWaivers(status='no_positive_research_moves', **context)
+    order = {'priority': 0, 'consider': 1, 'stream': 2, 'depth': 3}
+    rows.sort(key=lambda r: (order[r.tier], -(r.ros_gain if r.ros_gain is not None else r.week_gain or 0),
+                             r.add.player_id))
+    return EngineWaivers(status='research', rows=rows[:20], **context)
 
 
 def roster_context(data: dict, by_id: dict):
@@ -510,6 +791,8 @@ def overview(league_id: str, data: dict | None) -> Overview:
         recipe_version=data.get('recipe_version'), scoring_contract_hash=data.get('scoring_contract_hash'),
         lineup_status=lineup.get('status'), starters=starters, notes=data.get('notes', []),
         matchup=matchup, lineup_changes=changes, roster_players=roster, waivers=waivers,
+        engine_waivers=engine_waiver_context(data, by_id), outcomes=outcome_context(data, by_id),
+        strength=strength_context(data, by_id),
         comparison_players=comparison_context(data, by_id))
 
 
@@ -532,3 +815,102 @@ async def league_overview(league_id: str, response: Response, db: AsyncSession =
     if result.status == 'updating':
         response.headers['Retry-After'] = '30'
     return result
+
+
+class PairedSummary(BaseModel):
+    n: int = 0
+    weeks: list[int] = Field(default_factory=list)
+    engine_mae: float | None = None
+    sleeper_mae: float | None = None
+    paired_difference: float | None = None
+    ci: list[float] | None = None
+
+
+class QualificationTrack(BaseModel):
+    name: str
+    status: str
+    generated_at: datetime | None = None
+    version: str | None = None
+    engine_forecasts: int | None = None
+    graded_weeks: int = 0
+    required_weeks: int
+    eligible_for_owner_review: bool = False
+    serving_promoted: Literal[False] = False
+    blockers: list[str] = Field(default_factory=list)
+    pool: PairedSummary = Field(default_factory=PairedSummary)
+    statuses: dict[str, int] = Field(default_factory=dict)
+
+
+class WinProbabilityCheck(BaseModel):
+    status: str
+    generated_at: datetime | None = None
+    captured_matchups: int = 0
+    graded: int = 0
+    brier: float | None = None
+    coin_flip_brier: float = 0.25
+    log_loss: float | None = None
+    statuses: dict[str, int] = Field(default_factory=dict)
+
+
+class EngineQualification(BaseModel):
+    tracks: list[QualificationTrack]
+    win_probability: WinProbabilityCheck
+    note: str = ('Prospective pairing against Sleeper on the projected-starter pool, graded on league-scored results '
+                 'after kickoff. Nothing is promoted automatically; eligibility only opens an owner review.')
+
+
+def qualification_tracks(root) -> list[QualificationTrack]:
+    """Latest saved prospective report per track; a missing report is a status, not zeros."""
+    import json
+    from src.services.projection_engine_prospective import MIN_WEEKS, VARIANTS
+
+    def summary(raw):
+        raw = raw or {}
+        return PairedSummary(**{k: raw.get(k) for k in PairedSummary.model_fields if raw.get(k) is not None})
+
+    tracks = []
+    for variant, label in (('v1', 'Projection engine v1'), ('depth', 'Engine + depth chart/status')):
+        files = sorted((root / VARIANTS[variant][1]).glob('*.json'))
+        if not files:
+            tracks.append(QualificationTrack(name=label, status='no_report_yet', required_weeks=MIN_WEEKS))
+            continue
+        try:
+            report = json.loads(files[-1].read_text())
+        except (OSError, ValueError):
+            tracks.append(QualificationTrack(name=label, status='report_unreadable', required_weeks=MIN_WEEKS))
+            continue
+        for name, block, meta in ((label, report.get('promotion') or {}, report),
+                                  (f'{label} · Sleeper blend', (report.get('candidate_blend') or {}).get('promotion') or {}, None)):
+            if meta is None and variant != 'v1':
+                continue  # the candidate blend is graded once, on the v1 report
+            pool = summary(block.get('pool'))
+            tracks.append(QualificationTrack(name=name, status=report.get('status', 'unknown'),
+                generated_at=report.get('generated_at'), version=report.get('version'),
+                engine_forecasts=report.get('engine_forecasts') if meta else None, graded_weeks=len(pool.weeks),
+                required_weeks=MIN_WEEKS, eligible_for_owner_review=bool(block.get('eligible_for_owner_review')),
+                blockers=block.get('blockers', []), pool=pool, statuses=report.get('statuses', {}) if meta else {}))
+    return tracks
+
+
+def win_probability_check(root) -> WinProbabilityCheck:
+    import json
+    files = sorted((root / 'reports').glob('*.json'))
+    if not files:
+        return WinProbabilityCheck(status='no_report_yet')
+    try:
+        report = json.loads(files[-1].read_text())
+    except (OSError, ValueError):
+        return WinProbabilityCheck(status='report_unreadable')
+    summary = report.get('summary') or {}
+    return WinProbabilityCheck(status=report.get('status', 'unknown'), generated_at=report.get('generated_at'),
+        captured_matchups=report.get('captured_matchups', 0), graded=summary.get('n', 0), brier=summary.get('brier'),
+        log_loss=summary.get('log_loss'), statuses=report.get('statuses', {}))
+
+
+@router.get('/engine-qualification', response_model=EngineQualification)
+async def engine_qualification(response: Response):
+    from src.services.projection_engine_prospective import archive_root
+    from src.services.outcome_prospective import archive_root as outcome_root
+    response.headers['Cache-Control'] = 'no-store'
+    return EngineQualification(tracks=qualification_tracks(archive_root()),
+                               win_probability=win_probability_check(outcome_root()))

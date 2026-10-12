@@ -102,6 +102,12 @@ async def _sync_sport(db: AsyncSession, client: httpx.AsyncClient, user: dict, s
                 player_catalog = response.json()
                 if not isinstance(player_catalog, dict) or not player_catalog:
                     raise ValueError('empty player metadata')
+                if sport == "nfl":
+                    from src.services.depth_archive import archive_daily
+                    try:
+                        archive_daily(player_catalog, datetime.now(timezone.utc))
+                    except OSError as exc:
+                        logger.warning("depth/status archive failed: %s", exc)
             # Widened from "rostered players only" to every fantasy-relevant
             # player: the projections payload's ID-keyed values carry no
             # name/position/team of their own (see projection_rows() in
@@ -120,6 +126,13 @@ async def _sync_sport(db: AsyncSession, client: httpx.AsyncClient, user: dict, s
                     "position": info.get("position"),
                     "team": info.get("team"),
                     "injury_status": info.get("injury_status"),
+                    # Kept for the depth/status projection variant
+                    # (src/services/projection_depth.py) and the active-player
+                    # catalog filter; previously trimmed out.
+                    "status": info.get("status"),
+                    "active": info.get("active"),
+                    "depth_chart_position": info.get("depth_chart_position"),
+                    "depth_chart_order": info.get("depth_chart_order"),
                     "years_exp": info.get("years_exp"),
                     "experience_season": season,
                 }

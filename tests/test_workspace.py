@@ -298,6 +298,14 @@ def test_checkpoint_trade_reuses_evaluator_without_promoting():
     assert result.status == 'research_candidate' and result.actionable is False
     assert result.side_a.conditional_lineup_gain == 10
     assert result.side_b.conditional_lineup_gain == -10
+    # No engine research in this checkpoint: the outlook says so instead of showing zeros.
+    assert result.outlook.side_a.status == 'insufficient_engine_research' and result.outlook.side_a.lineup_gain is None
+    for p in data['players']:
+        p['engine'] = {'status': 'research', 'ros_points': 10.0 * (p['player_id'] == 'b') + 4.0,
+                       'weeks': [{'week': 6, 'points': 10.0 * (p['player_id'] == 'b') + 4.0, 'environment': 'market_line'}]}
+    result = workspace.trade_context(data, request)
+    assert (result.outlook.side_a.lineup_gain, result.outlook.side_b.lineup_gain) == (10.0, -10.0)
+    assert result.outlook.side_a.by_position['QB'] == 10.0 and result.outlook.player_ros_points == {'a': 4.0, 'b': 14.0}
     data['players'][0]['identity_status'] = 'unresolved'
     result = workspace.trade_context(data, request)
     assert result.status == 'withheld'
@@ -383,3 +391,113 @@ def test_trade_reports_supporting_player_evidence_without_numeric_gain():
     assert 'B' in result.side_b.availability_review_players
     assert result.side_a.conditional_lineup_gain is None
     assert result.side_b.conditional_lineup_gain is None
+
+
+def engine_data():
+    def p(pid, pos, ros, roster_ids, weekly=None, weeks=None):
+        return dict(player_id=pid, name=pid, position=pos, roster_ids=roster_ids, locked=False, weekly_points=weekly,
+                    engine={'status': 'research', 'ros_points': ros, 'week_points': 5.0, 'ros_games': 10,
+                            'ros_lined_games': 1, 'weeks': weeks or [{'week': 6, 'points': 5.0, 'environment': 'market_line'}],
+                            'generated_at': '2026-10-12T00:00:00Z'} if ros is not None else {'status': 'position_not_modeled'})
+    return {'players': [p('mine_qb', 'QB', 10, [1]), p('mine_wr', 'WR', 60, [1]), p('mine_wr2', 'WR', 90, [1]),
+                        p('fa_wr', 'WR', 75, [], weeks=[{'week': 6, 'points': 9.0, 'environment': 'market_line'}]),
+                        p('theirs', 'WR', 200, [2]), p('fa_qb', 'QB', 100, []), p('fa_te', 'TE', 66, []),
+                        p('mine_k', 'K', None, [1], weekly=6.0), p('fa_k', 'K', None, [], weekly=9.5)],
+            'roster_positions': ['QB', 'WR', 'K', 'BN'],
+            'waiver_settings': {'platform': 'sleeper', 'waiver_type': 0, 'waiver_clear_days': 2},
+            'rosters': [{'roster_id': 1, 'is_mine': True, 'waiver_position': 3,
+                         'player_ids': ['mine_qb', 'mine_wr', 'mine_wr2', 'mine_k']},
+                        {'roster_id': 2, 'player_ids': ['theirs']}],
+            'read_model': {'generated_at': '2026-10-12T00:00:00Z', 'expires_at': '2026-10-12T00:02:00Z'}}
+
+
+def test_waiver_guidance_presents_stored_rows_revalidated_against_ownership():
+    data = engine_data()
+    data['waiver_guidance'] = {'status': 'research', 'rows': [
+        {'add_id': 'fa_wr', 'drop_id': 'mine_wr', 'lineup_gain': 16.0, 'week': 6, 'week_gain': 4.0, 'weeks': 12, 'weeks_improved': 9},
+        {'add_id': 'fa_te', 'drop_id': 'mine_wr', 'lineup_gain': 6.0, 'week': 6, 'week_gain': 1.0, 'weeks': 12, 'weeks_improved': 3},
+        {'add_id': 'theirs', 'drop_id': 'mine_wr', 'lineup_gain': 50.0, 'week': 6, 'week_gain': 5.0, 'weeks': 12, 'weeks_improved': 9},
+        {'add_id': 'fa_qb', 'drop_id': 'not_mine', 'lineup_gain': 50.0, 'week': 6, 'week_gain': 5.0, 'weeks': 12, 'weeks_improved': 9},
+        {'add_id': 'fa_k', 'drop_id': 'mine_k', 'lineup_gain': None, 'week': None, 'week_gain': 3.5, 'stream': True}]}
+    view = workspace.overview('league', data).engine_waivers
+    assert (view.status, view.waiver_type, view.waiver_position, view.teams) == ('research', 'rolling', 3, 2)
+    assert [(r.add.player_id, r.tier) for r in view.rows] == [('fa_wr', 'priority'), ('fa_te', 'consider'), ('fa_k', 'stream')]
+    assert 'best starting lineup across the next 12 weeks' in view.rows[0].reasons[0]
+    assert 'Cross-position' in view.rows[1].reasons[1]
+
+
+def test_waiver_guidance_fails_closed():
+    data = engine_data()
+    assert workspace.overview('league', data).engine_waivers.status == 'unavailable'
+    data['waiver_guidance'] = {'status': 'research', 'rows': []}
+    assert workspace.overview('league', data).engine_waivers.status == 'no_positive_research_moves'
+    data['rosters'][0]['is_mine'] = False
+    assert workspace.overview('league', data).engine_waivers.status == 'owner_roster_unresolved'
+
+
+def test_outcome_view_exposes_research_and_names_changes_without_validation_claims():
+    data = engine_data()
+    data['outcome_simulation'] = {'status': 'estimated_research', 'reason': 'r', 'known_final_starters': 2,
+        'model': {'blend_status': 'provider_only', 'validation': {'matchups': {'n': 24, 'correlated': {'brier': 0.22}, 'coin': {'brier': 0.25}}}},
+        'current': {'win_probability': 0.41, 'mean': 101.0, 'p10': 80.0, 'p90': float('nan')},
+        'max_win_probability_lineup': {'win_probability': 0.47, 'expected_points': 99.0,
+                                       'changes': [{'slot': 'WR', 'start': 'fa_wr', 'replaces': 'mine_wr'}]},
+        'player_ranges': {'mine_wr': {'mean': 9.0, 'p10': 2.0, 'p50': 8.0, 'p90': 17.0, 'boom_probability': .1,
+                                      'bust_probability': .3, 'basis': 'provider'}}}
+    view = workspace.overview('league', data).outcomes
+    assert view.win_probability == 0.41 and view.p90 is None and view.validated is False
+    assert view.best_changes[0].start_name == 'fa_wr' and view.validation_matchups == 24
+    data['outcome_simulation'] = {'status': 'withheld', 'reason': 'starter_blockers',
+                                  'blockers': [{'name': 'X', 'reason': 'game_in_progress'}]}
+    view = workspace.overview('league', data).outcomes
+    assert view.win_probability is None and view.blockers == ['X: game in progress']
+
+
+def test_positional_strength_ranks_best_starters_and_skips_incomplete_rosters():
+    data = engine_data()
+    data['roster_positions'] = ['QB', 'WR', 'BN']
+    data['rosters'].append({'roster_id': 3, 'player_ids': ['fa_qb']})  # no WR with research: unranked
+    data['players'].append(dict(player_id='theirs_qb', name='q', position='QB', roster_ids=[2],
+                                engine={'status': 'research', 'ros_points': 50}))
+    data['rosters'][1]['player_ids'].append('theirs_qb')
+    view = workspace.overview('league', data).strength
+    by = {p.position: p for p in view.positions}
+    assert by['WR'].value == 90 and by['WR'].rank == 2 and by['WR'].teams == 2
+    assert by['QB'].rank == 3 and by['QB'].league_best == 100
+    assert view.overall_rank == 2 and view.teams == 2
+
+
+def test_game_log_comes_from_league_scored_history_only():
+    detail = workspace.player_detail({'player_id': 'x', 'distribution_evidence': {'evidence': [
+        {'week': 3, 'points': 12.5}, {'week': 4, 'points': float('nan')}]}})
+    assert [(w.week, w.points) for w in detail.game_log] == [(3, 12.5)]
+
+
+def test_engine_qualification_reads_latest_reports_and_never_promotes(tmp_path):
+    import json
+    assert [t.status for t in workspace.qualification_tracks(tmp_path)] == ['no_report_yet', 'no_report_yet']
+    promo = {'eligible_for_owner_review': False, 'blockers': ['needs_6_graded_weeks_has_2'],
+             'pool': {'n': 40, 'weeks': [6, 7], 'engine_mae': 5.1, 'sleeper_mae': 5.3, 'paired_difference': -0.2, 'ci': [-0.5, 0.1]}}
+    for sub in ('reports', 'depth/reports'):
+        (tmp_path / sub).mkdir(parents=True)
+        (tmp_path / sub / '20261001T000000.json').write_text(json.dumps({'status': 'old'}))
+        (tmp_path / sub / '20261012T000000.json').write_text(json.dumps({
+            'status': 'prospective_research', 'generated_at': '2026-10-12T00:00:00+00:00', 'version': 'v', 'engine_forecasts': 9,
+            'statuses': {'graded': 40}, 'promotion': promo, 'candidate_blend': {'promotion': {'blockers': ['needs_6_graded_weeks_has_0']}}}))
+    tracks = workspace.qualification_tracks(tmp_path)
+    assert [t.name for t in tracks] == ['Projection engine v1', 'Projection engine v1 · Sleeper blend', 'Engine + depth chart/status']
+    assert (tracks[0].graded_weeks, tracks[0].required_weeks, tracks[0].pool.ci, tracks[0].serving_promoted) == (2, 6, [-0.5, 0.1], False)
+    assert tracks[1].graded_weeks == 0 and tracks[1].blockers == ['needs_6_graded_weeks_has_0']
+    (tmp_path / 'depth/reports/20261013T000000.json').write_text('{not json')
+    assert workspace.qualification_tracks(tmp_path)[-1].status == 'report_unreadable'
+
+
+def test_win_probability_check_reads_the_latest_report(tmp_path):
+    import json
+    assert workspace.win_probability_check(tmp_path).status == 'no_report_yet'
+    (tmp_path / 'reports').mkdir()
+    (tmp_path / 'reports' / '20261020T000000.json').write_text(json.dumps({
+        'status': 'prospective_research', 'captured_matchups': 4, 'statuses': {'graded': 2, 'awaiting_final_week': 2},
+        'summary': {'n': 2, 'brier': 0.21, 'log_loss': 0.6}}))
+    check = workspace.win_probability_check(tmp_path)
+    assert (check.graded, check.brier, check.coin_flip_brier, check.captured_matchups) == (2, 0.21, 0.25, 4)

@@ -3,7 +3,7 @@ import argparse
 import json
 from pathlib import Path
 
-from src.api.routers.workspace import Leagues, Overview, TradeResult
+from src.api.routers.workspace import EngineQualification, Leagues, Overview, TradeResult
 
 TARGET = Path(__file__).resolve().parents[1] / 'dashboard/src/lib/workspace-api.generated.ts'
 
@@ -20,6 +20,8 @@ def ts_type(schema):
     kind = schema.get('type')
     if kind == 'array':
         return f"Array<{ts_type(schema['items'])}>"
+    if kind == 'object' and isinstance(schema.get('additionalProperties'), dict) and not schema.get('properties'):
+        return f"Record<string, {ts_type(schema['additionalProperties'])}>"
     if kind == 'object':
         # Response defaults are always serialized (not exclude_unset).
         return '{\n' + ''.join(f"  {key}: {ts_type(value)};\n" for key, value in
@@ -33,7 +35,7 @@ def ts_type(schema):
 
 def render():
     schemas = {}
-    for model in (Leagues, Overview, TradeResult):
+    for model in (EngineQualification, Leagues, Overview, TradeResult):
         schema = model.model_json_schema(mode='serialization')
         schemas.update(schema.pop('$defs', {}))
         schemas[model.__name__] = schema

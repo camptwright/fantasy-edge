@@ -9,9 +9,47 @@ export type DistributionEvidence = {
   scope: string;
 };
 
+export type EngineQualification = {
+  tracks: Array<QualificationTrack>;
+  win_probability: WinProbabilityCheck;
+  note: string;
+};
+
+export type EngineWaiverRow = {
+  add: PlayerDetail;
+  compare: PlayerDetail | null;
+  ros_gain: number | null;
+  week: number | null;
+  week_gain: number | null;
+  tier: "priority" | "consider" | "depth" | "stream";
+  reasons: Array<string>;
+};
+
+export type EngineWaivers = {
+  status: string;
+  scope: string;
+  rows: Array<EngineWaiverRow>;
+  waiver_type: string;
+  waiver_position: number | null;
+  teams: number | null;
+  waiver_clear_days: number | null;
+  tier_rule: string;
+};
+
+export type EngineWeek = {
+  week: number;
+  points: number;
+  environment: string;
+};
+
 export type FantasyResearch = {
   retention: ResearchStatus;
   specialists: ResearchStatus;
+};
+
+export type GameLogWeek = {
+  week: number;
+  points: number;
 };
 
 export type LeagueSummary = {
@@ -23,6 +61,14 @@ export type LeagueSummary = {
 
 export type Leagues = {
   items: Array<LeagueSummary>;
+};
+
+export type LineupChange = {
+  slot: string;
+  start: string;
+  start_name: string;
+  replaces: string;
+  replaces_name: string;
 };
 
 export type LineupChanges = {
@@ -47,6 +93,31 @@ export type MatchupView = {
   opponent: MatchupSide | null;
 };
 
+export type OutcomeView = {
+  status: string;
+  reason: string;
+  validated: false;
+  win_probability: number | null;
+  monte_carlo_standard_error: number | null;
+  mean: number | null;
+  opponent_mean: number | null;
+  p10: number | null;
+  p90: number | null;
+  opponent_p10: number | null;
+  opponent_p90: number | null;
+  best_win_probability: number | null;
+  best_expected_points: number | null;
+  best_changes: Array<LineupChange>;
+  known_final_starters: number;
+  blockers: Array<string>;
+  player_ranges: Record<string, PlayerRange>;
+  blend_status: string | null;
+  validation_matchups: number | null;
+  validation_brier: number | null;
+  coin_flip_brier: number | null;
+  assumptions: Array<string>;
+};
+
 export type Overview = {
   schema_version: "2";
   league_id: string;
@@ -67,7 +138,19 @@ export type Overview = {
   roster_players: Array<PlayerDetail>;
   comparison_players: Array<PlayerDetail>;
   waivers: WaiverView;
+  engine_waivers: EngineWaivers;
+  outcomes: OutcomeView;
+  strength: StrengthView;
   research: FantasyResearch;
+};
+
+export type PairedSummary = {
+  n: number;
+  weeks: Array<number>;
+  engine_mae: number | null;
+  sleeper_mae: number | null;
+  paired_difference: number | null;
+  ci: Array<number> | null;
 };
 
 export type PlayerDetail = {
@@ -101,6 +184,48 @@ export type PlayerDetail = {
   roster_names: Array<string>;
   roster_id: string | null;
   specialist_ros_research: SpecialistResearch | null;
+  engine_status: string;
+  engine_week_points: number | null;
+  engine_ros_points: number | null;
+  engine_ros_games: number;
+  engine_ros_lined_games: number;
+  engine_weeks: Array<EngineWeek>;
+  engine_generated_at: string | null;
+  game_log: Array<GameLogWeek>;
+};
+
+export type PlayerRange = {
+  density: Array<number>;
+  mean: number | null;
+  p10: number | null;
+  p50: number | null;
+  p90: number | null;
+  boom_probability: number | null;
+  bust_probability: number | null;
+  basis: string;
+};
+
+export type PositionStrength = {
+  position: string;
+  value: number | null;
+  rank: number | null;
+  teams: number;
+  league_best: number | null;
+};
+
+export type QualificationTrack = {
+  name: string;
+  status: string;
+  generated_at: string | null;
+  version: string | null;
+  engine_forecasts: number | null;
+  graded_weeks: number;
+  required_weeks: number;
+  eligible_for_owner_review: boolean;
+  serving_promoted: false;
+  blockers: Array<string>;
+  pool: PairedSummary;
+  statuses: Record<string, number>;
 };
 
 export type ResearchCount = {
@@ -139,6 +264,32 @@ export type Starter = {
   locked: boolean;
 };
 
+export type StrengthView = {
+  status: string;
+  scope: string;
+  overall_rank: number | null;
+  teams: number;
+  positions: Array<PositionStrength>;
+};
+
+export type TradeOutlook = {
+  status: string;
+  side_a: TradeOutlookSide | null;
+  side_b: TradeOutlookSide | null;
+  player_ros_points: Record<string, number | null>;
+  note: string;
+};
+
+export type TradeOutlookSide = {
+  team: string | null;
+  status: string;
+  weeks: number | null;
+  lineup_gain: number | null;
+  by_position: Record<string, number>;
+  weekly: Array<TradeWeek>;
+  unmodeled_players: Array<string>;
+};
+
 export type TradeResult = {
   status: string;
   actionable: false;
@@ -147,6 +298,7 @@ export type TradeResult = {
   expires_at: string;
   side_a: TradeSide | null;
   side_b: TradeSide | null;
+  outlook: TradeOutlook | null;
   note: string;
 };
 
@@ -157,6 +309,11 @@ export type TradeSide = {
   roster_size_after: number | null;
   missing_players: Array<string>;
   availability_review_players: Array<string>;
+};
+
+export type TradeWeek = {
+  week: number;
+  gain: number;
 };
 
 export type WaiverMove = {
@@ -172,4 +329,15 @@ export type WaiverView = {
   status: string;
   moves: Array<WaiverMove>;
   excluded_moves: number;
+};
+
+export type WinProbabilityCheck = {
+  status: string;
+  generated_at: string | null;
+  captured_matchups: number;
+  graded: number;
+  brier: number | null;
+  coin_flip_brier: number;
+  log_loss: number | null;
+  statuses: Record<string, number>;
 };
