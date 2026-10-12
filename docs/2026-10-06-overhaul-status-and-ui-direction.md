@@ -132,3 +132,41 @@ Engine phases mapped onto the workstreams:
 
 The engine does not change the existing boundaries: no automatic promotion, no
 invented confidence or grades in the UI, missing stays missing.
+
+## October 12 progress — revised steps 1–4 complete
+
+1. **Closeout item 5.** Full regression 957 passed / 1 skipped (first run blocked:
+   the Colima Docker disk was 100% full, 94/99G — the raw archive is 70G and
+   the live worker had logged 868 `No space left` errors in 6 hours, so
+   ingestion and capture were failing). Owner-approved fix: pruned 9.6G build
+   cache, grew the Colima disk to 200G (brief full-stack restart; all 14
+   containers returned). `raw_retention` compressed nothing: no
+   result-observation file is past its 90-day minimum, and several audit
+   scripts read only `*.json`, so that policy was left unchanged. The archive
+   grows roughly 1G/day; retention policy remains an owner decision. Frontend:
+   tsc, lint, 37 tests pass. Release audit: only the workspace observer had
+   drifted (rebuilt). All three leagues serve snapshots; workspace tool pages 200.
+2. **Committed** on branch `overhaul/checkpoint-2026-10-12` in seven layer
+   slices (not pushed). Intermediate slices are not individually tested.
+3. **E1 data foundations (deployed).** `player_snap_counts` (0028), refreshed
+   daily from the nflverse release CSVs (the serving image has no nflreadpy).
+   Current-season games carry no `nflverse_game_id` (0/272), so snaps match
+   by exact season/week/away/home fixture, read-only. 2026: 2,872/2,881
+   offensive rows, all 78 games; 2025: 10,066 rows, 272 regular-season games
+   (13 postseason games unmatched). Usage shares and point-in-time,
+   same-source implied totals (`game_environment.py`).
+4. **E2 engine + E7 harness (deployed).** `projection_engine.py` and
+   `projection_engine_prospective.py`; scheduled every 30 min on the
+   evaluation queue. First run froze 36 pregame projections; 28 paired with
+   Sleeper and awaiting final. Retrospective paired backtest (2026 weeks 2–5,
+   831 player-weeks, `scripts/backtest_projection_engine.py`): engine MAE 5.94
+   vs Sleeper 5.81; starter pool 7.27 vs 7.32, difference −0.05 (week-bootstrap
+   95% CI −0.22 to +0.05). RB worse (+0.42, CI +0.13 to +1.15); the engine
+   under-projects top players more than Sleeper (pool bias −2.6 vs −1.6).
+   Retrospective and four weeks only: not evidence of improvement. Promotion
+   criterion (current version only, ≥6 graded weeks, pool CI below zero, no
+   position CI above zero) is reported, never applied.
+
+Next: visual step 1 (shell + Fantasy home) with engine projections as
+labeled research columns; tune shrinkage on 2025 walk-forward (never on the
+graded 2026 weeks), then E3 injuries and E4 distributions.
