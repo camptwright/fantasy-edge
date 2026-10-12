@@ -1,0 +1,61 @@
+# Parallel, loopback-only preview. Shares reads, never runs ingestion/migrations.
+# docker --context colima compose -f docker-compose.workspace.yml up -d --build
+name: fantasy-edge-workspace
+services:
+  workspace-api:
+    build: {context: ., dockerfile: Dockerfile}
+    command: [uvicorn, src.api.workspace_app:app, --host, 0.0.0.0, --port, "8000"]
+    env_file: [.env]
+    networks: [existing]
+    mem_limit: 384m
+    restart: unless-stopped
+    read_only: true
+    volumes: ["existing_raw:/mnt/data/fantasy-edge/raw:ro"]
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import Request,urlopen; from config.settings import get_settings; urlopen(Request('http://127.0.0.1:8000/health/ready',headers={'Authorization':'Bearer '+get_settings().fantasy_api_token}),timeout=5).close()"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 15s
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "2"}}
+  workspace-observer:
+    build: {context: ., dockerfile: Dockerfile}
+    command: [python, -m, scripts.workspace_observer]
+    env_file: [.env]
+    networks: [existing]
+    mem_limit: 192m
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      workspace-api: {condition: service_healthy}
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "2"}}
+  workspace-dashboard:
+    build: {context: ./dashboard, dockerfile: Dockerfile}
+    networks: [existing]
+    ports: ["127.0.0.1:13001:3000"]
+    environment:
+      NODE_ENV: production
+      FANTASY_API_URL: http://api:8000
+      FANTASY_WORKSPACE_API_URL: http://workspace-api:8000
+      FANTASY_API_TOKEN: "${FANTASY_API_TOKEN:?set FANTASY_API_TOKEN in .env}"
+      FANTASY_LOCAL_ONLY: "true"
+    mem_limit: 512m
+    restart: unless-stopped
+    depends_on: [workspace-api]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "2"}}
+networks:
+  existing:
+    external: true
+    name: fantasy-edge_fantasy
+volumes:
+  existing_raw:
+    external: true
+    name: fantasy-edge_rawdata
