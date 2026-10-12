@@ -77,6 +77,15 @@ def refresh_nfl_stats():
     return asyncio.run(run())
 
 
+@celery_app.task(name='fantasy.refresh_snap_counts',soft_time_limit=600,time_limit=720)
+def refresh_snap_counts():
+    async def run():
+        from src.ingest.usage import refresh_snap_counts as refresh
+        now=datetime.now(timezone.utc);season=now.year if now.month>=3 else now.year-1
+        async with get_worker_db() as db:return await refresh(db,season)
+    return asyncio.run(run())
+
+
 @celery_app.task(name='fantasy.raw_retention_report',soft_time_limit=240,time_limit=300)
 def raw_retention_report():
     async def run():

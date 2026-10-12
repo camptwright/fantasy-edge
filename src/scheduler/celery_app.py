@@ -33,6 +33,7 @@ celery_app.conf.update(
         "research-shadow": {"task":"fantasy.research_shadow","schedule":900.0},
         "register-nfl-lab": {"task":"fantasy.register_nfl_lab","schedule":900.0},
         "refresh-nfl-stats": {"task":"fantasy.refresh_nfl_stats","schedule":86400.0},
+        "refresh-snap-counts": {"task":"fantasy.refresh_snap_counts","schedule":86400.0},
         "raw-retention-report": {"task":"fantasy.raw_retention_report","schedule":86400.0},
         "archive-rosters": {"task": "fantasy.archive_rosters", "schedule": 21600.0},
         "sync-fantasy-market": {"task":"fantasy.sync_fantasy_market","schedule":86400.0},

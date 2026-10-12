@@ -21,6 +21,7 @@ from src.ingest.ncaaf_player_stats import ingest_player_stats as ingest_ncaaf_pl
 from src.ingest.nflverse import ingest_games
 from src.ingest.nfl_pbp_props import ingest_longest_props
 from src.ingest.players import ingest_player_stats, ingest_players
+from src.ingest.usage import ingest_snap_counts
 
 
 async def _run_nfl(seasons: list[int], with_play_props: bool) -> None:
@@ -33,6 +34,9 @@ async def _run_nfl(seasons: list[int], with_play_props: bool) -> None:
 
         stats_written = await ingest_player_stats(db, seasons)
         print(f"ingested {stats_written} player-game stat rows across {len(seasons)} seasons")
+
+        snaps_written = await ingest_snap_counts(db, seasons)
+        print(f"ingested {snaps_written} player-game snap-count rows across {len(seasons)} seasons")
         if with_play_props:
             longest_written = await ingest_longest_props(db, seasons)
             print(f"ingested {longest_written} longest-play player-game stat rows across {len(seasons)} seasons")

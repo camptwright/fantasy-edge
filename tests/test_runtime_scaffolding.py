@@ -20,6 +20,7 @@ def test_celery_schedule_covers_every_ingestion_source():
         "fantasy.research_shadow",
         "fantasy.register_nfl_lab",
         "fantasy.refresh_nfl_stats",
+        "fantasy.refresh_snap_counts",
         "fantasy.raw_retention_report",
         "fantasy.archive_rosters",
         "fantasy.sync_fantasy_market",

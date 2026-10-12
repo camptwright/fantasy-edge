@@ -192,3 +192,36 @@ class PlayerGameStat(Base, UUIDPrimaryKey):
     )
     stat_type: Mapped[str] = mapped_column(String(48), nullable=False)
     value: Mapped[float] = mapped_column(Float, nullable=False)
+
+
+class PlayerSnapCount(Base, UUIDPrimaryKey):
+    """Per player-game offensive snap participation (nflverse/PFR snap counts).
+
+    Usage share is the projection engine's opportunity input: team volume
+    times the player's share of it. `team_id` is the team the player suited
+    up for in THIS game, which is what target and carry shares are divided
+    by; a mid-season trade must not attribute volume to the old team.
+    First observation wins, like player_game_stats.
+    """
+    __tablename__ = "player_snap_counts"
+    __table_args__ = (
+        UniqueConstraint("player_id", "game_id", "source", name="uq_player_snap_count"),
+        Index("ix_player_snap_counts_game_team", "game_id", "team_id"),
+    )
+
+    player_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("players.id", ondelete="CASCADE"), nullable=False
+    )
+    game_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("games.id", ondelete="RESTRICT"), nullable=False
+    )
+    team_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("teams.id", ondelete="RESTRICT"), nullable=False
+    )
+    offense_snaps: Mapped[int] = mapped_column(Integer, nullable=False)
+    offense_pct: Mapped[float] = mapped_column(Float, nullable=False)
+    st_snaps: Mapped[int | None] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )

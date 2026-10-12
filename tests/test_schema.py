@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "team_market_lines",
     "player_prop_lines",
     "player_game_stats",
+    "player_snap_counts",
     "model_artifacts",
     "model_predictions",
     "model_review_evidence",
