@@ -43,20 +43,23 @@ def implied_points(total: float, home_spread: float) -> tuple[float, float]:
 
 
 async def environments(
-    db: AsyncSession, game_ids: list[uuid.UUID], *, as_of: datetime
+    db: AsyncSession, game_ids: list[uuid.UUID], *,
+    as_of: datetime | dict[uuid.UUID, datetime],
 ) -> dict[uuid.UUID, GameEnvironment]:
     """Latest same-source spread+total per game observed at or before as_of.
 
-    Games with no qualifying pair are absent from the result, never
-    defaulted to a league-average total.
+    `as_of` may be one cutoff for every game or a per-game mapping (e.g.
+    each historical game's own kickoff). Games with no qualifying pair are
+    absent from the result, never defaulted to a league-average total.
     """
     if not game_ids:
         return {}
+    cutoff = as_of if isinstance(as_of, dict) else dict.fromkeys(game_ids, as_of)
     rows = (await db.execute(
         select(TeamMarketLine.game_id, TeamMarketLine.market, TeamMarketLine.line,
                TeamMarketLine.source, TeamMarketLine.observed_at)
         .where(TeamMarketLine.game_id.in_(game_ids),
-               TeamMarketLine.observed_at <= as_of,
+               TeamMarketLine.observed_at <= max(cutoff.values()),
                TeamMarketLine.line.is_not(None),
                ((TeamMarketLine.market == "spread") & (TeamMarketLine.side == "home"))
                | ((TeamMarketLine.market == "total") & (TeamMarketLine.side == "over")))
@@ -64,6 +67,8 @@ async def environments(
     )).all()
     latest: dict[tuple, tuple[float, datetime]] = {}
     for game_id, market, line, source, observed in rows:
+        if observed > cutoff[game_id]:
+            continue
         latest[(game_id, source, market)] = (line, observed)  # ascending order: last wins
 
     result: dict[uuid.UUID, GameEnvironment] = {}

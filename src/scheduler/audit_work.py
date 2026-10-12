@@ -86,6 +86,19 @@ def refresh_snap_counts():
     return asyncio.run(run())
 
 
+@celery_app.task(name='fantasy.projection_engine_research',soft_time_limit=840,time_limit=900)
+def projection_engine_research():
+    """Freeze pregame engine projections, then grade them against Sleeper's."""
+    async def run():
+        from src.services.projection_engine_prospective import capture, report
+        async with get_worker_db() as db:
+            captured=await capture(db)
+            graded=await report(db)
+        return {'capture':captured,'statuses':graded['statuses'],
+                'promotion_blockers':graded['promotion']['blockers'],'serving_promoted':False}
+    return asyncio.run(run())
+
+
 @celery_app.task(name='fantasy.raw_retention_report',soft_time_limit=240,time_limit=300)
 def raw_retention_report():
     async def run():
