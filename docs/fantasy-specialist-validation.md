@@ -2,6 +2,17 @@
 
 ## Keeper pricing
 
+Owner-confirmed rule update: league `1398509004950376448` allows one keeper,
+prohibits consecutive-year keepers and first-round draftees, and charges one
+round earlier than the player's original draft round (6th costs 5th; 2nd costs
+1st). Implemented in `src/services/keeper_rules.py` and authenticated POST
+`/api/v2/fantasy/leagues/{league_id}/keeper-preview`. Inputs are explicitly
+supplied evidence, not verified platform draft records. Unknown prior keeper
+status, draft round, traded-player cost basis or unavailable cost pick blocks
+eligibility. No keeper is submitted. Undrafted costs and trade/pick exceptions
+remain unspecified. Surplus valuation and automatic draft-history binding remain
+open. The earlier request below is superseded for the now-confirmed rules.
+
 The live Sleeper league `1398509004950376448` specifies type 1 and
 `max_keepers: 1`. It does not establish draft-round/salary cost, annual escalation,
 retention limits, or eligibility. These rules were requested from the owner.

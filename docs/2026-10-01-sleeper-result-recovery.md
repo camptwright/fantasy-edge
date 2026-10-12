@@ -1,0 +1,5 @@
+# Sleeper result recovery
+
+Existing weekly component archives reconciled against every overlapping official score in both Sleeper leagues for weeks 2/3 (252/242 and 187/183 players). Added an absent-player-only fallback requiring frozen scoring hash parity, supported scoring vocabulary, exact league/week/season/player/game binding, final status and 24-hour delay, explicit gp=1 participation, and at least eight matching same-position official totals with no disagreements. Conflicting matchup scores are not overridden; absent players never become zero automatically.
+
+Fifteen focused tests passed. Backend built and deployed after idle-worker checks. Live regrading recovered 137 provider forecasts, raising graded unique league/player/game observations from 715 to 852. Seven Sleeper cases remain withheld for missing exact player/game evidence. Seventy-five legacy ESPN missing-result cases remain separate, alongside pending games/rule-bound forecasts. No forecasts were backdated, no model was promoted and these counts do not qualify calibrated matchup probabilities.

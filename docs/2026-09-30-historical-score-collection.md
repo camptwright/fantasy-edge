@@ -1,0 +1,7 @@
+# Historical player score collection
+
+Implemented and deployed a separate `historical_player_scores` snapshot, populated during ESPN's existing daily-paced completed-week history refresh. The collector requests at most 500 players, extracts exact season/week actuals and requires at least ten overlapping roster scores with no disagreements. It retains scoring contract/hash, game IDs, source, observation time and parser blockers. Unreconciled snapshots contain no accepted points. Roster membership is never modified.
+
+Live week-two verification explicitly checked current rules against the existing scored-history contract and checked every referenced game's finality and 24-hour delay before collection. It archived 483 actual scores, with 226 overlapping roster scores and no conflicts. Eighteen focused tests passed; backend services were rebuilt and deployed after workers became idle.
+
+This is collection, not new forecast grading. Existing provider forecasts lack the full official ESPN scoring-rule hash, so historical scores must not be silently applied under assumed unchanged rules. Next work is freezing that contract on new forecasts and adding a strict result adapter; old captures without corroborating rule evidence stay ungraded. Coverage is bounded, not exhaustive. Existing daily history pacing means new archive snapshots for other weeks will be populated on their next eligible refresh.
