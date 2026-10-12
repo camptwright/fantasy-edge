@@ -40,20 +40,42 @@ async def test_espn_requests_completed_period_and_daily_pacing():
     db=AsyncMock();db.scalars.return_value=NS(all=lambda:[game]);db.get.return_value=None
     rules={'scoringItems':[{'statId':1,'points':1}]};scoring={'x':1}
     current={'settings':{'scoringSettings':rules},'scoringPeriodId':3,'teams':[]}
-    historical={'settings':{'scoringSettings':rules},'scoringPeriodId':1,'teams':[
-        {'roster':{'entries':[{'playerPoolEntry':{'player':{'id':1,'stats':[
+    historical={'settings':{'scoringSettings':rules},'scoringPeriodId':1,
+        'schedule':[{'id':10,'matchupPeriodId':1,'home':{'teamId':2,'totalPoints':-2}}], 'teams':[
+        {'id':2,'roster':{'entries':[{'playerPoolEntry':{'player':{'id':1,'stats':[
             {'statSourceId':0,'scoringPeriodId':1,'seasonId':2026,'appliedTotal':-2},
             {'statSourceId':1,'scoringPeriodId':1,'seasonId':2026,'appliedTotal':99}]}}}]}}]}
     client=AsyncMock();client.get.return_value=NS(raise_for_status=lambda:None,json=lambda:historical)
     with patch('src.services.fantasy_schedule.coverage',return_value={'complete':True}), \
+         patch('src.services.fantasy_player_results.collect_espn_pool',new_callable=AsyncMock), \
          patch('src.ingest.espn_fantasy._snapshot',new_callable=AsyncMock) as save:
         assert (await collect_espn(db,'espn:1',2026,scoring,current,now,client=client,raw_league_id='1'))['weeks']==1
         assert ('scoringPeriodId',1) in client.get.call_args.kwargs['params']
         assert save.call_args.args[-1]['points']=={'1':-2.0}
+        refreshed=next(c.args[-1] for c in save.call_args_list if c.args[-2]=='matchups')
+        assert refreshed[0]['players_points']=={'1':-2.0}
+        assert refreshed[0]['points']==-2
         db.get.return_value=NS(payload=save.call_args.args[-1],synced_at=now)
         client.reset_mock()
         assert (await collect_espn(db,'espn:1',2026,scoring,current,now,client=client,raw_league_id='1'))['weeks']==0
         client.get.assert_not_called()
+        # A missing player-pool archive must not be hidden by fresh roster
+        # history. Once written it shares the existing daily pacing.
+        fresh=db.get.return_value
+        db.get.side_effect=lambda model,key: None if key[-1]=='historical_player_scores' else fresh
+        assert (await collect_espn(db,'espn:1',2026,scoring,current,now,client=client,raw_league_id='1'))['weeks']==1
+        db.get.side_effect=None
+        # Fresh scored history alone must not suppress repair of a stale
+        # compatibility snapshot used by weekly/provider grading.
+        history=db.get.return_value
+        db.get.side_effect=lambda model,key: history if key[-1]=='scored_history' else NS(
+            payload=[{'roster_id':2,'starters':['1']}],synced_at=now-timedelta(days=3))
+        save.reset_mock()
+        assert (await collect_espn(db,'espn:1',2026,scoring,current,now,client=client,raw_league_id='1'))['weeks']==1
+        refreshed=next(c.args[-1] for c in save.call_args_list if c.args[-2]=='matchups')
+        assert refreshed[0]['starters']==['1']
+        assert refreshed[0]['players_points']=={'1':-2.0}
+        db.get.side_effect=None
         db.get.return_value=None
         historical['scoringPeriodId']=2
         with pytest.raises(ValueError):

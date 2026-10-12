@@ -121,6 +121,14 @@ async def _sync_league(
     if my_roster_id is None:
         logger.warning("espn fantasy: no team in league_id=%s matched the configured SWID", league_id)
     free_agent_count = await _fetch_free_agents(client, raw_league_id, season, week, metadata, projections)
+    # Retain roster AND fetched free-agent identity evidence without archiving
+    # account payloads. Repeated/conflicting observations are not overwritten.
+    defense_ids = _defense_identity_evidence(payload) + [
+        {'player_id':pid, 'team_id':team_id}
+        for pid, info in metadata.items() if info.get('position') == 'DEF'
+        for team_id in info.get('provider_team_ids', [])]
+    await _upsert_league(db, league_id, raw_league_id, season, league_settings,
+                         roster_positions, scoring_settings, payload, defense_ids)
     await _snapshot(db, league_id, 0, "account", {"user_id": my_swid})
     await _snapshot(db, league_id, week, "player_metadata", metadata)
     await _snapshot(db, league_id, week, "projections", projections)
@@ -130,21 +138,24 @@ async def _sync_league(
         await collect_espn(db,league_id,season,scoring_settings,payload,client=client,raw_league_id=raw_league_id)
     except (httpx.HTTPError,ValueError,TypeError) as exc:
         logger.warning('ESPN scored history unavailable league=%s error=%s',league_id,type(exc).__name__)
-    if week<18:
+    for planning_week in range(week+1, min(19, week+3)):
         try:
             future=await client.get(f"/seasons/{season}/segments/0/leagues/{raw_league_id}",
-                params=[('view','mRoster'),('view','mMatchup'),('scoringPeriodId',week+1)])
+                params=[('view','mRoster'),('view','mMatchup'),('scoringPeriodId',planning_week)])
+            if future.status_code == 429:
+                break
             future.raise_for_status()
             future_payload=future.json()
-            if future_payload.get('scoringPeriodId')==week+1:
+            if future_payload.get('scoringPeriodId')==planning_week:
                 future_meta={};future_projections={};future_starters={}
                 for team in future_payload.get('teams',[]):
-                    picks,_=_parse_roster_entries(team,future_meta,future_projections,week+1)
+                    picks,_=_parse_roster_entries(team,future_meta,future_projections,planning_week)
                     future_starters[team.get('id')]=picks
-                future_matches=_parse_matchups(future_payload,week+1,future_starters)
+                await _fetch_free_agents(client, raw_league_id, season, planning_week, future_meta, future_projections)
+                future_matches=_parse_matchups(future_payload,planning_week,future_starters)
                 if future_matches and any(future_projections.values()):
-                    await _snapshot(db,league_id,week+1,'projections',future_projections)
-                    await _snapshot(db,league_id,week+1,'matchups',future_matches)
+                    await _snapshot(db,league_id,planning_week,'projections',future_projections)
+                    await _snapshot(db,league_id,planning_week,'matchups',future_matches)
         except (httpx.HTTPError,ValueError,TypeError) as exc:
             logger.warning('ESPN planning unavailable league=%s error=%s',league_id,type(exc).__name__)
     return {"teams": len(teams), "free_agents": free_agent_count, "season": season, "week": week}
@@ -185,12 +196,16 @@ def _record_player(player: dict, metadata: dict, projections: dict, week: int) -
     """
     player_id = str(player.get("id"))
     position = PLAYER_POSITION_MAP.get(player.get("defaultPositionId"))
+    provider_team_ids = list(metadata.get(player_id, {}).get('provider_team_ids', []))
+    if position == 'DEF':
+        provider_team_ids.append(str(player.get('proTeamId')))
     metadata[player_id] = {
         "first_name": player.get("firstName"),
         "last_name": player.get("lastName") or player.get("fullName"),
         "position": position,
         "team": PRO_TEAM_MAP.get(player.get("proTeamId")),
         "injury_status": player.get("injuryStatus"),
+        "provider_team_ids": sorted(set(provider_team_ids)),
     }
     # NOT {"stats": ...} - main.py's projection_rows() expects this dict's
     # VALUE to already be the flat stat dict itself (matching Sleeper's
@@ -325,6 +340,17 @@ def _parse_matchups(payload: dict, week: int, team_starters: dict[int, list[str]
     return rows
 
 
+def _defense_identity_evidence(raw: dict) -> list[dict]:
+    """Keep provider identity pairs only, never account/roster payloads."""
+    result = []
+    for team in raw.get('teams', []):
+        for entry in team.get('roster', {}).get('entries', []):
+            player = entry.get('playerPoolEntry', {}).get('player', {})
+            if player.get('defaultPositionId') == 16 and player.get('id') is not None:
+                result.append({'player_id': str(player['id']), 'team_id': str(player.get('proTeamId'))})
+    return result
+
+
 async def _upsert_league(
     db: AsyncSession,
     league_id: str,
@@ -334,6 +360,7 @@ async def _upsert_league(
     roster_positions: list[str],
     scoring_settings: dict,
     raw: dict,
+    defense_identities: list[dict] | None = None,
 ) -> None:
     values = {
         "league_id": league_id,
@@ -346,6 +373,7 @@ async def _upsert_league(
         "settings": {k: v for k, v in league_settings.items() if k not in ("scoringSettings", "rosterSettings")},
         "scoring_settings": scoring_settings,
         "raw": {"league_id": raw_league_id,
+                "defense_identities": _defense_identity_evidence(raw) if defense_identities is None else defense_identities,
                 "scoringSettings": raw.get('settings',{}).get('scoringSettings',{})},  # retain exact scoring evidence, not account/roster payload
         # not archived wholesale the way Sleeper's already-small league
         # object is - the normalized snapshots below are the source of

@@ -15,13 +15,11 @@ from src.services.result_eligibility import no_pending_correction
 from src.services.roster_stat_prospective import publish
 from src.services.fantasy_decision_models import build
 from src.services.roster_stat_model import finite
+from src.services.projection_identity import manifest, reference, archive_identity
 
 
 def version():
-    return hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes() for name in
-        ('fantasy_prospective.py','fantasy_decision_models.py','fantasy_score_history.py','fantasy_simulation.py',
-         'fantasy_locks.py','fantasy_lineup_validation.py','fantasy_component_history.py',
-         'roster_stat_model.py','fantasy_schedule.py','player_identity.py'))).hexdigest()
+    return manifest()['cohort_version']
 
 
 def candidates(lab,now,v):
@@ -47,13 +45,15 @@ def candidates(lab,now,v):
 def grade(record,game,values,disputed=False):
     base={k:record[k] for k in ('id','version','league_id','scoring_cohort')}
     if game is None: return {**base,'status':'missing_game'}
+    if str(game.id)!=record.get('game_id'):return {**base,'status':'game_binding_mismatch'}
     if not game.game_time or datetime.fromisoformat(record['captured_at'])>=game.game_time:
         return {**base,'status':'invalid_capture_time'}
     if game.status!='final': return {**base,'status':'awaiting_final'}
     if disputed: return {**base,'status':'pending_correction'}
     weights=record['prediction']['scoring_weights']
     missing=sorted(k for k in weights if not finite(values.get(k)))
-    if missing: return {**base,'status':'missing_scoring_results','missing':missing}
+    if missing: return {**base,'status':'missing_scoring_results','missing':missing,
+        'result_blocker':'missing_player_results' if not values else 'missing_scoring_categories'}
     actual=sum(values[k]*w for k,w in weights.items())
     return {**base,'status':'graded','actual':actual,
         'scoring_status':record['prediction']['status'],
@@ -61,40 +61,74 @@ def grade(record,game,values,disputed=False):
         'candidate_error':abs(actual-record['prediction']['modeled_subtotal'])}
 
 
+async def grade_with_recovery(db,record,game,values,disputed,identities,snapshots):
+    """Same correction-safe grading path for individual and ROS components."""
+    result=grade(record,game,values,disputed)
+    if result['status']!='missing_scoring_results' or record['league_id'].startswith('espn:'):
+        return result
+    from src.services.fantasy_result_recovery import recover
+    from src.services.fantasy_component_history import ARCHIVE_ID, PREFIX
+    keys=((ARCHIVE_ID,game.week,PREFIX+str(game.season)),(record['league_id'],game.week,'scored_history'))
+    for key in keys:
+        if key not in snapshots:snapshots[key]=await db.get(SleeperLeagueSnapshot,key)
+    player=identities.get(record.get('platform_player_id'))
+    recovered=recover(record,game,snapshots[keys[0]],snapshots[keys[1]],
+        identity_matches=player is not None and str(player.id)==record['player_id'],existing_values=values)
+    return recovered if recovered['status']=='graded' else {**result,'recovery_blocker':recovered.get('reason',recovered['status'])}
+
+
+async def grade_ros_parts(db,record,games,values,disputed,identities,snapshots):
+    parts=[]
+    for scheduled in record['remaining_schedule']:
+        gid=scheduled['id'];key=(gid,record['player_id'])
+        # Rebind only an evaluation copy. The archived horizon and forecast stay immutable.
+        part={**record,'game_id':gid}
+        parts.append(await grade_with_recovery(db,part,games.get(gid),values.get(key,{}),
+            key in disputed,identities,snapshots))
+    return parts
+
+
+async def capture_forecasts(db,root,leagues,identity):
+    """Capture policy is versioned independently of grading/report generation."""
+    v=identity['cohort_version']; new=0; errors={}
+    for league in leagues:
+        lab=await build(db,league.league_id)
+        now=datetime.now(timezone.utc)
+        from src.services.fantasy_weekly_evidence import candidates as provider_candidates
+        for record in provider_candidates(lab,now):
+            publish(root/'provider-weekly'/f"{record['id']}.json",{**record,'model_identity':reference(identity)})
+        for record in candidates(lab,now,v):
+            record={**record,'model_identity':reference(identity)}
+            new+=publish(root/'forecasts'/f"{record['id']}.json",record)
+            remaining=[g for g in record['remaining_schedule'] if g['kickoff'] is None or datetime.fromisoformat(g['kickoff'])>now]
+            if record['ros_at_capture'].get('full_ros_value') is not None and remaining:
+                rid=hashlib.sha256(f"ros:{v}:{league.league_id}:{league.season}:{record['player_id']}:{record['scoring_cohort']}".encode()).hexdigest()
+                publish(root/'ros'/f'{rid}.json',{**record,'id':rid,'remaining_schedule':remaining,'kind':'ros'})
+        if lab.get('status')=='candidate' and lab['coverage']['weekly_decisions_open']:
+            kickoffs=[g['kickoff'] for g in lab['validation_lineups']['games']]
+            if kickoffs and all(kickoffs) and timedelta(minutes=5)<min(datetime.fromisoformat(k) for k in kickoffs)-now<=timedelta(hours=72):
+                key=hashlib.sha256(f"weekly:{v}:{league.league_id}:{league.season}:{lab['week']}".encode()).hexdigest()
+                from src.services.fantasy_lineup_validation import frozen
+                experiment=frozen(lab)
+                if experiment:
+                    key=hashlib.sha256((key+':lineup-experiment').encode()).hexdigest()
+                publish(root/'weekly'/f'{key}.json',{'id':key,'version':v,'captured_at':now.isoformat(),
+                    'league_id':league.league_id,'week':lab['week'],'matchup':lab['matchup'],
+                    'lineup_experiment':experiment,'model_identity':reference(identity),
+                    'lineups':lab['validation_lineups'],'waivers':lab['waivers']})
+        if lab.get('status')!='candidate' or lab['coverage']['stale_inputs']:
+            errors[league.league_id]='stale_or_missing_inputs'
+    return new,errors
+
+
 async def execute():
     root=Path(get_settings().raw_archive_dir)/'fantasy-prospective'
+    identity=manifest()
+    archive_identity(root,identity)
     async with get_worker_db() as db:
         await db.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'))
         leagues=(await db.scalars(select(SleeperLeague).where(SleeperLeague.sport=='nfl'))).all()
-        v=version(); new=0; errors={}
-        for league in leagues:
-            lab=await build(db,league.league_id)
-            now=datetime.now(timezone.utc)
-            from src.services.fantasy_weekly_evidence import candidates as provider_candidates
-            for record in provider_candidates(lab,now):
-                publish(root/'provider-weekly'/f"{record['id']}.json",record)
-            for record in candidates(lab,now,v):
-                new+=publish(root/'forecasts'/f"{record['id']}.json",record)
-                remaining=[g for g in record['remaining_schedule'] if g['kickoff'] is None or datetime.fromisoformat(g['kickoff'])>now]
-                if record['ros_at_capture'].get('full_ros_value') is not None and remaining:
-                    rid=hashlib.sha256(f"ros:{v}:{league.league_id}:{league.season}:{record['player_id']}:{record['scoring_cohort']}".encode()).hexdigest()
-                    publish(root/'ros'/f'{rid}.json',{**record,'id':rid,'remaining_schedule':remaining,'kind':'ros'})
-            if lab.get('status')=='candidate' and lab['coverage']['weekly_decisions_open']:
-                kickoffs=[g['kickoff'] for g in lab['validation_lineups']['games']]
-                if kickoffs and all(kickoffs) and timedelta(minutes=5)<min(datetime.fromisoformat(k) for k in kickoffs)-now<=timedelta(hours=72):
-                    key=hashlib.sha256(f"weekly:{v}:{league.league_id}:{league.season}:{lab['week']}".encode()).hexdigest()
-                    from src.services.fantasy_lineup_validation import frozen
-                    experiment=frozen(lab)
-                    if experiment:
-                        # Missing distributions at the first weekly capture must
-                        # not prevent a later, still-pregame simulation capture.
-                        key=hashlib.sha256((key+':lineup-experiment').encode()).hexdigest()
-                    publish(root/'weekly'/f'{key}.json',{'id':key,'version':v,'captured_at':now.isoformat(),
-                        'league_id':league.league_id,'week':lab['week'],'matchup':lab['matchup'],
-                        'lineup_experiment':experiment,
-                        'lineups':lab['validation_lineups'],'waivers':lab['waivers']})
-            if lab.get('status')!='candidate' or lab['coverage']['stale_inputs']:
-                errors[league.league_id]='stale_or_missing_inputs'
+        new,errors=await capture_forecasts(db,root,leagues,identity)
         records=[json.loads(p.read_text()) for p in (root/'forecasts').glob('*.json')]
         ros_records=[json.loads(p.read_text()) for p in (root/'ros').glob('*.json')]
         weekly=[json.loads(p.read_text()) for p in (root/'weekly').glob('*.json')]
@@ -106,8 +140,14 @@ async def execute():
         for f in facts:
             key=(str(f.game_id),str(f.player_id)); values[key][f.stat_type]=f.value
             if f.id not in safe: disputed.add(key)
-        grades=[grade(r,games.get(r['game_id']),values[(r['game_id'],r['player_id'])],
-            (r['game_id'],r['player_id']) in disputed) for r in records]
+        from src.services.player_identity import resolve_platform_players
+        from src.services.fantasy_component_history import ARCHIVE_ID, PREFIX
+        recovery_targets=[r for r in records+ros_records if not r['league_id'].startswith('espn:')]
+        identities=await resolve_platform_players(db,'sleeper',
+            {r.get('platform_player_id') for r in recovery_targets if r.get('platform_player_id')}) if recovery_targets else {}
+        snapshots={}
+        grades=[await grade_with_recovery(db,r,games.get(r['game_id']),values[(r['game_id'],r['player_id'])],
+            (r['game_id'],r['player_id']) in disputed,identities,snapshots) for r in records]
         groups=defaultdict(list)
         for g in grades:
             if g['status']=='graded': groups[(g['version'],g['league_id'],g['scoring_cohort'])].append(g)
@@ -116,8 +156,8 @@ async def execute():
             for (v,l,s),rs in groups.items()]
         ros_grades=[]
         for r in ros_records:
-            parts=[grade(r,games.get(g['id']),values[(g['id'],r['player_id'])],(g['id'],r['player_id']) in disputed) for g in r['remaining_schedule']]
-            complete=all(p['status']=='graded' for p in parts)
+            parts=await grade_ros_parts(db,r,games,values,disputed,identities,snapshots)
+            complete=bool(parts) and all(p['status']=='graded' for p in parts)
             actual=sum(p['actual'] for p in parts) if complete else None
             ros_grades.append({'id':r['id'],'status':'graded' if complete else 'awaiting_complete_results',
                 'component_counts':dict(Counter(p['status'] for p in parts)),'actual':actual,
@@ -143,9 +183,15 @@ async def execute():
                 weekly_grades.append({'id':r['id'],'status':'unbound_result_scoring_rules'});continue
             point_rows=snapshot.payload if snapshot and isinstance(snapshot.payload,list) else []
             points=snapshot.payload['points'] if r.get('lineup_experiment') else exact_totals(point_rows)
+            recovery=None
+            if r.get('lineup_experiment') and league.platform=='sleeper':
+                from src.services.fantasy_component_history import ARCHIVE_ID, PREFIX
+                from src.services.fantasy_sleeper_results import recover_lineup_points
+                archive=await db.get(SleeperLeagueSnapshot,(ARCHIVE_ID,r['week'],PREFIX+str(league.season)))
+                points,recovery=recover_lineup_points(r,snapshot,archive,games)
             from src.services.fantasy_lineup_validation import grade as grade_simulation
             weekly_grades.append({**grade_weekly(r,points),'version':r['version'],
-                'league_id':r['league_id'],'week':r['week'],'lineup_experiment':grade_simulation(r,points)})
+                'league_id':r['league_id'],'week':r['week'],'result_recovery':recovery,'lineup_experiment':grade_simulation(r,points)})
         simulation_groups=defaultdict(list)
         for row in weekly_grades:
             if row.get('lineup_experiment',{}).get('status')=='graded':
@@ -156,18 +202,35 @@ async def execute():
             'coinflip_brier':fmean(r['current']['coinflip_brier'] for r in rows),
             'serving_promoted':False} for (v,league_id),rows in simulation_groups.items()]
         from src.services.fantasy_weekly_evidence import grade as grade_provider
-        provider_grades=[]
+        provider_grades=[]; provider_records=[]
         for path in (root/'provider-weekly').glob('*.json'):
             record=json.loads(path.read_text())
+            provider_records.append(record)
             game=await db.get(Game,uuid.UUID(record['game_id']))
             snapshot=await db.get(SleeperLeagueSnapshot,(record['league_id'],record['week'],'matchups'))
-            provider_grades.append(grade_provider(record,game,snapshot))
+            result=grade_provider(record,game,snapshot)
+            if not record['league_id'].startswith('espn:') and result.get('result_blocker')=='player_absent_from_platform_results' and game is not None:
+                from src.services.fantasy_sleeper_results import grade_components
+                from src.services.fantasy_component_history import ARCHIVE_ID, PREFIX
+                components=await db.get(SleeperLeagueSnapshot,(ARCHIVE_ID,record['week'],PREFIX+str(game.season)))
+                official=await db.get(SleeperLeagueSnapshot,(record['league_id'],record['week'],'scored_history'))
+                result=grade_components(record,game,components,official)
+            if record['league_id'].startswith('espn:') and record.get('scoring_contract_hash'):
+                from src.services.fantasy_weekly_evidence import grade_archive
+                archive=await db.get(SleeperLeagueSnapshot,(record['league_id'],record['week'],'historical_player_scores'))
+                result=grade_archive(record,game,archive)
+            provider_grades.append(result)
+        from src.services.fantasy_evidence_counts import provider_counts, lineup_counts, result_backlog
         report={'generated_at':datetime.now(timezone.utc).isoformat(),'status':'experimental','new_forecasts':new,
+            'evaluation_identity':reference(identity),
             'provider_weekly':{'forecasts':len(provider_grades),'counts':dict(Counter(g['status'] for g in provider_grades)),
+                'observation_counts':provider_counts(provider_records,provider_grades),
                 'positions':dict(Counter(g['position'] for g in provider_grades)),'grades':provider_grades},
             'total_forecasts':len(records),'counts':dict(Counter(g['status'] for g in grades)),
+            'result_backlog':result_backlog(records,grades),
             'metrics':metrics,'grades':grades,'capture_blocks':errors,'serving_enabled':False,
             'lineup_experiments':{'forecasts':sum(bool(r.get('lineup_experiment')) for r in weekly),
+                'evidence_status':lineup_counts(weekly,weekly_grades,version()),
                 'metrics':simulation_metrics,'serving_promoted':False},
             'ros':{'forecasts':len(ros_records),'counts':dict(Counter(g['status'] for g in ros_grades)),'grades':ros_grades},
             'weekly':{'forecasts':len(weekly),'counts':dict(Counter(g['status'] for g in weekly_grades)),'grades':weekly_grades}}

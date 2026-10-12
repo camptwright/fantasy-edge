@@ -1,6 +1,6 @@
 """Read-only fantasy candidates; missing data never becomes a zero forecast."""
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from statistics import fmean
 
 from scipy.optimize import linear_sum_assignment
@@ -163,7 +163,18 @@ def trade_comparison(players, side_a, side_b):
             'note':'Partial schedule/scoring values are not trade fairness. No recommendation or automatic acceptance; roster fit and replacement costs remain unpriced.'}
 
 
-async def build(db, league_id, *, include_catalog=False):
+def input_deadline(meta, proj, matchup, rosters, platform, now):
+    """Daily bulk catalog cadence is distinct from live roster/projection freshness."""
+    sources=[(meta,26 if platform=='sleeper' else 6),
+             *[(row,6) for row in (proj,matchup,*rosters)]]
+    if any(row.synced_at>now for row,_ in sources):return None
+    return min(row.synced_at+timedelta(hours=hours) for row,hours in sources)
+
+
+async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catalog_limit=50,
+                selected_player_ids=()):
+    if catalog_offset < 0 or not 1 <= catalog_limit <= 100:
+        raise ValueError('Catalog requires a nonnegative offset and limit from 1 to 100')
     now=datetime.now(timezone.utc)
     league=await db.get(SleeperLeague,league_id)
     if not league or league.sport!='nfl': return {'status':'unsupported_league','players':[]}
@@ -202,20 +213,29 @@ async def build(db, league_id, *, include_catalog=False):
     catalog_ids={str(pid) for pid,info in catalog.items() if isinstance(info,dict) and
         info.get('team') and info.get('active') is not False and
         info.get('position') in ('QB','RB','WR','TE','K','DEF','DST')} if include_catalog else set()
-    ids=sorted(owned|set(free)|catalog_ids)
+    catalog_page=sorted(catalog_ids-owned-set(free))[catalog_offset:catalog_offset+catalog_limit]
+    # Always retain the league rosters and replacement pool. Only the additional
+    # catalog is paged; selected trade participants are explicitly included.
+    ids=sorted(owned|set(free)|set(catalog_page)|set(map(str,selected_player_ids)))
     resolved=await resolve_platform_players(db,league.platform,ids)
     teams=(await db.scalars(select(Team).where(Team.sport=='nfl'))).all()
     alias={'LA':'LAR','WSH':'WAS','JAC':'JAX'}
     team_by_abbr={alias.get(t.nflverse_abbr,t.nflverse_abbr):t.id for t in teams}
+    team_names={t.id:t.name for t in teams}
     history=defaultdict(dict)
-    facts=(await db.execute(select(PlayerGameStat,Game).join(Game,Game.id==PlayerGameStat.game_id).where(
+    facts=(await db.stream(select(PlayerGameStat.player_id,PlayerGameStat.game_id,
+        PlayerGameStat.stat_type,PlayerGameStat.value,Game.game_time,Game.season)
+        .join(Game,Game.id==PlayerGameStat.game_id).where(
         PlayerGameStat.player_id.in_([p.id for p in resolved.values()]),Game.sport=='nfl',
         Game.season>=int(league.season)-2,Game.status=='final',Game.game_time.isnot(None),Game.game_time<now,
-        or_(Game.game_type.is_(None),Game.game_type=='REG'),no_pending_correction()))).all() if resolved else []
-    for fact,g in facts:
-        history[fact.player_id].setdefault(g.id,{'game_id':str(g.id),'time':g.game_time,'season':g.season,'values':{}})['values'][fact.stat_type]=fact.value
-    stale=any(not 0<=(now-s.synced_at).total_seconds()<=21600 for s in (meta,proj,matchup)) or any(
-        not 0<=(now-r.synced_at).total_seconds()<=21600 for r in rosters)
+        or_(Game.game_type.is_(None),Game.game_type=='REG'),no_pending_correction())
+        .execution_options(yield_per=1000))) if resolved else None
+    if facts is not None:
+        async for fact in facts:
+            history[fact.player_id].setdefault(fact.game_id,{'game_id':str(fact.game_id),
+                'time':fact.game_time,'season':fact.season,'values':{}})['values'][fact.stat_type]=fact.value
+    deadline=input_deadline(meta,proj,matchup,rosters,league.platform,now)
+    stale=deadline is None or now>=deadline
     week=matchup.week
     week_games=[g for g in games if g.week==week]
     weekly_open=bool(week_games) and proj.week==week and not stale and all(
@@ -227,6 +247,8 @@ async def build(db, league_id, *, include_catalog=False):
         info=catalog.get(pid,{})
         team=team_by_abbr.get(alias.get(info.get('team'),info.get('team')))
         pg=[g for g in games if team and team in (g.home_team_id,g.away_team_id)]
+        weekly_games=[g for g in pg if g.week==week]
+        opponent_id=(weekly_games[0].away_team_id if weekly_games[0].home_team_id==team else weekly_games[0].home_team_id) if len(weekly_games)==1 else None
         canonical=resolved.get(pid)
         scoring,rule_gaps=player_scoring(league,info.get('position'))
         h=historical_candidate(list(history[canonical.id].values()),scoring) if canonical and info.get('position') in ('QB','RB','WR','TE') else {'status':'unresolved_or_unsupported','modeled_subtotal':None}
@@ -235,6 +257,8 @@ async def build(db, league_id, *, include_catalog=False):
         from src.services.fantasy_specialists import candidate as kicking_candidate
         specialist=kicking_candidate(list(history[canonical.id].values()),scoring) if canonical and info.get('position')=='K' else None
         players.append({'specialist_research':specialist,'player_id':pid,'name':' '.join(str(info.get(k) or '') for k in ('first_name','last_name')).strip() or pid,
+            'replacement_pool_member':pid in free,
+            'opponent':team_names.get(opponent_id),'news_status':'not_wired_to_fantasy_view',
             'position':info.get('position'),'team':info.get('team'),'weekly_points':weekly(pid),
             'injury_status':info.get('injury_status'),'roster_ids':[r.roster_id for r in rosters if pid in set(map(str,r.players))],
             'history_through':max((r['time'].isoformat() for r in history[canonical.id].values()),default=None) if canonical else None,
@@ -250,6 +274,21 @@ async def build(db, league_id, *, include_catalog=False):
             'next_games':[{'id':str(g.id),'week':g.week,'kickoff':g.game_time.isoformat() if g.game_time else None,'status':g.status} for g in pg if g.status=='scheduled'],
             'identity_status':'exact' if canonical else 'unresolved','ros':ros_value(h,pg,now,schedule_complete=schedule_coverage['complete'] and team is not None),
             'locked':len([g for g in pg if g.week==week])!=1 or any(g.week==week and (g.game_time is None or g.game_time<=now or g.status!='scheduled') for g in pg)})
+    # Event evidence is collected elsewhere; only bind its archived observations
+    # during background model construction, never during a preview GET.
+    from src.services.lab_availability import contexts as availability_contexts
+    bound_games={}
+    for p in players:
+        canonical=resolved.get(p['player_id'])
+        candidates=[g for g in week_games if str(g.id) in {r['id'] for r in p['next_games']}]
+        if canonical:
+            bound_games[canonical.id]=candidates[0] if len(candidates)==1 else None
+    availability=await availability_contexts(db,'nfl',list(bound_games),bound_games,now)
+    for p in players:
+        canonical=resolved.get(p['player_id'])
+        p['game_availability']=availability.get(canonical.id,{}) if canonical else {
+            'status':'team_unit_not_individual' if p['position'] in ('DEF','DST') else 'missing_provider_identity',
+            'hold_recommendation':False,'official_game_status_verified':False}
     by_id={p['player_id']:p for p in players}
     from src.services.fantasy_score_history import distributions,scoring_hash
     official_rules=league.raw.get('scoringSettings') if league.platform=='espn' else None
@@ -295,6 +334,9 @@ async def build(db, league_id, *, include_catalog=False):
             'complete_scored_games':h.get('games',0),'missing_scoring_keys':h.get('missing_scoring_keys',[]),
             'missing_category_counts':h.get('missing_category_counts',{}),
             'identity_status':p['identity_status'], 'position_supported':p['position'] in ('QB','RB','WR','TE')}
+    from src.services.fantasy_specialist_totals import ros_research
+    specialist_ros=ros_research(players,snapshots,league,catalog,week,now)
+    for p in players:p['specialist_ros_research']=specialist_ros.get(p['player_id'])
     mine_players=[by_id[str(pid)] for pid in mine.players]
     matchrows=matchup.payload if isinstance(matchup.payload,list) else []
     mymatch=next((r for r in matchrows if r.get('roster_id')==mine.roster_id),{})
@@ -315,7 +357,13 @@ async def build(db, league_id, *, include_catalog=False):
     decisions_fresh=not stale and proj.week==week
     lineup_decision=locked_lineup(mine_players,league.roster_positions,starters) if decisions_fresh else {
         'status':'stale_inputs','lineup':[],'total':None,'unlocked_points':None}
+    from src.services.fantasy_prospective import version as prospective_version
     return {'status':'candidate','league_id':league_id,'league_name':league.name,'week':week,'generated_at':now.isoformat(),
+        'input_valid_until':None if stale else deadline.isoformat(),
+        'catalog_page':{'offset':catalog_offset,'limit':catalog_limit,
+            'total_additional_players':len(catalog_ids-owned-set(free)),
+            'next_offset':catalog_offset+catalog_limit if catalog_offset+catalog_limit<len(catalog_ids-owned-set(free)) else None,
+            'scope':'All league rosters and top replacement candidates, plus a bounded catalog page'},
         'roster_positions':league.roster_positions,
         'planning_week':planning_weeks[0] if planning_weeks else None,
         'planning_status':'aligned' if planning_weeks and planning_weeks[0]==week else 'awaiting_matching_week_snapshots',
@@ -328,7 +376,8 @@ async def build(db, league_id, *, include_catalog=False):
         'rosters':[{'roster_id':r.roster_id,'name':r.team_name or str(r.roster_id),'is_mine':r is mine,
                     'player_ids':list(map(str,r.players))} for r in rosters],
         'input_timestamps':{kind:row.synced_at.isoformat() for kind,row in latest.items() if kind in ('player_metadata','projections','matchups')},
-        'model_version':'fantasy_decisions_v4','serving_replaced':False,'scoring_settings':league.scoring_settings,
+        'model_version':'fantasy_decisions_v4','recipe_version':prospective_version(),
+        'serving_replaced':False,'scoring_settings':league.scoring_settings,
         'scoring_contract_hash':scoring_hash(league.scoring_settings,official_rules),
         'coverage':{'stale_inputs':stale,'projection_week':proj.week,'weekly_decisions_open':weekly_open,
                     'schedule':schedule_coverage,'scheduled_rows':len(games),'player_pool':len(players),'free_agent_candidates':len(free),

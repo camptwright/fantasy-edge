@@ -39,3 +39,26 @@ def test_provider_weekly_forecast_does_not_require_history(position):
     assert grade(records[0],game,snapshot)['absolute_error']==0
     snapshot.synced_at=kickoff
     assert grade(records[0],game,snapshot)['status']=='missing_final_platform_points'
+
+
+@pytest.mark.parametrize('rows,reason',[
+    ([], 'player_absent_from_platform_results'),
+    ([None], 'nonfinite_platform_points'),
+    ([True], 'nonfinite_platform_points'),
+    ([float('nan')], 'nonfinite_platform_points'),
+    ([1,2], 'conflicting_platform_points'),
+])
+def test_provider_result_blockers_are_distinct(rows,reason):
+    now=datetime.now(timezone.utc)
+    record={'id':'f','league_id':'L','position':'RB','player_id':'p','week':2,
+            'game_id':'g','captured_at':(now-timedelta(days=3)).isoformat(),
+            'prediction':{'points':10}}
+    game=SimpleNamespace(status='final',game_time=now-timedelta(days=2))
+    snapshot=SimpleNamespace(synced_at=now,payload=[{'players_points':{'p':v}} for v in rows])
+    result=grade(record,game,snapshot)
+    assert result['status']=='missing_or_conflicting_platform_points'
+    assert result['result_blocker']==reason
+    assert result['player_id']=='p' and result['week']==2 and result['game_id']=='g'
+    assert 'actual' not in result
+    snapshot.payload=[{'players_points':{'p':0}},{'players_points':{'p':0}}]
+    assert grade(record,game,snapshot)['actual']==0

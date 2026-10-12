@@ -8,6 +8,26 @@ def p(pid,pos,points,locked=False):
         weekly_points=points,locked=locked,injury_status=None)
 
 
+def test_event_hold_excludes_new_starts_but_preserves_locked_slots():
+    from src.services.fantasy_simulation import eligibility_reasons
+    from src.services.fantasy_values import availability_flag
+    held={**p('held','WR',100),'game_availability':{'hold_recommendation':True}}
+    safe=p('safe','WR',10)
+    assert lineup([held,safe],['WR'],['safe'])['lineup'][0]['player_id']=='safe'
+    assert lineup([{**held,'locked':True},safe],['WR'],['held'])['lineup'][0]['player_id']=='held'
+    assert 'event_availability_hold' in eligibility_reasons(held)
+    assert availability_flag(held)
+    assert lineup([{**held,'game_availability':{},'injury_status':' Out '},safe],['WR'],['safe'])['lineup'][0]['player_id']=='safe'
+
+
+def test_checkpoint_does_not_outlive_event_evidence():
+    from datetime import datetime, timezone, timedelta
+    from src.services.fantasy_read_model import expires
+    now=datetime.now(timezone.utc)
+    data={'players':[{'game_availability':{'observed_at':(now-timedelta(minutes=59)).isoformat()}}]}
+    assert expires(data,now)==now+timedelta(minutes=1)
+
+
 def test_locked_starter_cannot_move_even_for_higher_points():
     players=[p('a','WR',None,True),p('b','WR',5),p('c','WR',20),p('d','WR',100,True)]
     result=lineup(players,['WR','FLEX','BN'],['a','b'])
@@ -39,6 +59,18 @@ def test_legal_search_allows_multi_player_changes_and_caps():
     assert all(len(set(r))==2 for r in rows)
     rows,limited=legal_lineups(pool,['WR','FLEX'],limit=3)
     assert len(rows)==3 and limited
+
+
+def test_waiver_ties_are_explicit_and_do_not_depend_on_roster_order():
+    mine=[p('starter','WR',10),p('z','QB',20),p('a','QB',5)]
+    first=waivers(mine,[p('add','WR',20)],['WR'],['starter'])
+    second=waivers(list(reversed(mine)),[p('add','WR',20)],['WR'],['starter'])
+    assert first==second
+    move=first['moves'][0]
+    assert move['equivalent_drop_ids']==['a','z']
+    assert move['drop_decision_status']=='unresolved_retention_cost'
+    assert move['drop_selection']=='stable_id_not_retention_value'
+    assert move['lineup_gain']==10
 
 
 def test_lineup_grading_missing_and_ties():

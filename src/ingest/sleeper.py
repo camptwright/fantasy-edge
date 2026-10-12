@@ -95,7 +95,7 @@ async def _sync_sport(db: AsyncSession, client: httpx.AsyncClient, user: dict, s
                 SleeperLeagueSnapshot.kind == "player_metadata",
             ).limit(1)
         )
-        if metadata_exists is None or (datetime.now(timezone.utc)-metadata_exists).total_seconds() >= 14400:
+        if metadata_exists is None or (datetime.now(timezone.utc)-metadata_exists).total_seconds() >= 86400:
             if player_catalog is None:
                 response = await client.get(f"/players/{sport}")
                 response.raise_for_status()
@@ -120,6 +120,8 @@ async def _sync_sport(db: AsyncSession, client: httpx.AsyncClient, user: dict, s
                     "position": info.get("position"),
                     "team": info.get("team"),
                     "injury_status": info.get("injury_status"),
+                    "years_exp": info.get("years_exp"),
+                    "experience_season": season,
                 }
                 for player_id, info in player_catalog.items()
                 if isinstance(info, dict) and (relevant_positions is None or info.get("position") in relevant_positions)
@@ -142,6 +144,11 @@ async def _sync_sport(db: AsyncSession, client: httpx.AsyncClient, user: dict, s
         projection_response.raise_for_status()
         await _snapshot(db, league_id, week, "projections", projection_response.json())
         if sport == 'nfl':
+            from src.ingest.keeper_history import collect as collect_keeper_history
+            try:
+                await collect_keeper_history(db, client, league)
+            except (httpx.HTTPError, ValueError, TypeError) as exc:
+                logger.warning('keeper history unavailable league=%s error=%s', league_id, type(exc).__name__)
             from src.services.fantasy_score_history import collect as collect_score_history
             try:
                 await collect_score_history(db, client, league)
@@ -151,15 +158,17 @@ async def _sync_sport(db: AsyncSession, client: httpx.AsyncClient, user: dict, s
                 logger.warning('fantasy scored history unavailable league=%s error=%s', league_id, type(exc).__name__)
         # Planning snapshots must be a matched week pair, never this week's
         # opponents paired with next week's estimates. Current snapshots remain.
-        if sport == 'nfl' and week < 18:
+        for planning_week in (range(week+1, min(19, week+3)) if sport == 'nfl' else ()):
             try:
-                next_match = await client.get(f"/league/{league_id}/matchups/{week+1}")
-                next_proj = await client.get(f"/projections/{sport}/{season_type}/{season}/{week+1}")
+                next_match = await client.get(f"/league/{league_id}/matchups/{planning_week}")
+                next_proj = await client.get(f"/projections/{sport}/{season_type}/{season}/{planning_week}")
+                if next_match.status_code == 429 or next_proj.status_code == 429:
+                    break
                 if next_match.is_success and next_proj.is_success:
                     matches, projections = next_match.json(), next_proj.json()
                     if isinstance(matches, list) and matches and isinstance(projections, (dict, list)) and projections:
-                        await _snapshot(db, league_id, week+1, 'matchups', matches)
-                        await _snapshot(db, league_id, week+1, 'projections', projections)
+                        await _snapshot(db, league_id, planning_week, 'matchups', matches)
+                        await _snapshot(db, league_id, planning_week, 'projections', projections)
             except (httpx.HTTPError,ValueError,TypeError) as exc:
                 logger.warning('Sleeper planning unavailable league=%s error=%s',league_id,type(exc).__name__)
     return {"leagues": len(leagues), "season": int(season), "week": week}

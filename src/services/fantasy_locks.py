@@ -18,7 +18,8 @@ def lineup(players, slots, starters):
         if p.get('locked',True):
             fixed[i]={'slot':slots[i],'player_id':pid,'name':p['name'],'points':None,'locked':True}
     pool=[p for p in players if not p.get('locked',True) and finite(p.get('decision_points'))
-        and str(p.get('injury_status') or '').upper() not in ('OUT','IR','DOUBTFUL','SUSPENDED','PUP')]
+        and str(p.get('injury_status') or '').strip().upper() not in ('OUT','IR','DOUBTFUL','SUSPENDED','PUP')
+        and not p.get('game_availability',{}).get('hold_recommendation')]
     open_indices=[i for i in range(len(slots)) if i not in fixed]
     if not open_indices:
         return {**base,'status':'all_slots_locked','lineup':[fixed[i] for i in range(len(slots))],
@@ -38,16 +39,22 @@ def waivers(mine, free, slots, starters):
     moves=[]
     for add in free:
         if add.get('locked',True) or not finite(add.get('decision_points')):continue
-        best=None
-        for drop in mine:
+        alternatives=[]
+        for drop in sorted(mine,key=lambda p:str(p['player_id'])):
             if drop['player_id'] in starters or drop.get('locked',True):continue
             after=lineup([p for p in mine if p['player_id']!=drop['player_id']]+[add],slots,starters)
             if after['unlocked_points'] is None:continue
             gain=round(after['unlocked_points']-before['unlocked_points'],2)
-            if gain>0 and (best is None or gain>best['lineup_gain']):
-                best={'add_id':add['player_id'],'add':add['name'],'drop_id':drop['player_id'],
+            if gain>0:
+                alternatives.append({'add_id':add['player_id'],'add':add['name'],'drop_id':drop['player_id'],
                     'drop':drop['name'],'lineup_gain':gain,'after_total':after['total'],
-                    'after_lineup':after['lineup'],'scope':'unstarted_slots_only'}
-        if best:moves.append(best)
+                    'after_lineup':after['lineup'],'scope':'unstarted_slots_only'})
+        if alternatives:
+            alternatives.sort(key=lambda m:(-m['lineup_gain'],str(m['drop_id'])))
+            best=alternatives[0]
+            tied=[m for m in alternatives if m['lineup_gain']==best['lineup_gain']]
+            moves.append({**best,'equivalent_drop_ids':[m['drop_id'] for m in tied],
+                'drop_selection':'stable_id_not_retention_value',
+                'drop_decision_status':'unresolved_retention_cost'})
     return {'status':'lock_preserving_candidate','before':before,
             'moves':sorted(moves,key=lambda m:(-m['lineup_gain'],m['add_id']))[:15]}

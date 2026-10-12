@@ -35,13 +35,14 @@ def test_st_requires_end_marker_and_attribution():
     assert special_teams([play,play,end])[1]=={}
 
 def record():
-    return {'id':'r','version':'v','league_id':'l','scoring_cohort':'c',
+    return {'id':'r','game_id':'g','version':'v','league_id':'l','scoring_cohort':'c',
         'captured_at':'2026-09-01T00:00:00+00:00','prediction':{'scoring_weights':{'receptions':1},
         'status':'candidate','baseline_subtotal':4,'modeled_subtotal':5}}
 
 def test_prospective_grades_corrected_results_without_changing_forecast():
-    r=record();g=SimpleNamespace(game_time=datetime(2026,9,2,tzinfo=timezone.utc),status='final')
+    r=record();g=SimpleNamespace(id='g',game_time=datetime(2026,9,2,tzinfo=timezone.utc),status='final')
     assert grade(r,g,{})['status']=='missing_scoring_results'
+    assert grade(r,g,{})['result_blocker']=='missing_player_results'
     assert grade(r,g,{'receptions':6},True)['status']=='pending_correction'
     assert grade(r,g,{'receptions':6})['candidate_error']==1
     assert grade(r,g,{'receptions':7})['candidate_error']==2
@@ -50,7 +51,7 @@ def test_prospective_grades_corrected_results_without_changing_forecast():
 def test_no_backdated_or_stale_capture():
     now=datetime(2026,9,2,tzinfo=timezone.utc)
     assert candidates({'status':'candidate','coverage':{'stale_inputs':True}},now,'v')==[]
-    g=SimpleNamespace(game_time=datetime(2026,8,31,tzinfo=timezone.utc),status='final')
+    g=SimpleNamespace(id='g',game_time=datetime(2026,8,31,tzinfo=timezone.utc),status='final')
     assert grade(record(),g,{'receptions':6})['status']=='invalid_capture_time'
 
 def test_weekly_grading_uses_frozen_lineups_not_reoptimized_hindsight():
@@ -79,7 +80,7 @@ async def test_espn_scoring_evidence_is_retained_without_account_payload():
     await _upsert_league(db,'espn:1','1',2026,{},['WR'],{'rec':1},
         {'settings':{'scoringSettings':scoring},'account':'not retained'})
     params=db.execute.call_args.args[0].compile().params
-    assert params['raw']=={'league_id':'1','scoringSettings':scoring}
+    assert params['raw']=={'league_id':'1','scoringSettings':scoring,'defense_identities':[]}
 
 def test_espn_equal_td_groups_and_kicking_buckets_are_exact():
     from src.services.fantasy_decision_models import player_scoring

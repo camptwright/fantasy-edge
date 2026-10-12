@@ -11,9 +11,21 @@ POSITIONS={'QB','RB','WR','TE'}
 MODEL='fantasy_roster_value_v1'
 
 
+def compact_board(data):
+    """UI read model; full distributions remain on the detailed API contract."""
+    fields=('status','league_id','generated_at','valuation_version','recipe_version','input_timestamps',
+            'valuation_notes','value_coverage','trade_candidates','catalog_page','market_data_status')
+    player_fields=('player_id','name','position','team','injury_status','history_through',
+                   'roster_ids','weekly_evidence','game_availability','value')
+    return {**{k:data[k] for k in fields if k in data},
+            'players':[{**{k:p[k] for k in player_fields if k in p},
+                        'ros':{'full_ros_value':p.get('ros',{}).get('full_ros_value')}}
+                       for p in data.get('players',[])]}
+
+
 def availability_flag(p):
     value=str(p.get('injury_status') or '').strip().upper()
-    return value not in ('','ACTIVE','HEALTHY','NORMAL')
+    return value not in ('','ACTIVE','HEALTHY','NORMAL') or bool(p.get('game_availability',{}).get('hold_recommendation'))
 
 
 def ready(p):
@@ -33,6 +45,7 @@ def value_board(data):
     replacements={}
     for pos in sorted(POSITIONS):
         pool=[p for p in players if p.get('position')==pos and not p.get('roster_ids') and ready(p)
+              and p.get('replacement_pool_member',True)
               and not availability_flag(p) and p.get('current_season_games',1)>0]
         if pool:
             replacements[pos]=max(pool,key=lambda p:(points(p),p['player_id']))

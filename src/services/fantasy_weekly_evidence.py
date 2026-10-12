@@ -20,22 +20,67 @@ def candidates(lab,now):
         observed=datetime.fromisoformat(e['observed_at'])
         if not observed<=now<kickoff or not timedelta(minutes=5)<kickoff-now<=timedelta(hours=72):continue
         scoring_hash=hashlib.sha256(json.dumps(lab['scoring_settings'],sort_keys=True).encode()).hexdigest()
-        identity=f"provider_weekly_v1:{lab['league_id']}:{g['id']}:{p['player_id']}:{scoring_hash}"
-        out.append({'id':hashlib.sha256(identity.encode()).hexdigest(),'recipe':'provider_weekly_v1',
+        contract=lab.get('scoring_contract_hash')
+        recipe='provider_weekly_v2' if contract else 'provider_weekly_v1'
+        identity=f"{recipe}:{lab['league_id']}:{g['id']}:{p['player_id']}:{scoring_hash}" + (f':{contract}' if contract else '')
+        out.append({'id':hashlib.sha256(identity.encode()).hexdigest(),'recipe':recipe,
             'league_id':lab['league_id'],'game_id':g['id'],'week':e['week'],'player_id':p['player_id'],
             'position':p['position'],'captured_at':now.isoformat(),'kickoff':g['kickoff'],
-            'scoring_hash':scoring_hash,'prediction':e,'serving_promoted':False})
+            'scoring_hash':scoring_hash,'scoring_contract_hash':contract,'prediction':e,'serving_promoted':False})
     return out
 
 
 def grade(record,game,snapshot):
     base={'id':record['id'],'league_id':record['league_id'],'position':record['position']}
+    if record['league_id'].startswith('espn:') and record.get('scoring_contract_hash'):
+        return {**base,'status':'historical_result_withheld','result_blocker':'requires_rule_bound_archive'}
     if game is None or game.status!='final':return {**base,'status':'awaiting_final'}
     at=datetime.fromisoformat(record['captured_at'])
     if not game.game_time or at>=game.game_time:return {**base,'status':'invalid_capture_time'}
     if snapshot is None or snapshot.synced_at<game.game_time+timedelta(hours=24) or not isinstance(snapshot.payload,list):return {**base,'status':'missing_final_platform_points'}
     values=[r.get('players_points',{}).get(record['player_id']) for r in snapshot.payload if record['player_id'] in r.get('players_points',{})]
-    if not values or not all(finite(v) for v in values) or len(set(values))!=1:return {**base,'status':'missing_or_conflicting_platform_points'}
+    reason = ('player_absent_from_platform_results' if not values else
+              'nonfinite_platform_points' if not all(finite(v) for v in values) else
+              'conflicting_platform_points' if len(set(values))!=1 else None)
+    if reason:
+        return {**base,'status':'missing_or_conflicting_platform_points',
+                'result_blocker':reason,'player_id':record['player_id'],
+                'week':record['week'],'game_id':record['game_id'],
+                'result_observed_at':snapshot.synced_at.isoformat(),
+                'result_rows':len(values)}
     return {**base,'status':'graded_platform_total','actual':values[0],
             'absolute_error':abs(values[0]-record['prediction']['points']),
             'result_observed_at':snapshot.synced_at.isoformat()}
+
+
+def grade_archive(record, game, snapshot):
+    """No retrospective rule binding; legacy captures cannot use this source."""
+    base={'id':record['id'],'league_id':record['league_id'],'position':record['position']}
+    def blocked(reason):return {**base,'status':'historical_result_withheld','result_blocker':reason}
+    if not record.get('scoring_contract_hash'):return blocked('missing_frozen_scoring_contract')
+    if game is None or game.status!='final':return blocked('awaiting_final')
+    if str(game.id)!=record['game_id'] or game.week!=record['week']:return blocked('game_binding_mismatch')
+    if not game.game_time or datetime.fromisoformat(record['captured_at'])>=game.game_time:return blocked('invalid_capture_time')
+    if snapshot is None:return blocked('missing_archive')
+    p=snapshot.payload
+    if (getattr(snapshot,'kind',None)!='historical_player_scores' or not isinstance(p,dict)
+        or p.get('schema_version')!=1 or p.get('source')!='espn_league_historical_player_pool'):
+        return blocked('invalid_archive_contract')
+    if (snapshot.league_id!=record['league_id'] or snapshot.week!=record['week']
+        or not isinstance(p,dict) or p.get('week')!=record['week']
+        or p.get('season')!=str(game.season) or record['game_id'] not in p.get('game_ids',[])):
+        return blocked('archive_binding_mismatch')
+    if snapshot.synced_at<game.game_time+timedelta(hours=24):return blocked('awaiting_final_snapshot')
+    if p.get('status')!='reconciled' or p.get('overlap_players',0)<10 or p.get('conflicting_player_ids'):
+        return blocked('unreconciled_archive')
+    if p.get('scoring_hash')!=record['scoring_contract_hash']:return blocked('scoring_rules_mismatch')
+    from src.services.fantasy_score_history import scoring_hash
+    contract=p.get('scoring_contract',{})
+    if (not isinstance(contract,dict) or not contract.get('official_rules')
+        or scoring_hash(contract.get('scoring'),contract['official_rules'])!=p['scoring_hash']):
+        return blocked('invalid_archive_contract')
+    actual=p.get('points',{}).get(record['player_id'])
+    if not finite(actual):return blocked('missing_player_actual')
+    return {**base,'status':'graded_platform_total','actual':actual,
+        'absolute_error':abs(actual-record['prediction']['points']),
+        'result_source':'reconciled_historical_player_pool','result_observed_at':snapshot.synced_at.isoformat()}

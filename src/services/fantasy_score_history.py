@@ -102,7 +102,17 @@ async def collect_espn(db, league_id, season, scoring, payload, now=None, *, cli
         slate=[g for g in games if g.week==week]
         if not all(g.status=='final' and g.game_time and g.game_time<now-timedelta(hours=24) for g in slate):continue
         old=await db.get(SleeperLeagueSnapshot,(league_id,week,KIND))
-        if old and old.payload.get('scoring_hash')==digest and timedelta(0)<=now-old.synced_at<timedelta(days=1):continue
+        matchup = await db.get(SleeperLeagueSnapshot, (league_id, week, 'matchups'))
+        pool = await db.get(SleeperLeagueSnapshot, (league_id, week, 'historical_player_scores')) if client is not None else None
+        pool_fresh = client is None or (pool is not None
+            and isinstance(pool.payload, dict)
+            and pool.payload.get('scoring_hash') == digest
+            and timedelta(0) <= now-pool.synced_at < timedelta(days=1))
+        if (old and old.payload.get('scoring_hash')==digest
+            and pool_fresh
+            and timedelta(0)<=now-old.synced_at<timedelta(days=1)
+            and matchup and timedelta(0)<=now-matchup.synced_at<timedelta(days=1)
+            and matchup.synced_at>=max(g.game_time for g in slate)+timedelta(hours=24)):continue
         historical=payload
         if client is not None:
             response=await client.get(f'/seasons/{season}/segments/0/leagues/{raw_league_id}',
@@ -122,10 +132,25 @@ async def collect_espn(db, league_id, season, scoring, payload, now=None, *, cli
                         rows.append({'players_points':{str(player['id']):stat.get('appliedTotal')}})
         points=exact_totals(rows)
         if not points:continue
+        # Legacy weekly/provider graders consume matchups, not scored_history.
+        # Refresh both from the same explicitly requested final period. Preserve
+        # previously observed starters rather than inferring historical lineups.
+        from src.ingest.espn_fantasy import _parse_matchups
+        prior = matchup.payload if matchup and isinstance(matchup.payload, list) else []
+        matches = _parse_matchups(historical, week, {r['roster_id']:r.get('starters',[]) for r in prior})
+        for row in matches:
+            row['players_points'] = {pid:points[pid] for pid in row['players_points'] if pid in points}
+        if matches and historical.get('scoringPeriodId') == week:
+            await _snapshot(db, league_id, week, 'matchups', matches)
         await _snapshot(db,league_id,week,KIND,{'schema_version':1,'season':str(season),'week':week,
             'scoring_hash':digest,'observed_at':now.isoformat(),'points':points,
             'scoring_contract':{'scoring':scoring,'official_rules':rules},
             'game_ids':sorted(str(g.id) for g in slate),'source':'espn_league_applied_totals',
             'scope':'exact_requested_period_actuals_not_inferred_roster_history'})
+        if client is not None:
+            from src.services.fantasy_player_results import collect_espn_pool
+            await collect_espn_pool(db,client,league_id=league_id,raw_league_id=raw_league_id,
+                season=season,week=week,scoring=scoring,rules=rules,roster_points=points,
+                game_ids=[str(g.id) for g in slate],now=now)
         written+=1
     return {'status':'collected','weeks':written}

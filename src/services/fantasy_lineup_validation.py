@@ -8,7 +8,7 @@ def frozen(lab):
     if sim.get('status')!='estimated_research':return None
     return {'simulation':sim,'scoring_hash':lab.get('scoring_contract_hash') or scoring_hash(lab['scoring_settings']),
         'player_evidence':[{k:p.get(k) for k in ('player_id','weekly_evidence','score_samples',
-            'distribution_source','distribution_evidence')} for p in lab['players']
+            'distribution_source','distribution_evidence','game_availability')} for p in lab['players']
             if p['player_id'] in set(sim['current']['player_ids']+sim['candidate']['player_ids']+
                                    list(map(str,lab['validation_lineups']['opponent_starters'])))],
         'scope':'frozen_lineups_not_subsequent_platform_lineup_changes','serving_promoted':False}

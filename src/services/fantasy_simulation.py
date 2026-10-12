@@ -14,6 +14,8 @@ def assumed_scale(p):
 
 def eligibility_reasons(p):
     reasons=[]
+    if p.get('game_availability',{}).get('hold_recommendation'):
+        reasons.append('event_availability_hold')
     if p.get('locked',True): reasons.append('started_or_unbound_game')
     if p.get('weekly_evidence',{}).get('status')!='pregame_provider_projection': reasons.append('missing_fresh_projection')
     if not finite(p.get('weekly_points')): reasons.append('invalid_projection')
