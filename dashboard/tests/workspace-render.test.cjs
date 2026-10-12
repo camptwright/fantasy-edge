@@ -254,3 +254,30 @@ test('native research and settings views fail closed and never certify health or
   const downResearch=await render('src/components/WorkspaceResearch.tsx','WorkspaceResearch',{});
   assert.match(downResearch,/connection error, not a failed model/);
 });
+
+test('game projections and the prop board label research and fail closed',()=>{
+  const {GameProjections,PropBoardView}=loadComponent('src/components/WorkspaceMarkets.tsx',{'@/lib/fantasy-api':{fantasyApi:async()=>null}});
+  assert.match(renderToStaticMarkup(React.createElement(GameProjections,{data:null})),/service error, not an empty slate/);
+  const data={status:'research',ratings:[{team:'SEA',rating:5.4},{team:'NYJ',rating:-6.1}],games:[
+    {game_id:'g',home:'IND',away:'TEN',game_time:'2026-10-18T17:00:00Z',model_margin:9.7,market_margin:7,margin:7.4,home_win_probability:.72,market_weight:.85}],
+    evidence:{test_seasons:[2015,2025],model_brier:.2212,previous_elo_brier:.2326,market_brier:.2128,regressed_brier:.2135}};
+  const html=renderToStaticMarkup(React.createElement(GameProjections,{data}));
+  assert.match(html,/IND −9\.7/); assert.match(html,/IND −7\.0/); assert.match(html,/model keeps 15% of its view/);
+  assert.match(html,/0\.2212 vs 0\.2326/); assert.match(html,/\+5\.4/); assert.match(html,/-6\.1/);
+  assert.equal(renderToStaticMarkup(React.createElement(PropBoardView,{data:null})),'');
+  const board=renderToStaticMarkup(React.createElement(PropBoardView,{data:{status:'research',compared:40,note:'Market won.',rows:[
+    {player:'A',position:'WR',stat:'receiving_yards',line:75.5,source:'pinnacle',game_time:'2026-10-18T17:00:00Z',engine_projection:50,engine_over_probability:.25,market_over_probability:.52,difference:-.27}]}}));
+  assert.match(board,/receiving yards 75\.5/); assert.match(board,/-27\.0/); assert.match(board,/Market won\./); assert.match(board,/not an edge/);
+});
+
+test('trade market row shows FantasyCalc totals or its status',()=>{
+  const helpers=loadComponent('src/lib/workspace.ts');
+  const {WorkspaceTradeOutlook}=loadComponent('src/components/WorkspaceTradeOutlook.tsx',{'@/lib/workspace':helpers});
+  const side=(team,gain)=>({team,status:'research',weeks:1,lineup_gain:gain,by_position:{QB:0,RB:0,WR:gain,TE:0},weekly:[{week:6,gain}],unmodeled_players:[]});
+  const outlook=(market)=>({status:'research',side_a:side('Mine',4),side_b:side('Theirs',-4),player_ros_points:{a:10,b:12},note:'n',market});
+  const players=[{player_id:'a',name:'A',position:'WR'},{player_id:'b',name:'B',position:'WR'}];
+  const seen=renderToStaticMarkup(React.createElement(WorkspaceTradeOutlook,{outlook:outlook({status:'observed',values:{a:4200,b:6100},side_a_total:4200,side_b_total:6100,note:'Index note.'}),a:['a'],b:['b'],players}));
+  assert.match(seen,/Mine gives 4,200 · Theirs gives 6,100/); assert.match(seen,/favours Mine receiving 1,900 more/); assert.match(seen,/Index note/);
+  const stale=renderToStaticMarkup(React.createElement(WorkspaceTradeOutlook,{outlook:outlook({status:'stale',values:{}}),a:['a'],b:['b'],players}));
+  assert.match(stale,/Trade market value unavailable \(stale\)/);
+});

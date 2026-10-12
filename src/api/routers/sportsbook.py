@@ -693,6 +693,46 @@ async def odds_history(
     }
 
 
+@router.get("/props/engine-board")
+async def prop_engine_board(limit: int = Query(default=25, ge=1, le=100), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Upcoming NFL props where the projection engine and the no-vig market disagree most.
+
+    Research comparison only: on graded 2026 props the market was better
+    calibrated than this model for every stat (see config evidence).
+    """
+    from src.services import prop_engine
+    from src.services.engine_research import latest as engine_latest
+    artifact = prop_engine.load()
+    checkpoint = await engine_latest(db)
+    if artifact is None or not checkpoint or checkpoint.get('status') != 'research':
+        return {'status': 'unavailable', 'rows': [], 'evidence': None}
+    stats = prop_engine.engine_stats(checkpoint)
+    now = datetime.now(timezone.utc)
+    quotes = (await db.execute(select(PlayerPropLine, Player, Game)
+        .join(Player, Player.id == PlayerPropLine.player_id).join(Game, Game.id == PlayerPropLine.game_id)
+        .where(Game.sport == 'nfl', Game.status == 'scheduled', Game.game_time.is_not(None), Game.game_time > now,
+               PlayerPropLine.stat_type.in_(prop_engine.STATS), PlayerPropLine.over_price_american.is_not(None),
+               PlayerPropLine.under_price_american.is_not(None))
+        .distinct(PlayerPropLine.player_id, PlayerPropLine.game_id, PlayerPropLine.stat_type, PlayerPropLine.source)
+        .order_by(PlayerPropLine.player_id, PlayerPropLine.game_id, PlayerPropLine.stat_type, PlayerPropLine.source,
+                  PlayerPropLine.observed_at.desc()))).all()
+    rows = []
+    for prop, player, game in quotes:
+        projected = stats.get((str(player.id), str(game.id)), {}).get(prop.stat_type)
+        engine_p = prop_engine.over_probability(prop.stat_type, projected, prop.line, artifact) if projected else None
+        if engine_p is None or float(prop.line).is_integer():
+            continue
+        market, _ = remove_vig_two_way(prop.over_price_american, prop.under_price_american)
+        rows.append({'player': player.full_name, 'position': player.position, 'stat': prop.stat_type,
+                     'line': prop.line, 'source': prop.source, 'game_time': game.game_time.isoformat(),
+                     'engine_projection': round(projected, 1), 'engine_over_probability': round(engine_p, 3),
+                     'market_over_probability': round(market, 3), 'difference': round(engine_p - market, 3),
+                     'over_price_american': prop.over_price_american, 'under_price_american': prop.under_price_american})
+    rows.sort(key=lambda r: -abs(r['difference']))
+    return {'status': 'research', 'compared': len(rows), 'rows': rows[:limit],
+            'evidence': artifact.get('evidence'), 'note': artifact.get('note')}
+
+
 @router.get("/team-projections/nfl")
 async def nfl_team_projections(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """NFL team model v2: power ratings (points vs an average team) and upcoming game lines.
