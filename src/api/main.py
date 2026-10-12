@@ -7,18 +7,19 @@ from collections import Counter
 
 import httpx
 import json
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import get_settings
+from src.api.auth import require_fantasy_token
 from src.api.performance import PerformanceMiddleware, snapshot as performance_snapshot
 from src.api.routers.sportsbook import router as sportsbook_router
 from src.api.routers.nfl_predictor import router as nfl_predictor_router
 from src.api.routers.ledger import router as ledger_router
+from src.api.routers.workspace import router as workspace_router
 import src.api.routers.ledger_imports  # noqa: F401 - registers receipt routes
 from src.data.news import fetch_rss_headlines
 from src.db.client import dispose_api_engine, get_api_engine
@@ -29,7 +30,6 @@ from src.services.custom_projection import exact_projected_points as custom_proj
 from src.services.trade import evaluate_trade, suggest_trades
 from src.models.sleeper import SleeperLeague, SleeperLeagueSnapshot, SleeperRoster
 
-bearer = HTTPBearer(auto_error=False)
 
 
 def projection_rows(payload: object) -> list[dict]:
@@ -100,12 +100,6 @@ def match_player_news(name: str, headlines: list[dict]) -> list[dict]:
     return [headline for headline in headlines if surname in headline["title"].lower()]
 
 
-def require_fantasy_token(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> None:
-    token = get_settings().fantasy_api_token
-    if not token or credentials is None or credentials.scheme.lower() != "bearer" or credentials.credentials != token:
-        raise HTTPException(status_code=401, detail="Fantasy API authentication required")
-
-
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Create the API-owned pooled engine only in the Uvicorn process. Celery
@@ -125,6 +119,12 @@ app.add_middleware(PerformanceMiddleware)
 async def performance():
     return performance_snapshot()
 
+
+@app.get('/operations/history', dependencies=[Depends(require_fantasy_token)])
+async def operations_history(db: AsyncSession = Depends(get_db)):
+    from src.services.operations_history import status
+    return await status(db)
+
 # /props, /props/best, /signals, /rankings/{sport}, /parlays - the contract
 # homelab-dashboard's Fantasy tile expects (src/tiles/fantasy/client.ts
 # there). Now token-gated like /api/v1/fantasy/* below: both this API and
@@ -137,6 +137,7 @@ async def performance():
 app.include_router(sportsbook_router, dependencies=[Depends(require_fantasy_token)])
 app.include_router(nfl_predictor_router, dependencies=[Depends(require_fantasy_token)])
 app.include_router(ledger_router, dependencies=[Depends(require_fantasy_token)])
+app.include_router(workspace_router, dependencies=[Depends(require_fantasy_token)])
 
 
 @app.get("/health", tags=["operations"])
@@ -378,22 +379,26 @@ class TradeRosterRequest(TradeEvaluateRequest):
 
 
 @app.get("/api/v1/fantasy/leagues/{league_id}/player-values", dependencies=[Depends(require_fantasy_token)])
-async def fantasy_player_values(league_id: str, db: AsyncSession = Depends(get_db)) -> dict:
-    from src.services.fantasy_decision_models import build
+async def fantasy_player_values(league_id: str, db: AsyncSession = Depends(get_db),
+                               offset: int = Query(default=0, ge=0),
+                               limit: int = Query(default=50, ge=1, le=100),compact: bool = False) -> dict:
+    from src.services.fantasy_request_models import build
     from src.services.fantasy_values import value_board, suggestions
     from starlette.concurrency import run_in_threadpool
-    data=value_board(await build(db,league_id,include_catalog=True))
+    data=value_board(await build(db,league_id,include_catalog=True,catalog_offset=offset,catalog_limit=limit))
     data['trade_candidates']=await run_in_threadpool(suggestions,data)
-    return data
+    from src.services.fantasy_values import compact_board
+    return compact_board(data) if compact else data
 
 
 @app.post("/api/v1/fantasy/leagues/{league_id}/trade/roster-impact", dependencies=[Depends(require_fantasy_token)])
 async def fantasy_roster_trade(league_id: str, request: TradeRosterRequest, db: AsyncSession = Depends(get_db)) -> dict:
-    from src.services.fantasy_decision_models import build
+    from src.services.fantasy_request_models import build
     from src.services.fantasy_values import compare
     if len(request.side_a_player_ids)+len(request.side_b_player_ids)>12:
         raise HTTPException(status_code=400,detail="At most twelve players per comparison")
-    data=await build(db,league_id,include_catalog=True)
+    selected_ids=request.side_a_player_ids+request.side_b_player_ids+request.a.add+request.a.drop+request.b.add+request.b.drop
+    data=await build(db,league_id,selected_player_ids=selected_ids)
     from src.services.fantasy_market import selected,cohort
     league=await db.get(SleeperLeague,league_id)
     market=selected(cohort(league,len(data.get('rosters',[]))),league.platform,request.side_a_player_ids+request.side_b_player_ids) if league else {'status':'missing_league'}
@@ -403,7 +408,7 @@ async def fantasy_roster_trade(league_id: str, request: TradeRosterRequest, db: 
 
 @app.get("/api/v1/fantasy/leagues/{league_id}/decision-models", dependencies=[Depends(require_fantasy_token)])
 async def fantasy_decision_models(league_id: str, db: AsyncSession = Depends(get_db)) -> dict:
-    from src.services.fantasy_decision_models import build
+    from src.services.fantasy_request_models import build
     from src.services.fantasy_prospective import latest
     from starlette.concurrency import run_in_threadpool
     from src.services.fantasy_specialists import latest as specialist_latest
@@ -413,7 +418,8 @@ async def fantasy_decision_models(league_id: str, db: AsyncSession = Depends(get
 
 @app.post("/api/v1/fantasy/leagues/{league_id}/trade/ros", dependencies=[Depends(require_fantasy_token)])
 async def fantasy_ros_trade(league_id: str, request: TradeEvaluateRequest, db: AsyncSession = Depends(get_db)) -> dict:
-    from src.services.fantasy_decision_models import build, trade_comparison
+    from src.services.fantasy_request_models import build
+    from src.services.fantasy_decision_models import trade_comparison
     if len(request.side_a_player_ids)+len(request.side_b_player_ids)>12:
         raise HTTPException(status_code=400, detail="At most twelve players per comparison")
     data=await build(db,league_id)

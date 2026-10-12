@@ -4,12 +4,14 @@ import json
 from datetime import datetime,timedelta
 from pathlib import Path
 from uuid import UUID
-from sqlalchemy import select
+from sqlalchemy import select,text
 from config.settings import get_settings
 from src.models.base import utcnow
 from src.models.facts import Game,PlayerPropLine,TeamMarketLine
 from src.services.roster_stat_model import finite
 from src.services.roster_stat_prospective import publish
+from src.models.governance import ForecastArchive
+from src.services.forecast_evidence import save,payloads,import_archives
 
 
 def observation(terms,probability,version,now,kickoff,blockers):
@@ -32,6 +34,7 @@ async def capture(db):
     from src.services.model_version import manifest
     from fastapi import HTTPException
     root=Path(get_settings().raw_archive_dir)/'research-shadow-ledger'
+    await db.execute(text('SELECT pg_advisory_xact_lock(78241906)'))
     rows=[('team',r) for r in await signal_rows(db,None)]
     rows += [('player',r) for r in await prop_rows(db,None,live_only=True)]
     rows += [('player',r) for r in (await load(db))['items']]
@@ -50,20 +53,34 @@ async def capture(db):
                 record=observation(quote['terms'],p,row.get('pricing_method') or row.get('model_version') or default_version,
                     utcnow(),datetime.fromisoformat(quote['game_time']),
                     row.get('recommendation_blockers') or row.get('actionability_blockers') or [row.get('exclusion_reason')])
-                if record:written+=publish(root/'entries'/f"{record['id']}.json",record)
+                if record:
+                    existing=await db.scalar(select(ForecastArchive.digest).where(ForecastArchive.kind=='shadow_entries',
+                        ForecastArchive.payload['id'].astext==record['id']))
+                    if existing:continue
+                    path=root/'entries'/f"{record['id']}.json"
+                    if path.exists():record=json.loads(path.read_text())
+                    await save(db,'shadow_entries',record)
+                    written+=publish(path,record)
             except HTTPException as exc:
                 if exc.status_code not in (404,409,422):raise
                 rejected+=1
+    await db.commit()
     return {'examined':len(rows),'captured':written,'rejected':rejected,'actionable':False}
 
 
 async def close(db):
     root=Path(get_settings().raw_archive_dir)/'research-shadow-ledger';now=utcnow();written=0
-    for path in (root/'entries').glob('*.json'):
-        record=json.loads(path.read_text());t=record['terms']
+    for folder,kind in [('entries','shadow_entries'),('closes','shadow_closes')]:
+        imported=await import_archives(db,root/folder,kind=kind,limit=1000)
+        if not imported['complete']:return {'status':'historical_import_pending','actionable':False,**imported}
+    await db.execute(text('SELECT pg_advisory_xact_lock(78241906)'))
+    async for record in payloads(db,'shadow_entries'):
+        t=record['terms']
         game=await db.get(Game,UUID(t['game_id']))
         if not game or not game.game_time or game.game_time>now:continue
-        if (root/'closes'/f"{record['id']}.json").exists():continue
+        existing=await db.scalar(select(ForecastArchive.digest).where(ForecastArchive.kind=='shadow_closes',
+            ForecastArchive.payload['entry_id'].astext==record['id']))
+        if existing:continue
         cls=PlayerPropLine if t['kind']=='player' else TeamMarketLine
         captured=datetime.fromisoformat(record['captured_at'])
         if captured>=game.game_time:continue
@@ -75,8 +92,11 @@ async def close(db):
         quote=await db.scalar(select(cls).where(*filters).order_by(cls.observed_at.desc(),cls.id.desc()).limit(1))
         price=(getattr(quote,t['side']+'_price_american') if t['kind']=='player' else quote.price_american) if quote else None
         if price is None or abs(price)<100:continue
-        written+=publish(root/'closes'/f"{record['id']}.json",{'entry_id':record['id'],
+        evidence={'entry_id':record['id'],
             'status':'observed_price_proxy_rules_unverified','actionable':False,'clv_percent':None,
             'quote_id':str(quote.id),'price_american':price,'observed_at':quote.observed_at.isoformat(),
-            'kickoff':game.game_time.isoformat(),'captured_at':now.isoformat()})
+            'kickoff':game.game_time.isoformat(),'captured_at':now.isoformat()}
+        await save(db,'shadow_closes',evidence)
+        written+=publish(root/'closes'/f"{record['id']}.json",evidence)
+    await db.commit()
     return {'captured':written,'actionable':False,'scope':'shadow_only_exact_contract_close_proxies'}

@@ -99,13 +99,18 @@ async def evaluate_locked():
             from src.services.evaluation_status import latest, completed_today
             root = Path(get_settings().raw_archive_dir)
             previous, path = latest(root / 'calibration')
-            if completed_today(previous, get_settings().supported_sports, datetime.now(timezone.utc)):
+            from src.services.model_version import manifest
+            evaluation_version=manifest()
+            if completed_today(previous, get_settings().supported_sports, datetime.now(timezone.utc),evaluation_version):
                 return {'status': 'already_completed_today', 'report': path}
             run_id = uuid.uuid4().hex
             archive('evaluation-runs', {'run_id': run_id, 'status': 'running',
                 'started_at': datetime.now(timezone.utc).isoformat()})
             try:
                 report = await evaluate_with_lease(redis, key, token)
+                report.setdefault('serving_version_manifest',evaluation_version)
+                if manifest()!=evaluation_version:
+                    report={**report,'status':'partial','reason':'serving_configuration_changed_during_evaluation'}
                 destination = 'calibration' if report.get('status') == 'complete' else 'evaluation-partial'
                 path = archive(destination, report)
                 archive('evaluation-runs', {'run_id': run_id, 'status': report['status'],
@@ -229,6 +234,15 @@ def capture_forecasts():
     async def run():
         async with get_worker_db() as db:
             payload = await capture(db)
+        # capture deliberately opens a READ ONLY repeatable-read transaction.
+        # Persist only after closing it, using a fresh worker-owned write session.
+        async with get_worker_db() as db:
+            from src.services.forecast_evidence import save
+            await save(db,'forecasts',payload)
+            await save(db,'capture_status',{'capture_id':payload['capture_id'],
+                'captured_at':payload['captured_at'],'records':len(payload['records']),
+                'model_version':payload.get('model_version')})
+            await db.commit()
         output = {'records': len(payload['records']), 'archive': archive('forecasts', payload)}
         from src.services.paper_ledger import capture as capture_paper
         async with get_worker_db() as db:
@@ -294,9 +308,34 @@ def fantasy_scoring():
 @celery_app.task(name='fantasy.grade_forecasts', soft_time_limit=600, time_limit=900)
 def grade_forecasts():
     async def run():
+        from src.services.forecast_evidence import import_archives,save
         async with get_worker_db() as db:
-            payload = await grade(db, Path(get_settings().raw_archive_dir) / 'forecasts')
-        return {'counts': payload['counts'], 'archive': archive('grading', payload)}
+            imported=await import_archives(db,Path(get_settings().raw_archive_dir)/'forecasts')
+        if not imported['complete']:
+            return {'status':'historical_evidence_import_pending',**imported}
+        from src.services.forecast_checkpoint import refresh
+        async with get_worker_db() as db:
+            checkpoint=await refresh(db)
+        async with get_worker_db() as db:
+            payload = await grade(db)
+        async with get_worker_db() as db:
+            await save(db,'grading',payload)
+            await db.commit()
+        return {'counts': payload['counts'], 'cohort_checkpoint':checkpoint,'archive': archive('grading', payload)}
+    return asyncio.run(run())
+
+
+@celery_app.task(name='fantasy.refresh_missing_results', soft_time_limit=600, time_limit=900)
+def refresh_missing_results():
+    async def run():
+        from src.services.missing_result_queue import rebuild
+        from src.services.forecast_evidence import save
+        async with get_worker_db() as db:
+            payload=await rebuild(db)
+        async with get_worker_db() as db:
+            await save(db,'missing_results',payload)
+            await db.commit()
+        return {'total':payload['total'],'generated_at':payload['generated_at']}
     return asyncio.run(run())
 
 

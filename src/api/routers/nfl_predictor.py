@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
@@ -23,9 +23,11 @@ async def weather_context_status():
 
 
 @router.get('/experiments/missing-results')
-async def missing_results(db: AsyncSession = Depends(get_db)):
+async def missing_results(db: AsyncSession = Depends(get_db),
+                          limit: int = Query(default=200,ge=1,le=500),
+                          offset: int = Query(default=0,ge=0)):
     from src.services.missing_result_queue import queue
-    return await queue(db)
+    return await queue(db,limit=limit,offset=offset)
 ARTIFACT = Path(__file__).resolve().parents[3]/'config'/'nfl_predictor_lab.json'
 
 
@@ -43,10 +45,36 @@ async def football_prop_research():
 
 
 @router.get('/experiments/college-players')
-async def college_players():
+async def college_players(compact: bool = False, team: str | None = Query(default=None,max_length=200),
+                          offset: int = Query(default=0,ge=0), limit: int = Query(default=50,ge=1,le=100)):
     from src.services.college_player_lab import latest
     from src.services.college_prospective import latest as prospective
-    return {**await run_in_threadpool(latest),'prospective':await run_in_threadpool(prospective)}
+    from src.services.college_lab_view import compact as display
+    def read():
+        report=latest()
+        return display(report,team=team,offset=offset,limit=limit) if compact else report
+    return {**await run_in_threadpool(read),'prospective':await run_in_threadpool(prospective)}
+
+
+@router.get('/experiments/nfl-predictor/governance')
+async def nfl_governance(db: AsyncSession = Depends(get_db)):
+    """Expose only the current artifact's durable review, never a stale winner."""
+    from src.models.governance import ModelArtifact, ModelReviewEvidence
+    from src.services.nfl_lab_registry import artifact_version
+    from src.services.model_deployment import selection
+    if not ARTIFACT.exists():
+        return {'status':'not_trained','serving_promoted':False}
+    version=artifact_version(json.loads(ARTIFACT.read_text()))
+    artifact=await db.scalar(select(ModelArtifact).where(ModelArtifact.version==version))
+    evidence=await db.scalar(select(ModelReviewEvidence).where(ModelReviewEvidence.artifact_version==version)
+        .order_by(ModelReviewEvidence.created_at.desc(),ModelReviewEvidence.id.desc()).limit(1))
+    selected=await selection(db)
+    return {'version':version,'status':'review_available' if evidence else 'awaiting_durable_review',
+        'artifact_registered':artifact is not None,
+        'artifact_payload_persisted':artifact is not None and artifact.artifact_payload is not None,
+        'review':evidence.report if evidence else None,'serving_promoted':selected['status']=='approved',
+        'serving_selection':selected,
+        'automatic_deployment':False}
 
 
 @router.get('/experiments/nfl-predictor')

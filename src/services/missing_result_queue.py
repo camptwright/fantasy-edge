@@ -8,7 +8,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from sqlalchemy import select
+from sqlalchemy import select, text
 from config.settings import get_settings
 from src.models.facts import Game, PlayerGameStat
 from src.models.governance import ResultSyncState
@@ -16,7 +16,7 @@ from src.models.identity import Player
 from starlette.concurrency import run_in_threadpool
 from src.services.result_eligibility import no_pending_correction
 from src.services.stat_identity import canonical_stat
-from src.services.forecast_grading import load_cohort
+from src.services.forecast_grading import cohort_from_payloads
 
 
 def classify(game_status, player_rows, stat_present, pending):
@@ -44,7 +44,8 @@ def add_fantasy_records(records, forecasts):
                 records[key]['captured_at']=row['captured_at']
 
 
-async def queue(db, limit=200):
+async def rebuild(db, limit=None):
+    await db.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'))
     root=Path(get_settings().raw_archive_dir)
     directory=root/'nfl-player-prospective'/'forecasts'
     records={}
@@ -56,7 +57,11 @@ async def queue(db, limit=200):
         row=json.loads(path.read_text())
         row={**row,'kind':'player','sources':['college_player_lab']}
         records.setdefault((row['game_id'],row['player_id'],canonical_stat(row['stat'])),row)
-    cohort, _, _ = await run_in_threadpool(load_cohort,root/'forecasts')
+    # Durable forecasts are authoritative; this worker-only rebuild no longer
+    # reopens the multi-gigabyte raw production archive.
+    from src.services.forecast_checkpoint import load
+    cohort_state,_=await load(db)
+    cohort=cohort_state[0]
     for _, ((captured,_),row) in cohort.items():
         key=(row['game_id'],row.get('player_id') or '',canonical_stat(row['market']))
         if key in records:
@@ -72,7 +77,7 @@ async def queue(db, limit=200):
     safe=set((await db.scalars(select(PlayerGameStat.id).where(PlayerGameStat.game_id.in_(ids),no_pending_correction()))).all()) if ids else set()
     present={(str(r.game_id),str(r.player_id),canonical_stat(r.stat_type)) for r in facts}
     participants={(str(r.game_id),str(r.player_id)) for r in facts}
-    disputed={(str(r.game_id),str(r.player_id)) for r in facts if r.id not in safe}
+    disputed={(str(r.game_id),str(r.player_id),canonical_stat(r.stat_type)) for r in facts if r.id not in safe}
     states=(await db.scalars(select(ResultSyncState).where(ResultSyncState.game_id.in_(ids)))).all() if ids else []
     states={(str(r.game_id),r.provider):r for r in states}
     player_ids={uuid.UUID(k[1]) for k in records if k[1]}
@@ -83,7 +88,7 @@ async def queue(db, limit=200):
         sport=game.sport if game else 'unknown'
         provider={'mlb':'mlb_stats_api','nhl':'nhl_api'}.get(sport,'espn_'+sport)
         state=states.get((key[0],provider))
-        reason=classify(game.status if game else None,key[:2] in participants,key in present,key[:2] in disputed)
+        reason=classify(game.status if game else None,key[:2] in participants,key in present,key in disputed)
         if game and game.status=='final' and forecast.get('kind')=='team':
             reason='missing_team_score' if game.home_score is None or game.away_score is None else 'resolved'
         if game and (game.game_time is None or datetime.fromisoformat(forecast['captured_at'])>=game.game_time):
@@ -97,4 +102,29 @@ async def queue(db, limit=200):
             'note':'Missing does not establish zero, DNP, or bookmaker void.'})
     return {'scope':'NFL and college pregame player labs, fantasy scoring forecasts, and production player/team forecasts across sports. Retrospective college reports are not included.',
         'generated_at':datetime.now(timezone.utc).isoformat(),'total':len(items),
-        'counts':dict(Counter(r['reason'] for r in items)),'items':items[:limit],'truncated':len(items)>limit}
+        'counts':dict(Counter(r['reason'] for r in items)),'items':items if limit is None else items[:limit],
+        'truncated':limit is not None and len(items)>limit}
+
+
+async def queue(db, limit=200, offset=0):
+    """Serve only a durable diagnostic snapshot; never rebuild on an HTTP read."""
+    if not 1 <= limit <= 500 or offset < 0:
+        raise ValueError('Invalid queue page')
+    from src.models.governance import ForecastArchive
+    from src.services.forecast_evidence import digest
+    row=await db.scalar(select(ForecastArchive).where(ForecastArchive.kind=='missing_results')
+        .order_by(ForecastArchive.created_at.desc(),ForecastArchive.digest.desc()).limit(1))
+    if row is None:
+        return {'status':'awaiting_snapshot','generated_at':None,'total':None,'counts':{},
+                'items':[],'stale':True,'truncated':False,
+                'note':'Background diagnostic snapshot pending; empty does not mean all results are resolved.'}
+    if digest(row.payload)!=row.digest:
+        return {'status':'integrity_error','items':[],'total':None,'counts':{},'stale':True}
+    payload=row.payload
+    age=(datetime.now(timezone.utc)-datetime.fromisoformat(payload['generated_at'])).total_seconds()
+    items=payload['items']
+    return {**payload,'status':'current' if 0<=age<=3600 else 'stale',
+            'stale':not 0<=age<=3600,'items':items[offset:offset+limit],
+            'offset':offset,'limit':limit,'truncated':offset+limit<len(items),
+            'next_offset':offset+limit if offset+limit<len(items) else None,
+            'note':'Background diagnostic snapshot; retries and correction eligibility remain authoritative in live result state.'}

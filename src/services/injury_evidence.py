@@ -119,6 +119,8 @@ def for_game(context, game, external_ids, events, as_of):
         if game.game_time is None or datetime.fromisoformat(event['kickoff']) != game.game_time:
             availability['status'] = 'kickoff_changed'
             return context
+        availability['observed_at'] = event['observed_at']
+        availability['provider'] = event.get('provider', 'espn_event_injuries')
         reports = []
         for row in event['rows']:
             try:

@@ -24,7 +24,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import desc, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -448,6 +448,11 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
     teams = await _team_lookup(db, team_ids)
     ratings = await _rating_lookup(db, team_ids)
 
+    promoted, selected = {}, {'status':'retained_baseline'}
+    if any(game.sport=='nfl' and line.market=='moneyline' for line,game in rows):
+        from src.services.model_deployment import forecasts as approved_forecasts
+        promoted, selected = await approved_forecasts(db)
+
     # Vig removal needs both sides of the same (game, market, source) quote
     # together (remove_vig_two_way), so group before emitting rows rather
     # than processing each side independently.
@@ -527,6 +532,8 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
         if market == "moneyline":
             baseline_home_prob = moneyline_probability(home_rating, away_rating)
             home_model_prob = calibrate_home_probability(baseline_home_prob, game.sport, market)
+            if game.sport=='nfl' and str(game.id) in promoted:
+                home_model_prob=promoted[str(game.id)]['home_probability']
             home_selection, away_selection = f"{home_name} ML", f"{away_name} ML"
         else:  # spread
             baseline_home_prob = spread_cover_probability(
@@ -550,6 +557,13 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
             ),
             market=market, source=source, matchup=matchup, game=game,
         )
+        if market=='moneyline' and game.sport=='nfl' and str(game.id) in promoted:
+            for row,baseline in zip(out[-2:],(baseline_home_prob,1.0-baseline_home_prob)):
+                row['model_version']=selected['version']
+                row['baseline_model_probability']=round(baseline,4)
+                row['calibration_status']='approved_prospective_model'
+                row['calibration_candidate_id']=selected['version']
+                row['model_deployment_id']=selected['decision_id']
         if market == 'moneyline' and game.sport == 'ncaaf':
             status = deployment_status()
             for row, baseline in zip(out[-2:], (baseline_home_prob, 1.0-baseline_home_prob)):
@@ -564,7 +578,11 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
     for row in out:
         row['last_seen_at'] = seen[uuid.UUID(row['id'])].seen_at.isoformat()
         from src.services.signal_eligibility import blockers
-        reasons=blockers(row)
+        validation=None
+        if row.get('model_deployment_id') and selected['status']=='approved':
+            validation={'passed_gate':True,'model_version':selected['version'],'sport':'nfl',
+                'market':'moneyline','evaluated_at':selected['evaluated_at']}
+        reasons=blockers(row,validation)
         row['actionable']=not reasons
         row['exclusion_reason']=reasons[0] if reasons else None
         row['actionability_blockers']=reasons
@@ -720,7 +738,35 @@ class ParlayLegRequest(BaseModel):
 
 
 class ParlayBuildRequest(BaseModel):
-    legs: list[ParlayLegRequest]
+    legs: list[ParlayLegRequest] = Field(min_length=1,max_length=8)
+
+
+class ParlayAssistantRequest(BaseModel):
+    sport: Literal['nfl','ncaaf','nba','mlb','nhl']
+    book: str = Field(min_length=1,max_length=60,pattern=r'^[a-zA-Z0-9_-]+$')
+    leg_count: int = Field(default=2,ge=2,le=4)
+    preferences: str = Field(default='',max_length=500)
+
+
+@router.post('/parlays/assist')
+async def assist_parlay(request: ParlayAssistantRequest, db: AsyncSession = Depends(get_db)):
+    from src.services.parlay_assistant import candidates,choose
+    pool=candidates(await signal_rows(db,request.sport),
+                    await prop_rows(db,request.sport,live_only=True),request.book)
+    if len({r['game_id'] for r in pool})<request.leg_count:
+        return {'status':'insufficient_eligible_offers','legs':[], 'ai_used':False,
+                'note':'Not enough eligible, positively priced model edges on distinct games at this book. No research-only or stale picks substituted.'}
+    selected=await choose(pool,request.leg_count,request.preferences)
+    # Release the pre-AI read transaction: final construction rechecks live
+    # eligibility after the model latency. Never execute a wager.
+    await db.rollback()
+    result=await build_parlay(ParlayBuildRequest(legs=[
+        {'kind':r['kind'],'id':r['id'],'side':r['side']} for r in selected]),db)
+    if result['skipped_legs'] or len(result['legs'])!=request.leg_count:
+        raise HTTPException(409,'Offers changed during selection; retry with current quotes')
+    return {**result,'status':'research_estimate','ai_used':True,'book':request.book,
+            'actionable':False,'payout_verified':False,
+            'note':'AI selected verified individual offers; arithmetic assumes independence across different games. Combined odds are a theoretical product, not a book-confirmed parlay price. No automatic wager; recheck availability and settlement rules at the book.'}
 
 
 @router.post("/parlays/build")
@@ -735,8 +781,10 @@ async def build_parlay(request: ParlayBuildRequest, db: AsyncSession = Depends(g
     qualified projection yet) is reported in skipped_legs, never silently
     dropped or priced with a guessed number.
     """
-    signals_by_id = {row["id"]: row for row in await signal_rows(db, sport=None)}
-    props_by_id = {row["id"]: row for row in await prop_rows(db, sport=None)}
+    signal_legs = [leg for leg in request.legs if leg.kind == 'signal']
+    prop_ids = {leg.id for leg in request.legs if leg.kind == 'prop'}
+    signals_by_id = {row["id"]: row for row in await signal_rows(db, sport=None)} if signal_legs else {}
+    props_by_id = {row["id"]: row for row in await prop_rows(db, sport=None, quote_ids=prop_ids)} if prop_ids else {}
 
     # No joint model exists yet: reject repeated events entirely, including
     # duplicate/opposite legs and same-game props across different sources.
@@ -843,10 +891,13 @@ async def recommendations(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
 
 
 @router.get("/calibration/live")
-def live_calibration() -> dict[str, Any]:
-    from pathlib import Path
-    from src.services.forecast_grading import latest_report
-    return latest_report(Path(get_settings().raw_archive_dir) / 'grading')
+async def live_calibration(db: AsyncSession = Depends(get_db), compact: bool = False,
+                           limit: int = Query(default=50,ge=1,le=200),
+                           offset: int = Query(default=0,ge=0)) -> dict[str, Any]:
+    from src.services.forecast_evidence import latest_grade,compact_grade,capture_status
+    payload=await latest_grade(db)
+    if compact:payload=compact_grade(payload,limit,offset)
+    return {**payload,'capture_freshness':await capture_status(db)}
 
 
 @router.get("/calibration/deployment")

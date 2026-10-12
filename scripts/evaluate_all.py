@@ -23,6 +23,8 @@ def score(rows):
 
 
 async def evaluate():
+    from src.services.model_version import manifest
+    initial_version=manifest()
     output = {'evaluated_at': datetime.now(timezone.utc).isoformat(), 'sports': {}}
     for sport in get_settings().supported_sports:
         try:
@@ -48,8 +50,10 @@ async def evaluate():
             output['sports'][sport] = {'status': 'failed', 'error_type': type(exc).__name__}
     output['status'] = 'complete' if all(r['status'] == 'complete' for r in output['sports'].values()) else 'partial'
     output['completed_at'] = datetime.now(timezone.utc).isoformat()
-    from src.services.model_version import manifest
-    output['serving_version_manifest'] = manifest()
+    output['serving_version_manifest'] = initial_version
+    if manifest()!=initial_version:
+        output['status']='partial'
+        output['reason']='serving_configuration_changed_during_evaluation'
     return output
 
 

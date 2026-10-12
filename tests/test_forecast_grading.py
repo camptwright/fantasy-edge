@@ -5,8 +5,17 @@ from uuid import uuid4
 
 import pytest
 from src.services.forecast_grading import load_cohort, outcome, latest_report, grade
+from src.services.forecast_grading import cohort_from_payloads
 
 NOW = datetime.now(timezone.utc)
+
+
+def test_promoted_model_keeps_its_own_version_bound_cohort():
+    record={'kind':'team','game_id':str(uuid4()),'market':'moneyline','quote_id':'q'}
+    first={'schema_version':1,'captured_at':NOW.isoformat(),'model_version':'baseline','records':[record]}
+    promoted={**first,'records':[{**record,'prediction':{'model_deployment_id':'approval','model_version':'artifact-v2'}}]}
+    cohort,raw,_=cohort_from_payloads([first,promoted])
+    assert raw==2 and {key[0] for key in cohort}=={'baseline','artifact-v2'}
 
 
 def game(**kwargs):

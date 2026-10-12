@@ -82,10 +82,12 @@ def outcome(record, game, stats, captured_at, disputed=None):
 
 
 def load_cohort(directory, include_shadows=False):
-    selected, raw, files, shadows = {}, 0, 0, {}
-    for path in sorted(Path(directory).glob('*.json')):
-        # Fail closed on a corrupt archive: never publish partial coverage.
-        payload = json.loads(path.read_text())
+    return cohort_from_payloads((json.loads(p.read_text()) for p in sorted(Path(directory).glob('*.json'))), include_shadows)
+
+
+def cohort_from_payloads(payloads, include_shadows=False, state=None):
+    selected, raw, files, shadows = state if state is not None else ({}, 0, 0, {})
+    for payload in payloads:
         if payload['schema_version'] != 1:
             raise ValueError('unsupported forecast schema')
         captured = timestamp(payload['captured_at'])
@@ -96,7 +98,10 @@ def load_cohort(directory, include_shadows=False):
             uuid.UUID(record['game_id'])
             if record['kind'] not in ('player', 'team'):
                 raise ValueError('unknown forecast kind')
-            key = (version, record['game_id'], record['kind'], canonical_stat(record['market']), record.get('player_id'))
+            prediction=record.get('prediction',{})
+            record_version=prediction.get('model_version') if prediction.get('model_deployment_id') else version
+            if not record_version:raise ValueError('Deployed forecast missing artifact version')
+            key = (record_version, record['game_id'], record['kind'], canonical_stat(record['market']), record.get('player_id'))
             # Quote UUID is an outcome-independent, deterministic tie breaker.
             rank = (captured, record['quote_id'])
             if prefer(rank, record, selected.get(key)):
@@ -148,9 +153,15 @@ def unresolved_evidence(records, games, stats):
                     'Diagnostics do not alter outcomes or promotion gates.'}
 
 
-async def grade(db, directory):
-    cohort, raw, files, shadow_cohort = load_cohort(directory, include_shadows=True)
+async def grade(db, directory=None):
     await db.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'))
+    if directory is None:
+        from src.services.forecast_checkpoint import load
+        state,checkpoint_status=await load(db)
+        cohort,raw,files,shadow_cohort=state
+    else:
+        cohort, raw, files, shadow_cohort = load_cohort(directory, include_shadows=True)
+        checkpoint_status={'status':'raw_archive_reference'}
     ids = sorted({key[1] for key in cohort})
     games, stats, disputed = {}, {}, set()
     for start in range(0, len(ids), 1000):
@@ -231,6 +242,7 @@ async def grade(db, directory):
             'log_loss': sum(-math.log(max(1e-15, p if y else 1-p)) for p, y in scores)/n if n else None})
         reports[-1]['prospective_scorecard'] = prospective_card(group['evaluation'], sport)
     return {'schema_version': 1, 'status': 'available' if files else 'awaiting_forecasts',
+        'cohort_checkpoint':checkpoint_status,
         'graded_at': datetime.now(timezone.utc).isoformat(), 'archive_files': files,
         'raw_records': raw, 'cohort_records': len(cohort), 'duplicates_excluded': raw-len(cohort),
         'counts': dict(counts), 'reports': reports,
