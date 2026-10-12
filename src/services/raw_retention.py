@@ -1,4 +1,5 @@
-"""Bounded, dry-run-first retention for redundant result observations only."""
+"""Bounded, dry-run-first retention for redundant result observations, plus
+lossless daily compression of append-only archive directories."""
 import json
 import gzip
 import hashlib
@@ -59,6 +60,44 @@ async def plan(db,*,now=None,days=90,max_files=500,max_bytes=256*1024*1024):
         'candidate_bytes':sum(r['bytes'] for r in candidates),'candidates':candidates,'deleted':0,
         'protected':'Latest sync evidence, all correction hashes, unresolved games and durable research archives.',
         'note':'No automatic deletion enabled; inspect the manifest before authorizing an execution policy.'}
+
+
+# Append-only directories of timestamp-named files (archive()/timestamped
+# publish()) that nothing existence-checks. ~95% of raw growth (2026-10-12:
+# ~16 GB/week; gzip 14-26x on these). Never add a directory of create-only
+# identity records: their first-observation-wins check reads the exact
+# `.json` path, so compressing one would allow a hindsight re-capture.
+# Every reader of these directories goes through src.utils.archive_io.
+COMPRESSIBLE=('result-observations','roster-evidence','grading','forecasts','mlb_availability',
+    'espn_injuries','aggregate-props','fantasy-scoring-source','college-player-lab',
+    'fantasy-prospective/reports')
+
+
+def compress_daily(*,now=None,min_age=timedelta(days=1),max_bytes=2*1024**3,root=None):
+    """Losslessly gzip day-old direct files in COMPRESSIBLE, oldest first, within a byte budget."""
+    now=now or utcnow();base=Path(root or get_settings().raw_archive_dir)
+    candidates=[]
+    for name in COMPRESSIBLE:
+        directory=base/name
+        if directory.is_symlink() or not directory.is_dir():continue
+        for path in directory.glob('*.json'):
+            if path.is_symlink() or not path.is_file():continue
+            info=path.stat()
+            if info.st_mtime<(now-min_age).timestamp():candidates.append((info.st_mtime,info.st_size,path,directory))
+    candidates.sort()
+    done=[];budget=0;remaining=0
+    for _,size,path,directory in candidates:
+        if budget+size>max_bytes and done:
+            remaining+=1;continue
+        try:result=compress_verified(path,directory)
+        except (OSError,ValueError) as exc:
+            done.append({'path':str(path),'status':'skipped','reason':type(exc).__name__});continue
+        budget+=size;done.append(result)
+    return {'status':'lossless_compression_complete','policy':'append_only_daily_gzip_v1',
+        'compressed':sum(r['status']=='compressed' for r in done),
+        'skipped':sum(r['status']!='compressed' for r in done),
+        'bytes_read':budget,'bytes_saved':sum(r.get('bytes_saved',0) for r in done),
+        'remaining_files':remaining,'deleted':0}
 
 
 def compress_verified(path,root):

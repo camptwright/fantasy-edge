@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from src.services.roster_stat_model import finite
+from src.utils import archive_io
 
 APPROVALS = Path(__file__).resolve().parents[2] / "config/prop_validation_approvals.json"
 LARGE_EDGE_PERCENT = 20
@@ -35,8 +36,8 @@ def load_evidence(directory, versions, now=None):
     """
     now = now or datetime.now(timezone.utc)
     try:
-        files = sorted(Path(directory).glob("*.json"))
-        raw = files[-1].read_bytes()
+        files = archive_io.files(directory)
+        raw = archive_io.read_bytes(files[-1])
         report = json.loads(raw)
         approvals = json.loads(APPROVALS.read_text())
         at = datetime.fromisoformat(report["graded_at"])

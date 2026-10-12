@@ -23,6 +23,7 @@ divergence or an empty result from one source is itself the canary signal
 
 from __future__ import annotations
 
+import shutil
 from typing import NamedTuple
 
 from sqlalchemy import desc, select
@@ -156,8 +157,28 @@ async def check_price_divergence(db: AsyncSession, sport: str) -> list[HealthIss
     return issues
 
 
+# The raw archive shares the Docker VM disk with Postgres. On 2026-10-12 it
+# filled that disk to 100% and ingestion/capture failed for hours (868
+# "No space left" errors) with no alert. Alert well before that.
+DISK_ALERT_FRACTION = 0.80
+
+
+def check_disk_space(path: str | None = None,
+                     threshold: float = DISK_ALERT_FRACTION) -> list[HealthIssue]:
+    try:
+        usage = shutil.disk_usage(path or get_settings().raw_archive_dir)
+    except OSError as exc:
+        return [HealthIssue("disk_space", f"raw archive disk unreadable: {type(exc).__name__}")]
+    used = (usage.total - usage.free) / usage.total
+    if used < threshold:
+        return []
+    return [HealthIssue("disk_space", f"raw archive disk {used:.0%} full: "
+                        f"{usage.free / 1e9:.0f} GB free of {usage.total / 1e9:.0f} GB")]
+
+
 async def run_health_checks(db: AsyncSession) -> list[HealthIssue]:
-    issues = await check_source_freshness(db)
+    issues = check_disk_space()
+    issues += await check_source_freshness(db)
     for sport in get_settings().supported_sports:
         issues += await check_price_divergence(db, sport)
     return issues

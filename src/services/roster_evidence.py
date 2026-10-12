@@ -2,9 +2,7 @@
 
 import asyncio
 import hashlib
-import json
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import httpx
 from sqlalchemy import select
@@ -12,6 +10,7 @@ from sqlalchemy import select
 from config.settings import get_settings
 from src.models.facts import Game
 from src.models.identity import PlayerExternalId, Team
+from src.utils import archive_io
 
 SUPPORTED = ("nfl", "ncaaf", "nba", "mlb")
 PROVIDERS = {sport: "espn_" + sport for sport in SUPPORTED} | {"mlb": "mlb_stats_api"}
@@ -142,8 +141,8 @@ async def collect(db):
 
 def load(directory, now):
     try:
-        path = sorted(Path(directory).glob("*.json"))[-1]
-        payload = json.loads(path.read_text())
+        path = archive_io.files(directory)[-1]
+        payload = archive_io.read_json(path)
         at = datetime.fromisoformat(payload["captured_at"])
         if payload.get("schema_version") != 1 or not timedelta(0) <= now - at <= TTL:
             return []

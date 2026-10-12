@@ -6,6 +6,7 @@ from datetime import datetime,timezone
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from src.models.governance import ForecastArchive
+from src.utils import archive_io
 
 KINDS=('forecasts','grading','shadow_entries','shadow_closes','missing_results','archive_index','capture_status')
 
@@ -40,7 +41,7 @@ async def import_archives(db,directory,*,limit=100,kind='forecasts'):
     index=previous.payload.get('files',{}) if previous and digest(previous.payload)==previous.digest else {}
     checked={}
     imported=0;pending=0
-    for path in sorted(directory.glob('*.json')):
+    for path in archive_io.files(directory):
         if path.is_symlink():raise ValueError('Symlink forecast archive refused')
         stat=path.stat()
         signature=[stat.st_dev,stat.st_ino,stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns]
@@ -51,7 +52,7 @@ async def import_archives(db,directory,*,limit=100,kind='forecasts'):
         if imported>=limit:
             pending+=1
             continue
-        payload=json.loads(path.read_text())
+        payload=archive_io.read_json(path)
         key=digest(payload)
         after=path.stat()
         if signature!=[after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns]:
@@ -73,9 +74,9 @@ async def repair_legacy_json(db,directory):
     No prediction values can change through this repair.
     """
     repaired=0
-    for path in sorted(Path(directory).glob('*.json')):
+    for path in archive_io.files(directory):
         if path.is_symlink():raise ValueError('Symlink forecast archive refused')
-        original=json.loads(path.read_text());key=digest(original)
+        original=archive_io.read_json(path);key=digest(original)
         row=await db.get(ForecastArchive,(key,'forecasts'))
         if row is None or digest(row.payload)==key:continue
         if row.payload!=original:raise ValueError('Original and stored forecast differ semantically')

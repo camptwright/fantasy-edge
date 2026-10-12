@@ -1,8 +1,8 @@
 """Timestamped provider evidence; missing reports never imply health."""
-import json
 from datetime import datetime
 from sqlalchemy import select
 from src.models.identity import Player, PlayerExternalId
+from src.utils import archive_io
 
 
 def age(value, as_of):
@@ -13,11 +13,11 @@ def age(value, as_of):
 
 
 def archive_rows(directory, as_of, sport=None):
-    paths = sorted(directory.glob('*.json'), reverse=True)[:1]
+    paths = archive_io.files(directory)[-1:]
     if not paths:
         return [], 'missing_archive'
     try:
-        payload = json.loads(paths[0].read_text())
+        payload = archive_io.read_json(paths[0])
         rows = payload.get('rows') if isinstance(payload, dict) else payload
         if not isinstance(rows, list):
             return [], 'invalid_archive'
@@ -83,11 +83,11 @@ async def snapshots(db, props, directory, as_of):
 
 
 def game_snapshots(directory, as_of):
-    paths = sorted(directory.glob('*.json'), reverse=True)[:1]
+    paths = archive_io.files(directory)[-1:]
     if not paths:
         return {}
     try:
-        payload = json.loads(paths[0].read_text())
+        payload = archive_io.read_json(paths[0])
         return {r['game_id']: r for r in payload['games']}
     except (OSError, ValueError, TypeError, KeyError):
         return {}

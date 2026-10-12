@@ -51,16 +51,16 @@ async def test_numeric_representation_survives_database_roundtrip(db):
 
 
 async def test_import_index_skips_unchanged_files_but_rechecks_changes(db,tmp_path,monkeypatch):
-    from pathlib import Path
+    from src.utils import archive_io
     path=tmp_path/'forecast.json'
     path.write_text(json.dumps(forecast()))
     await import_archives(db,tmp_path)
-    original=Path.read_text
+    original=archive_io.read_bytes
     reads=[]
-    def read(p,*args,**kwargs):
+    def read(p):
         reads.append(p)
-        return original(p,*args,**kwargs)
-    monkeypatch.setattr(Path,'read_text',read)
+        return original(p)
+    monkeypatch.setattr(archive_io,'read_bytes',read)
     assert (await import_archives(db,tmp_path))['imported']==0
     assert reads==[]
     path.write_text(json.dumps(forecast()))

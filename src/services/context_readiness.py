@@ -5,19 +5,19 @@ feed as a neutral injury, lineup, weather, or settlement outcome.
 """
 from __future__ import annotations
 
-import json
 from collections import Counter
 from pathlib import Path
 from datetime import datetime, timezone
 from src.services.injury_evidence import archive_rows, game_snapshots, age
+from src.utils import archive_io
 
 
 def _latest_payload(archive_dir: Path) -> object | None:
-    paths = sorted(archive_dir.glob("*.json"))
+    paths = archive_io.files(archive_dir)
     if not paths:
         return None
     try:
-        payload = json.loads(paths[-1].read_text())
+        payload = archive_io.read_json(paths[-1])
     except (OSError, ValueError):
         return None
     return payload

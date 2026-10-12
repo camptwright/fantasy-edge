@@ -7,6 +7,7 @@ from config.settings import get_settings
 from src.scheduler.calibration import archive
 from src.ingest.nfl_results import parse_boxscore
 from src.services.football_structured_pbp import reconcile
+from src.utils import archive_io
 
 
 def summary_digest(payload):
@@ -21,9 +22,9 @@ def cached_reports(root):
         if digest is None:
             # Existing reports predate the hash. Resolve only the basename
             # inside the trusted archive directory, not arbitrary saved paths.
-            source = root/'result-observations'/Path(saved['summary_archive']).name
+            source = archive_io.resolve(root/'result-observations'/Path(saved['summary_archive']).name)
             if source.exists():
-                digest = summary_digest(json.loads(source.read_text())['payload'])
+                digest = summary_digest(archive_io.read_json(source)['payload'])
         result[saved['event_id']] = {'event_id': saved['event_id'], 'report': str(path),
             'summary_sha256': digest, 'timeline_blockers': saved['timeline_blockers'],
             'unresolved_plays': len(saved['unresolved_plays']),
@@ -36,8 +37,8 @@ def run():
     root = Path(get_settings().raw_archive_dir)
     reports, seen, requests = cached_reports(root), set(), 0
     with httpx.Client(timeout=20, follow_redirects=False) as client:
-        for path in sorted((root/'result-observations').glob('*.json'), reverse=True)[:2000]:
-            saved = json.loads(path.read_text())
+        for path in archive_io.files(root/'result-observations')[::-1][:2000]:
+            saved = archive_io.read_json(path)
             if saved.get('provider') != 'espn_ncaaf':
                 continue
             event = str(saved['event_id'])

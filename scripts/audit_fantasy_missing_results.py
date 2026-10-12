@@ -11,6 +11,7 @@ from config.settings import get_settings
 from src.db.client import get_worker_db
 from src.models.facts import Game
 from src.models.identity import Player, PlayerExternalId
+from src.utils import archive_io
 
 
 def classify(record, game, player, external_ids, observation):
@@ -47,18 +48,18 @@ def classify(record, game, player, external_ids, observation):
 
 async def execute():
     root = Path(get_settings().raw_archive_dir)
-    reports = sorted((root/'fantasy-prospective'/'reports').glob('*.json'))
+    reports = archive_io.files(root/'fantasy-prospective'/'reports')
     if not reports:
         return {'status': 'missing_report'}
-    report = json.loads(reports[-1].read_text())
+    report = archive_io.read_json(reports[-1])
     records = [json.loads((root/'fantasy-prospective'/'forecasts'/
                           (g['id']+'.json')).read_text()) for g in report['grades']
                if g['status'] == 'missing_scoring_results']
     pairs = {(r['player_id'], r['game_id']): r for r in records}
     needed = {gid for _, gid in pairs}
     observations = {}
-    for path in sorted((root/'result-observations').glob('*.json'), reverse=True):
-        observation = json.loads(path.read_text())
+    for path in archive_io.files(root/'result-observations')[::-1]:
+        observation = archive_io.read_json(path)
         gid = observation.get('game_id')
         if gid in needed and observation.get('provider') == 'espn_nfl':
             observations.setdefault(gid, observation)

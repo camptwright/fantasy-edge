@@ -5,12 +5,13 @@ from pathlib import Path
 from config.settings import get_settings
 from src.services.football_pbp_validation import audit
 from src.scheduler.calibration import archive
+from src.utils import archive_io
 
 
 def run():
     rows, seen = [], set()
-    for path in sorted((Path(get_settings().raw_archive_dir)/'result-observations').glob('*.json'), reverse=True)[:2000]:
-        data = json.loads(path.read_text())
+    for path in archive_io.files(Path(get_settings().raw_archive_dir)/'result-observations')[::-1][:2000]:
+        data = archive_io.read_json(path)
         if data.get('provider') not in ('espn_nfl', 'espn_ncaaf'):
             continue
         key = (data['provider'], data['event_id'])

@@ -99,6 +99,13 @@ def projection_engine_research():
     return asyncio.run(run())
 
 
+@celery_app.task(name='fantasy.compress_raw_archive',soft_time_limit=1500,time_limit=1800)
+def compress_raw_archive():
+    """Lossless gzip of day-old append-only archive files; see raw_retention.COMPRESSIBLE."""
+    from src.services.raw_retention import compress_daily
+    return compress_daily()
+
+
 @celery_app.task(name='fantasy.raw_retention_report',soft_time_limit=240,time_limit=300)
 def raw_retention_report():
     async def run():

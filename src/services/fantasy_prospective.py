@@ -16,6 +16,7 @@ from src.services.roster_stat_prospective import publish
 from src.services.fantasy_decision_models import build
 from src.services.roster_stat_model import finite
 from src.services.projection_identity import manifest, reference, archive_identity
+from src.utils import archive_io
 
 
 def version():
@@ -255,9 +256,9 @@ def grade_weekly(record,points):
 
 
 def latest():
-    paths=sorted((Path(get_settings().raw_archive_dir)/'fantasy-prospective'/'reports').glob('*.json'))
+    paths=archive_io.files(Path(get_settings().raw_archive_dir)/'fantasy-prospective'/'reports')
     if not paths: return {'status':'not_started'}
-    report={k:v for k,v in json.loads(paths[-1].read_text()).items() if k!='grades'}
+    report={k:v for k,v in archive_io.read_json(paths[-1]).items() if k!='grades'}
     for kind in ('ros','weekly','provider_weekly'):
         if kind in report: report[kind]={k:v for k,v in report[kind].items() if k!='grades'}
     return report

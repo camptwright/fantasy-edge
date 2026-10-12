@@ -1,5 +1,4 @@
 """Power Four current-team cohort, prior-day stat replay. Research only."""
-import json
 import uuid
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
@@ -13,6 +12,7 @@ from src.services.result_eligibility import no_pending_correction
 from src.services.roster_stat_model import STATS, RECIPE, estimate, finite
 from src.services.roster_stat_prospective import publish
 from src.services.player_identity import resolve_external_players
+from src.utils import archive_io
 
 CONFERENCES = {'acc': 'ACC', 'big10': 'Big Ten', 'big12': 'Big 12', 'sec': 'SEC'}
 
@@ -140,5 +140,5 @@ async def run(db, conference_snapshot, full=False):
 
 
 def latest():
-    files = sorted((Path(get_settings().raw_archive_dir)/'college-player-lab').glob('*.json'))
-    return json.loads(files[-1].read_text()) if files else {'status':'not_started','players':[],'metrics':[]}
+    files = archive_io.files(Path(get_settings().raw_archive_dir)/'college-player-lab')
+    return archive_io.read_json(files[-1]) if files else {'status':'not_started','players':[],'metrics':[]}

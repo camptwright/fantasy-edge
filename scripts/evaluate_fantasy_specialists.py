@@ -12,13 +12,14 @@ from src.ingest.fantasy_scoring import parse
 from src.services.fantasy_decision_models import player_scoring
 from src.services.fantasy_specialists import holdout
 from src.services.roster_stat_prospective import publish
+from src.utils import archive_io
 
 
 async def execute():
     root=Path(get_settings().raw_archive_dir)
     archives={}
-    for path in sorted((root/'fantasy-scoring-source').glob('*.json')):
-        row=json.loads(path.read_text());archives[int(row['season'])]=(path,row)
+    for path in archive_io.files(root/'fantasy-scoring-source'):
+        row=archive_io.read_json(path);archives[int(row['season'])]=(path,row)
     now=datetime.now(timezone.utc);season=(now.year if now.month>=8 else now.year-1)-1
     rows=[];sources=[]
     for year in (season-1,season):

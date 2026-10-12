@@ -6,13 +6,14 @@ from config.settings import get_settings
 from src.ingest.nfl_results import parse_boxscore
 from src.scheduler.calibration import archive
 from src.services.football_structured_pbp import reconcile
+from src.utils import archive_io
 
 
 def run():
     root = Path(get_settings().raw_archive_dir)
     summaries = {}
-    for path in sorted((root/'result-observations').glob('*.json'), reverse=True)[:2000]:
-        data = json.loads(path.read_text())
+    for path in archive_io.files(root/'result-observations')[::-1][:2000]:
+        data = archive_io.read_json(path)
         if data.get('provider') in ('espn_nfl', 'espn_ncaaf'):
             summaries.setdefault((data['provider'], str(data['event_id'])), (data['payload'], str(path)))
     reports = []

@@ -23,6 +23,7 @@ def test_celery_schedule_covers_every_ingestion_source():
         "fantasy.refresh_snap_counts",
         "fantasy.projection_engine_research",
         "fantasy.raw_retention_report",
+        "fantasy.compress_raw_archive",
         "fantasy.archive_rosters",
         "fantasy.sync_fantasy_market",
         "fantasy.archive_event_weather",
