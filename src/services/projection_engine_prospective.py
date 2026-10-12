@@ -237,6 +237,7 @@ async def report(db, variant: str = "v1") -> dict:
         points = score(frozen["stats"], weights)
         count("graded")
         rows.append({"league_id": r["league_id"], "week": r["week"], "position": r["position"],
+                     "game_id": r["game_id"], "player_id": str(player.id),
                      "actual": result["actual"], "sleeper": r["prediction"]["points"],
                      "engine": round(points, 2), "sleeper_error": result["absolute_error"],
                      "engine_error": abs(points - result["actual"])})
@@ -253,7 +254,27 @@ async def report(db, variant: str = "v1") -> dict:
                  "prospective_weeks_after": fitted_week,
                  "all_paired": summarize([r for r in blended if r["week"] > fitted_week]),
                  "promotion": promotion_check([r for r in blended if r["week"] > fitted_week])}
-    out = {"generated_at": datetime.now(timezone.utc).isoformat(), "variant": variant,
+    sources = {}
+    if variant == "v1":
+        # Second source and consensus (FantasyPros method): frozen pregame
+        # ESPN projections on the same rows, each graded against Sleeper.
+        from src.services import espn_projections
+        from src.services.fantasy_decision_models import offensive_weights
+        espn = espn_projections.frozen()
+        espn_rows, consensus_rows = [], []
+        for row in rows:
+            frozen_espn = espn.get((row["game_id"], row["player_id"]))
+            if frozen_espn is None:
+                continue
+            pts = espn_projections.score(frozen_espn["stats"], offensive_weights(leagues[row["league_id"]].scoring_settings))
+            consensus = (row["sleeper"] + pts + row["engine"]) / 3
+            espn_rows.append({**row, "engine": round(pts, 2), "engine_error": abs(pts - row["actual"])})
+            consensus_rows.append({**row, "engine": round(consensus, 2), "engine_error": abs(consensus - row["actual"])})
+        sources = {"espn": {"frozen_forecasts": len(espn), "all_paired": summarize(espn_rows),
+                            "promotion": promotion_check(espn_rows)},
+                   "consensus": {"members": ["sleeper", "espn", "engine_v1"], "weights": "equal",
+                                 "all_paired": summarize(consensus_rows), "promotion": promotion_check(consensus_rows)}}
+    out = {"generated_at": datetime.now(timezone.utc).isoformat(), "variant": variant, **sources,
            "candidate_blend": out_blend,
            "recipe": RECIPE if variant == "v1" else RECIPE + "_depth", "version": current, "engine_forecasts": len(engine), "statuses": statuses,
            "all_paired": summarize(rows), "promotion": promotion_check(rows, VARIANT_MIN_WEEKS[variant]),

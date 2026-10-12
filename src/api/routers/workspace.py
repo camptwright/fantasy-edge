@@ -55,8 +55,21 @@ class TradeOutlookSide(BaseModel):
     unmodeled_players: list[str] = Field(default_factory=list)
 
 
+class TradeMarket(BaseModel):
+    """FantasyCalc trade-market values (an index built from real trades), not fantasy points."""
+    status: str
+    captured_at: str | None = None
+    values: dict[str, float | None] = Field(default_factory=dict)
+    side_a_total: float | None = None
+    side_b_total: float | None = None
+    attribution: str = 'FantasyCalc'
+    note: str = ('Market value index from real trades in leagues of this format; custom scoring is not fully '
+                 'represented. Not fantasy points and not a fairness verdict.')
+
+
 class TradeOutlook(BaseModel):
     status: str
+    market: TradeMarket | None = None
     side_a: TradeOutlookSide | None = None
     side_b: TradeOutlookSide | None = None
     player_ros_points: dict[str, float | None] = Field(default_factory=dict)
@@ -159,7 +172,28 @@ async def trade_preview(league_id: str, request: TradeRequest, response: Respons
         if data is None:
             raise HTTPException(409, 'Current checkpoint unavailable; refresh before comparing')
         return data
-    return await admitted_trade(load, lambda data: trade_context(data, request))
+    league_ref = {}
+
+    async def load_with_league():
+        data = await load()
+        league_ref['league'] = await db.get(SleeperLeague, league_id)
+        return data
+    return await admitted_trade(load_with_league, lambda data: with_market(
+        trade_context(data, request), data, league_ref.get('league'), request))
+
+
+def with_market(result: TradeResult, data: dict, league, request: TradeRequest) -> TradeResult:
+    """Attach FantasyCalc values for the traded players (daily archive; stale or unmatched is a status)."""
+    from src.services.fantasy_market import cohort, selected
+    if result.outlook is None or league is None:
+        return result
+    ids = request.side_a + request.side_b
+    raw = selected(cohort(league, len(data.get('rosters', []))), league.platform, ids)
+    values = {p['player_id']: finite_points(p.get('value')) for p in raw.get('players', [])}
+    total = lambda side: sum(values[i] for i in side) if side and all(values.get(i) is not None for i in side) else None
+    result.outlook.market = TradeMarket(status=raw.get('status', 'unavailable'), captured_at=raw.get('captured_at'),
+        values=values, side_a_total=total(request.side_a), side_b_total=total(request.side_b))
+    return result
 
 
 class LeagueSummary(BaseModel):
@@ -394,6 +428,12 @@ class PlayerDetail(BaseModel):
     specialist_ros_research: SpecialistResearch | None = None
     # Engine research (projection_engine_serving): conditional on playing,
     # not prospectively qualified, never a decision input.
+    # Second source and consensus (FantasyPros method): ESPN's projection in
+    # this league's scoring and the mean of the available sources (provider,
+    # ESPN, engine). Research columns, graded prospectively; never decisions.
+    espn_week_points: float | None = None
+    consensus_week_points: float | None = None
+    consensus_sources: int = 0
     engine_status: str = 'unknown'
     engine_week_points: float | None = None
     engine_ros_points: float | None = None
@@ -405,6 +445,7 @@ class PlayerDetail(BaseModel):
 
 
 class EngineWaiverRow(BaseModel):
+    trending_adds: int | None = None  # Sleeper adds in the last 24 h (context only)
     add: PlayerDetail
     compare: PlayerDetail | None = None
     ros_gain: float | None = None
@@ -414,10 +455,17 @@ class EngineWaiverRow(BaseModel):
     reasons: list[str] = Field(default_factory=list)
 
 
+class TrendingAdd(BaseModel):
+    player: PlayerDetail
+    adds: int
+
+
 class EngineWaivers(BaseModel):
     status: str = 'unavailable'
     scope: str = 'engine_research_ros_not_validated'
     rows: list[EngineWaiverRow] = Field(default_factory=list)
+    # Sleeper's most-added players (24 h) still unrostered in this league; crowd context only.
+    trending: list[TrendingAdd] = Field(default_factory=list)
     waiver_type: str = 'unknown'
     waiver_position: int | None = None
     teams: int | None = None
@@ -548,9 +596,35 @@ def player_detail(player: dict) -> PlayerDetail:
         known_schedule_subtotal=finite_points(ros.get('known_schedule_subtotal')),
         known_remaining_games=ros.get('known_remaining_games'), unknown_kickoffs=ros.get('unknown_kickoffs'),
         through_week=ros.get('through_week'), **engine_detail(player.get('engine') or {}),
+        **consensus_detail(player),
         game_log=[GameLogWeek(week=r['week'], points=r['points'])
                   for r in (player.get('distribution_evidence') or {}).get('evidence', [])
                   if isinstance(r.get('week'), int) and finite_points(r.get('points')) is not None])
+
+
+def consensus_detail(player: dict) -> dict:
+    engine = player.get('engine') or {}
+    members = [finite_points(player.get('weekly_points')), finite_points(player.get('_espn_points')),
+               finite_points(engine.get('week_points')) if engine.get('status') in ('research', 'research_partial_scoring') else None]
+    known = [v for v in members if v is not None]
+    return {'espn_week_points': members[1], 'consensus_sources': len(known),
+            'consensus_week_points': round(sum(known) / len(known), 2) if len(known) >= 2 else None}
+
+
+async def attach_espn(db, league, data: dict) -> None:
+    """Join the latest ESPN projections (same week, Sleeper leagues) onto checkpoint players, in memory."""
+    from src.services import espn_projections
+    from src.services.fantasy_decision_models import offensive_weights
+    if not data or league.platform != 'sleeper':
+        return
+    latest = await espn_projections.latest(db)
+    if not latest or latest.get('week') != data.get('week'):
+        return
+    weights = offensive_weights(league.scoring_settings)
+    for p in data.get('players', []):
+        row = latest['players'].get(str(p.get('canonical_player_id')))
+        if row and row.get('position') == p.get('position'):
+            p['_espn_points'] = round(espn_projections.score(row['stats'], weights), 2)
 
 
 def engine_detail(engine: dict) -> dict:
@@ -611,6 +685,20 @@ def engine_waiver_context(data: dict, by_id: dict) -> EngineWaivers:
     mine = [r for r in data.get('rosters', []) if r.get('is_mine') is True]
     if len(mine) != 1:
         return EngineWaivers(status='owner_roster_unresolved')
+    view = _engine_waivers(data, by_id, mine)
+    trending = data.get('_trending') or {}
+    owned_now = {str(pid) for r in data.get('rosters', []) for pid in r.get('player_ids', [])}
+    for row in view.rows:
+        row.trending_adds = trending.get(row.add.player_id)
+        if row.trending_adds:
+            row.reasons.append(f'Trending on Sleeper: {row.trending_adds:,} adds in the last 24 hours (crowd signal, not value).')
+    view.trending = [TrendingAdd(player=player_detail(by_id[pid]), adds=n) for pid, n in
+                     sorted(trending.items(), key=lambda kv: -kv[1])
+                     if pid in by_id and pid not in owned_now and by_id[pid].get('roster_ids') == []][:8]
+    return view
+
+
+def _engine_waivers(data: dict, by_id: dict, mine: list) -> EngineWaivers:
     settings = data.get('waiver_settings') or {}
     context = dict(waiver_type=WAIVER_TYPES.get(settings.get('waiver_type'), 'unknown'),
                    waiver_position=mine[0].get('waiver_position'), teams=len(data.get('rosters', [])) or None,
@@ -761,7 +849,12 @@ async def league_overview(league_id: str, response: Response, db: AsyncSession =
     if league.sport != 'nfl':
         return Overview(league_id=league_id, status='unsupported',
                         message='The replacement fantasy workspace currently supports NFL leagues.')
-    result = overview(league_id, await read(db, league_id))
+    data = await read(db, league_id)
+    await attach_espn(db, league, data)
+    if data and league.platform == 'sleeper':
+        from src.services import sleeper_trending
+        data['_trending'] = (await sleeper_trending.latest(db) or {}).get('players', {})
+    result = overview(league_id, data)
     from asyncio import to_thread
     from config.settings import get_settings
     from src.services.fantasy_research_status import latest
@@ -836,10 +929,13 @@ def qualification_tracks(root) -> list[QualificationTrack]:
         except (OSError, ValueError):
             tracks.append(QualificationTrack(name=label, status='report_unreadable', required_weeks=MIN_WEEKS))
             continue
-        for name, block, meta in ((label, report.get('promotion') or {}, report),
-                                  (f'{label} · Sleeper blend', (report.get('candidate_blend') or {}).get('promotion') or {}, None)):
-            if meta is None and variant != 'v1':
-                continue  # the candidate blend is graded once, on the v1 report
+        extra = [(f'{label} · Sleeper blend', (report.get('candidate_blend') or {}).get('promotion') or {}, None),
+                 ('ESPN projections', (report.get('espn') or {}).get('promotion') or {}, None),
+                 ('Consensus: Sleeper + ESPN + engine', (report.get('consensus') or {}).get('promotion') or {}, None)
+                 ] if variant == 'v1' else []
+        for name, block, meta in ((label, report.get('promotion') or {}, report), *extra):
+            if meta is None and not block:
+                continue  # older reports carry no ESPN/consensus grading yet
             pool = summary(block.get('pool'))
             tracks.append(QualificationTrack(name=name, status=report.get('status', 'unknown'),
                 generated_at=report.get('generated_at'), version=report.get('version'),

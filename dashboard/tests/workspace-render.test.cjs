@@ -151,7 +151,7 @@ test('player profile never substitutes a missing player and labels engine resear
 test('waiver guidance fails closed and shows tiers, lineup gains and waiver priority',()=>{
   const lib=loadComponent('src/lib/workspace.ts');
   const {WorkspaceEngineWaivers}=loadComponent('src/components/WorkspaceEngineWaivers.tsx',{'@/lib/workspace':lib});
-  const base={waiver_type:'rolling',waiver_position:6,teams:12,waiver_clear_days:2,tier_rule:'rule'};
+  const base={waiver_type:'rolling',waiver_position:6,teams:12,waiver_clear_days:2,tier_rule:'rule',trending:[]};
   const closed=renderToStaticMarkup(React.createElement(WorkspaceEngineWaivers,{overview:{league_id:'a',engine_waivers:{...base,status:'owner_roster_unresolved',rows:[]}}}));
   assert.match(closed,/No waiver guidance for this snapshot \(owner roster unresolved\)/);
   const html=renderToStaticMarkup(React.createElement(WorkspaceEngineWaivers,{overview:{league_id:'a',engine_waivers:{...base,status:'research',rows:[
@@ -160,6 +160,9 @@ test('waiver guidance fails closed and shows tiers, lineup gains and waiver prio
   assert.match(html,/your priority 6 of 12/);
   assert.match(html,/Priority/); assert.match(html,/\+16\.0/); assert.match(html,/-2\.0/); assert.match(html,/Stream/);
   assert.match(html,/drop Mine/);
+  assert.doesNotMatch(html,/Trending adds/);
+  const hot=renderToStaticMarkup(React.createElement(WorkspaceEngineWaivers,{overview:{league_id:'a',engine_waivers:{...base,status:'research',rows:[],trending:[{player:enginePlayer('Riser'),adds:5400}]}}}));
+  assert.match(hot,/Trending adds on Sleeper/); assert.match(hot,/\+5,400/); assert.match(hot,/does not change the guidance/);
 });
 test('start/sit withholds win probability with a reason and draws curves only from simulated ranges',()=>{
   const lib=loadComponent('src/lib/workspace.ts');

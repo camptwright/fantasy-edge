@@ -103,7 +103,12 @@ services:
 
   beat:
     <<: *app
-    command: ["celery", "-A", "src.scheduler.celery_app", "beat", "--loglevel=info"]
+    # Persist last-run times on the model volume: without -s the schedule file
+    # lived in the container and every redeploy restarted each interval, so
+    # daily tasks (nflverse stats, snap counts, FantasyCalc, schedule) never
+    # fired while deploys happened more than once a day (found 2026-10-12).
+    command: ["celery", "-A", "src.scheduler.celery_app", "beat", "--loglevel=info",
+              "-s", "/mnt/data/fantasy-edge/models/celerybeat-schedule"]
     mem_limit: 256m
     depends_on:
       postgres: {condition: service_healthy}

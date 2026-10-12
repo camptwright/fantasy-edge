@@ -46,7 +46,7 @@ export function WorkspaceStartSit({ overview }: { overview: Overview }) {
           const r = ranges[p.player_id];
           return <div key={p.player_id} className={i ? "" : "text-right"}>
             <dt className="font-medium" style={{ color: COLORS[i] }}><a href={playerProfileHref(overview.league_id, p.player_id)} className="hover:underline">{p.name}</a></dt>
-            <dd className="mt-1 text-xs text-slate-400">Range {pts(r?.p10)}–{pts(r?.p90)} · engine {pts(p.engine_week_points)} · {r?.basis?.replaceAll("_", " ") ?? "not simulated"}</dd>
+            <dd className="mt-1 text-xs text-slate-400">Range {pts(r?.p10)}–{pts(r?.p90)} · consensus {pts(p.consensus_week_points)} · engine {pts(p.engine_week_points)} · {r?.basis?.replaceAll("_", " ") ?? "not simulated"}</dd>
             <dd className={`mt-1 flex items-center gap-2 text-xs text-slate-400 ${i ? "" : "justify-end"}`}>Boom <Meter probability={r?.boom_probability} tone="up" label="Boom" /> Bust <Meter probability={r?.bust_probability} tone="down" label="Bust" /></dd>
           </div>;
         })}</dl>

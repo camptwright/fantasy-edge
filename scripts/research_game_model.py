@@ -66,7 +66,7 @@ def load(path: str) -> list[Game]:
 
 # ---- the serving baseline (src/services/elo.py), replayed ---------------------------------
 def serving_elo(games):
-    R, preds, season = {}, [], None
+    R, preds = {}, []
     for g in games:
         h, a = R.get(g.home, 1500.0), R.get(g.away, 1500.0)
         p = 1 / (1 + 10 ** ((a - h - 65) / 400))

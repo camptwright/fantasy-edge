@@ -33,3 +33,25 @@ def test_outlook_needs_two_distinct_known_rosters():
     assert out["side_a"]["lineup_gain"] == 2.0 and out["side_b"]["lineup_gain"] == -2.0
     assert out["player_ros_points"] == {"a1": 10, "b1": 12}
     assert outlook(data, ["a1"], ["qb"])["status"] == "rosters_unresolved"
+
+
+def test_trade_market_values_come_from_the_daily_archive(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from src.api.routers import workspace
+    from src.services import fantasy_market
+    league = SimpleNamespace(platform="sleeper", settings={"type": 0}, scoring_settings={"rec": 0.5},
+                             roster_positions=["QB", "RB", "WR", "FLEX", "BN"])
+    params = fantasy_market.cohort(league, 12)
+    snap = tmp_path / fantasy_market.key(params) / "snapshots"
+    snap.mkdir(parents=True)
+    (snap / "20261012T000000.json").write_text(json.dumps({
+        "captured_at": datetime.now(timezone.utc).isoformat(), "format": params, "sha256": "x",
+        "rows": [{"sleeper_id": "a1", "value": 4200}, {"sleeper_id": "b1", "value": 5100}]}))
+    monkeypatch.setattr(fantasy_market, "root", lambda: tmp_path)
+    result = workspace.TradeResult(status="withheld", generated_at=datetime.now(timezone.utc),
+                                   expires_at=datetime.now(timezone.utc), outlook=workspace.TradeOutlook(status="research"))
+    request = workspace.TradeRequest(generated_at=datetime.now(timezone.utc), side_a=["a1"], side_b=["b1", "zz"])
+    out = workspace.with_market(result, {"rosters": [{}] * 12}, league, request).outlook.market
+    assert (out.status, out.values, out.side_a_total, out.side_b_total) == ("observed", {"a1": 4200, "b1": 5100, "zz": None}, 4200, None)

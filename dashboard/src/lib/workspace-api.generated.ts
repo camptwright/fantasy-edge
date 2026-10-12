@@ -16,6 +16,7 @@ export type EngineQualification = {
 };
 
 export type EngineWaiverRow = {
+  trending_adds: number | null;
   add: PlayerDetail;
   compare: PlayerDetail | null;
   ros_gain: number | null;
@@ -29,6 +30,7 @@ export type EngineWaivers = {
   status: string;
   scope: string;
   rows: Array<EngineWaiverRow>;
+  trending: Array<TrendingAdd>;
   waiver_type: string;
   waiver_position: number | null;
   teams: number | null;
@@ -184,6 +186,9 @@ export type PlayerDetail = {
   roster_names: Array<string>;
   roster_id: string | null;
   specialist_ros_research: SpecialistResearch | null;
+  espn_week_points: number | null;
+  consensus_week_points: number | null;
+  consensus_sources: number;
   engine_status: string;
   engine_week_points: number | null;
   engine_ros_points: number | null;
@@ -272,8 +277,19 @@ export type StrengthView = {
   positions: Array<PositionStrength>;
 };
 
+export type TradeMarket = {
+  status: string;
+  captured_at: string | null;
+  values: Record<string, number | null>;
+  side_a_total: number | null;
+  side_b_total: number | null;
+  attribution: string;
+  note: string;
+};
+
 export type TradeOutlook = {
   status: string;
+  market: TradeMarket | null;
   side_a: TradeOutlookSide | null;
   side_b: TradeOutlookSide | null;
   player_ros_points: Record<string, number | null>;
@@ -314,6 +330,11 @@ export type TradeSide = {
 export type TradeWeek = {
   week: number;
   gain: number;
+};
+
+export type TrendingAdd = {
+  player: PlayerDetail;
+  adds: number;
 };
 
 export type WaiverMove = {

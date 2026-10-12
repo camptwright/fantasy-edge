@@ -35,6 +35,13 @@ export function WorkspaceEngineWaivers({ overview }: { overview: Overview }) {
         <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs text-slate-400">{row.reasons.map(r => <li key={r}>{r}</li>)}</ul>
       </li>;
     })}</ol>}
+    {!!view.trending.length && <div className="mt-4 rounded-xl border border-slate-800 p-4">
+      <h3 className="text-sm font-semibold">Trending adds on Sleeper <span className="font-normal text-slate-500">· last 24 h · unrostered here</span></h3>
+      <ul className="mt-2 flex flex-wrap gap-2">{view.trending.map(t => <li key={t.player.player_id}>
+        <a href={playerProfileHref(overview.league_id, t.player.player_id)} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-slate-700 px-3 text-xs hover:border-emerald-500">
+          {t.player.name} <span className="text-slate-500">{t.player.position}</span><span className="tabular-nums text-emerald-300">+{t.adds.toLocaleString()}</span></a></li>)}</ul>
+      <p className="mt-2 text-[11px] text-slate-500">Crowd signal from Sleeper, shown for context; it does not change the guidance above.</p>
+    </div>}
     <p className="mt-2 text-xs text-slate-500">{view.tier_rule} Each row re-solves your best offensive lineup every remaining week with and without the swap, so bench depth and byes count; conditional on playing. Candidates are the top engine-projected unrostered players in this snapshot. Confirm availability and claim timing on your platform.</p>
   </section>;
 }

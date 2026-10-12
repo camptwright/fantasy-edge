@@ -501,3 +501,13 @@ def test_win_probability_check_reads_the_latest_report(tmp_path):
         'summary': {'n': 2, 'brier': 0.21, 'log_loss': 0.6}}))
     check = workspace.win_probability_check(tmp_path)
     assert (check.graded, check.brier, check.coin_flip_brier, check.captured_matchups) == (2, 0.21, 0.25, 4)
+
+
+def test_waiver_rows_note_sleeper_trending_and_list_unrostered_risers():
+    data = engine_data()
+    data['waiver_guidance'] = {'status': 'research', 'rows': [
+        {'add_id': 'fa_wr', 'drop_id': 'mine_wr', 'lineup_gain': 16.0, 'week': 6, 'week_gain': 4.0, 'weeks': 12, 'weeks_improved': 9}]}
+    data['_trending'] = {'fa_wr': 5400, 'fa_te': 900, 'theirs': 12000, 'mine_k': 50}
+    view = workspace.overview('league', data).engine_waivers
+    assert view.rows[0].trending_adds == 5400 and 'Trending on Sleeper: 5,400 adds' in view.rows[0].reasons[-1]
+    assert [(t.player.player_id, t.adds) for t in view.trending] == [('fa_wr', 5400), ('fa_te', 900)]  # rostered excluded

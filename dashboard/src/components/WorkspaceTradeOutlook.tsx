@@ -45,6 +45,21 @@ function SideTiles({ side }: { side: TradeOutlookSide }) {
   </div>;
 }
 
+/** FantasyCalc trade-market index for each package: what the market pays, beside what the lineup gains. */
+function MarketRow({ outlook, a, b }: { outlook: TradeOutlook; a: string; b: string }) {
+  const m = outlook.market;
+  if (!m) return null;
+  if (m.status !== "observed") return <p className="mt-2 text-[11px] text-slate-500">Trade market value unavailable ({m.status.replaceAll("_", " ")}).</p>;
+  const [ta, tb] = [m.side_a_total, m.side_b_total];
+  const gap = ta != null && tb != null ? tb - ta : null;
+  return <div className="mt-3 rounded-lg border border-slate-800 p-3 text-xs">
+    <p className="flex flex-wrap justify-between gap-2"><span className="text-slate-400">Trade market value · FantasyCalc</span>
+      <span className="tabular-nums">{a} gives {ta?.toLocaleString() ?? "—"} · {b} gives {tb?.toLocaleString() ?? "—"}</span></p>
+    {gap != null && <p className="mt-1 text-slate-300">{Math.abs(gap) < Math.max(ta ?? 0, tb ?? 0) * 0.1 ? "The market values both packages about the same." : `The market favours ${gap > 0 ? a : b} receiving ${Math.abs(gap).toLocaleString()} more in value.`}</p>}
+    <p className="mt-1 text-[11px] text-slate-500">{m.note}</p>
+  </div>;
+}
+
 /** Engine-research trade outlook: value bars, per-position deltas and weekly lineup change for both sides. */
 export function WorkspaceTradeOutlook({ outlook, a, b, players }: { outlook: TradeOutlook; a: string[]; b: string[]; players: PlayerDetail[] }) {
   if (outlook.status !== "research" || !outlook.side_a || !outlook.side_b) return <p role="status" className="rounded-xl border border-slate-800 p-4 text-sm text-slate-400">Rest-of-season outlook unavailable ({outlook.status.replaceAll("_", " ")}).</p>;
@@ -63,6 +78,7 @@ export function WorkspaceTradeOutlook({ outlook, a, b, players }: { outlook: Tra
         <ValueBars label={sb.team ?? "Side B"} ids={b} players={players} values={values} max={max} color="#60a5fa" />
       </div>
       <p className="mt-3 text-[11px] text-slate-500">Bars are each player’s engine rest-of-season points (conditional on playing). Raw points ignore roster fit; the tiles below do not.</p>
+      <MarketRow outlook={outlook} a={sa.team ?? "Side A"} b={sb.team ?? "Side B"} />
     </div>
     <div className="grid gap-4 md:grid-cols-2"><SideTiles side={sa} /><SideTiles side={sb} /></div>
     <p className="text-xs text-slate-500">{outlook.note}</p>
