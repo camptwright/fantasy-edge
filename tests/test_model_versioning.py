@@ -34,6 +34,16 @@ def test_missing_evaluation_is_overdue(tmp_path):
     assert status(tmp_path, ['nfl'])['status'] == 'overdue_or_incomplete'
 
 
+def test_same_day_other_version_requires_reevaluation():
+    now=datetime.now(timezone.utc)
+    current=manifest()
+    report={'status':'complete','completed_at':now.isoformat(),'sports':{'nfl':{}},
+            'serving_version_manifest':current}
+    assert completed_today(report,['nfl'],now,current)
+    assert not completed_today(report,['nfl'],now,{**current,'model_version':'new-model'})
+    assert not completed_today({**report,'serving_version_manifest':{}},['nfl'],now,current)
+
+
 def test_new_policy_cohorts_stay_separate_from_legacy(tmp_path):
     import json
     import uuid

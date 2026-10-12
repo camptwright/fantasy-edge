@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -21,7 +22,7 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID, JSONB, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base, CreatedAt, UUIDPrimaryKey, utcnow
@@ -37,6 +38,7 @@ class ModelArtifact(Base, UUIDPrimaryKey, CreatedAt):
     )
     seasons_used: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False)
     artifact_path: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_payload: Mapped[dict | None] = mapped_column(JSONB)
 
     brier: Mapped[float | None] = mapped_column(Float)
     log_loss: Mapped[float | None] = mapped_column(Float)
@@ -58,9 +60,51 @@ class ModelPrediction(Base, UUIDPrimaryKey):
     side: Mapped[str] = mapped_column(String(8), nullable=False)
     line: Mapped[float | None] = mapped_column(Float)
     probability: Mapped[float] = mapped_column(Float, nullable=False)
+    evidence: Mapped[dict | None] = mapped_column(JSONB)
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
+
+
+class ModelReviewEvidence(Base, UUIDPrimaryKey, CreatedAt):
+    """Append-only, version-bound promotion diagnostics; not deployment approval."""
+    __tablename__ = 'model_review_evidence'
+    artifact_version: Mapped[str] = mapped_column(
+        String(64), ForeignKey('model_artifacts.version', ondelete='RESTRICT'), nullable=False, index=True)
+    report: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
+class ModelDeployment(Base, UUIDPrimaryKey, CreatedAt):
+    """Append-only operator decisions. A null version restores the baseline."""
+    __tablename__ = 'model_deployments'
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    artifact_version: Mapped[str | None] = mapped_column(String(64), ForeignKey('model_artifacts.version', ondelete='RESTRICT'))
+    review_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey('model_review_evidence.id', ondelete='RESTRICT'))
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class FantasyInputRevision(Base):
+    __tablename__ = 'fantasy_input_revision'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class DerivedCheckpoint(Base):
+    """Rebuildable cache only; immutable source archives remain authoritative."""
+    __tablename__ = 'derived_checkpoints'
+    name: Mapped[str] = mapped_column(String(128), primary_key=True)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ForecastArchive(Base, CreatedAt):
+    """Immutable content-addressed forecast/grade evidence, independent of mounts."""
+    __tablename__ = 'forecast_archives'
+    digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
 class IngestionRun(Base, UUIDPrimaryKey):

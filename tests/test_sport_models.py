@@ -63,7 +63,10 @@ def test_mlb_bench_and_season_totals_are_not_outcomes():
     assert list(player_results({'teams': {'home': {'players': {'ID1': player}}}})) == []
 
 
-async def test_mlb_ingestion_is_restartable_and_idempotent(db, monkeypatch):
+async def test_mlb_ingestion_is_restartable_and_idempotent(db, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from src.scheduler import calibration
+    monkeypatch.setattr(calibration,'get_settings',lambda:SimpleNamespace(raw_archive_dir=str(tmp_path)))
     import httpx
     from sqlalchemy import select, func
     from src.models.facts import Game, PlayerGameStat

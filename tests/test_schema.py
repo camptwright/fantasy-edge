@@ -5,6 +5,12 @@ from __future__ import annotations
 from sqlalchemy import text
 
 EXPECTED_TABLES = {
+    "fantasy_scope_revisions",
+    "fantasy_checkpoint_scopes",
+    "fantasy_input_revision",
+    "derived_checkpoints",
+    "model_deployments",
+    "forecast_archives",
     "teams",
     "players",
     "player_external_ids",
@@ -14,6 +20,7 @@ EXPECTED_TABLES = {
     "player_game_stats",
     "model_artifacts",
     "model_predictions",
+    "model_review_evidence",
     "ingestion_runs",
     "sleeper_leagues",
     "sleeper_rosters",
