@@ -1,5 +1,9 @@
 """Bounded, dry-run-first retention for redundant result observations only."""
 import json
+import gzip
+import hashlib
+import os
+import tempfile
 from datetime import datetime,timedelta
 from pathlib import Path
 from sqlalchemy import select
@@ -55,3 +59,46 @@ async def plan(db,*,now=None,days=90,max_files=500,max_bytes=256*1024*1024):
         'candidate_bytes':sum(r['bytes'] for r in candidates),'candidates':candidates,'deleted':0,
         'protected':'Latest sync evidence, all correction hashes, unresolved games and durable research archives.',
         'note':'No automatic deletion enabled; inspect the manifest before authorizing an execution policy.'}
+
+
+def compress_verified(path,root):
+    """Lossless retention: replace one immutable JSON with verified gzip bytes."""
+    path=Path(path);root=Path(root)
+    if root.is_symlink() or path.is_symlink() or path.parent.resolve()!=root.resolve():
+        raise ValueError('Retention path escaped the direct archive directory')
+    target=path.with_suffix('.json.gz')
+    if target.exists():return {'status':'already_compressed','bytes_saved':0}
+    with path.open('rb') as source:
+        before=os.fstat(source.fileno())
+        original=source.read()
+    key=hashlib.sha256(original).hexdigest()
+    temporary=None
+    try:
+        with tempfile.NamedTemporaryFile(dir=root,prefix='.retention-',delete=False) as stream:
+            temporary=Path(stream.name)
+            with gzip.GzipFile(fileobj=stream,mode='wb',mtime=0) as zipped:zipped.write(original)
+            stream.flush();os.fsync(stream.fileno())
+        with gzip.open(temporary,'rb') as recovered:
+            if hashlib.sha256(recovered.read()).hexdigest()!=key:raise ValueError('Compressed recovery hash mismatch')
+        current=path.lstat()
+        if (current.st_ino,current.st_size,current.st_mtime_ns)!=(before.st_ino,before.st_size,before.st_mtime_ns):
+            raise ValueError('Archive changed during compression')
+        os.link(temporary,target) # Never overwrite an existing recovery copy.
+        directory_fd=os.open(root,os.O_RDONLY)
+        try:os.fsync(directory_fd)
+        finally:os.close(directory_fd)
+        path.unlink()
+        return {'status':'compressed','path':str(target),'sha256':key,
+            'bytes_saved':max(0,before.st_size-target.stat().st_size)}
+    finally:
+        if temporary is not None:temporary.unlink(missing_ok=True)
+
+
+async def retain(db,**kwargs):
+    """Recompute eligibility now; never execute a user-supplied path manifest."""
+    report=await plan(db,**kwargs)
+    root=Path(get_settings().raw_archive_dir)/'result-observations'
+    items=[compress_verified(row['path'],root) for row in report['candidates']]
+    return {**report,'status':'lossless_retention_complete','compressed':sum(r['status']=='compressed' for r in items),
+        'bytes_saved':sum(r['bytes_saved'] for r in items),'recovery_copies':items,
+        'note':'Eligible original JSON replaced by hash-verified gzip; no evidence is discarded. Restore with gzip decompression.'}

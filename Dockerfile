@@ -13,7 +13,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY pyproject.toml ./
-RUN pip install --upgrade pip && pip install -e .
+COPY requirements-runtime.lock ./
+# Install every runtime transitive dependency at its reviewed version. The
+# constraint also makes changed project requirements fail instead of drifting.
+RUN pip install -r requirements-runtime.lock \
+ && pip install -e . -c requirements-runtime.lock \
+ && pip check
 
 COPY alembic.ini ./
 COPY alembic ./alembic
