@@ -170,3 +170,23 @@ invented confidence or grades in the UI, missing stays missing.
 Next: visual step 1 (shell + Fantasy home) with engine projections as
 labeled research columns; tune shrinkage on 2025 walk-forward (never on the
 graded 2026 weeks), then E3 injuries and E4 distributions.
+
+### October 12 — engine retune and disk-growth findings
+
+- **Retune** (`scripts/tune_projection_engine.py`, owner-directed 2025+2026
+  walk-forward): starter-pool MAE 5.739 → 5.703 (half-life 2 games, rate
+  pseudo-counts ×2). Chosen on 2025 alone, no setting improved 2026 out of
+  sample, so the gain is marginal. Calibration over all players shows no star
+  under-projection (20–27-point bucket: 21.3 projected vs 20.3 actual); the
+  negative pool bias is the pool selecting on actual results. Real flaws:
+  fringe players over-projected (4.8 vs 4.0) and QBs +1.75 (backups shrunk
+  toward a starter's share). A per-team share cap was rejected (5.74 → 6.50)
+  because without active-roster status every player last seen on a team
+  counts; this belongs to E3. Paired vs Sleeper (2026 weeks 2–5, now
+  in-sample): pool 7.19 vs 7.18; QB better, RB worse. New capture version
+  `fe842bf5…` deployed before Week 7.
+- **Disk growth**: the raw archive grows ~16 GB/week (result-observations
+  6.1, fantasy-prospective 2.7, roster-evidence 2.2 at ~100 MB per 6-hourly
+  file, grading 1.2). Only 13% of result payloads are exact duplicates, but
+  gzip shrinks the bulky kinds 14–26×. Build cache regrows ~10 GB per day of
+  rebuilds. At current growth the 200G disk has roughly six weeks of headroom.
