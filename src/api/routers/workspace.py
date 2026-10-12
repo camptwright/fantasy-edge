@@ -16,50 +16,6 @@ from src.services.workspace_player_evidence import availability_evidence, uncert
 router = APIRouter(prefix="/api/v2/fantasy", tags=["workspace"])
 
 
-@router.get('/leagues/{league_id}/keeper-history/{player_id}')
-async def keeper_history(league_id: str, player_id: str, response: Response,
-                         db: AsyncSession = Depends(get_db)):
-    from src.models.sleeper import SleeperLeagueSnapshot, SleeperRoster
-    from src.ingest.keeper_history import player_evidence, validate
-    from src.services.keeper_rules import LEAGUE_ID
-    response.headers['Cache-Control']='no-store'
-    if league_id != LEAGUE_ID:return {'status':'unconfigured_league'}
-    league=await db.get(SleeperLeague,league_id)
-    snapshot=await db.get(SleeperLeagueSnapshot,(league_id,0,'keeper_draft'))
-    if not league or not snapshot:return {'status':'missing_draft_history'}
-    try:
-        validate(league.raw,snapshot.payload['draft'],snapshot.payload['picks'])
-    except (ValueError,KeyError,TypeError):
-        return {'status':'unverified_draft_history'}
-    rosters=(await db.scalars(select(SleeperRoster).where(SleeperRoster.league_id==league_id))).all()
-    owners=[r for r in rosters if player_id in (r.players or [])]
-    if len(owners)!=1:return {'status':'missing_or_ambiguous_current_roster'}
-    result=player_evidence(snapshot.payload,player_id,owners[0].roster_id)
-    return {**result,'roster_observed_at':owners[0].synced_at.isoformat()}
-
-
-class KeeperPlayerInput(BaseModel):
-    model_config = ConfigDict(extra='forbid', strict=True)
-    player_id: str = Field(min_length=1, max_length=64)
-    draft_round: int | None = Field(default=None, ge=1, le=100)
-    kept_last_year: bool | None = None
-    original_drafter: bool | None = None
-    cost_pick_available: bool | None = None
-    valuation: dict | None = None
-
-
-class KeeperRequest(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    players: list[KeeperPlayerInput] = Field(default_factory=list, max_length=10)
-
-
-@router.post('/leagues/{league_id}/keeper-preview')
-async def keeper_preview(league_id: str, request: KeeperRequest, response: Response):
-    from src.services.keeper_rules import evaluate
-    response.headers['Cache-Control'] = 'no-store'
-    return evaluate(league_id, [p.model_dump() for p in request.players])
-
-
 class TradeAdjustment(BaseModel):
     model_config = ConfigDict(extra='forbid')
     add: list[str] = Field(default_factory=list, max_length=6)
@@ -118,7 +74,7 @@ class TradeResult(BaseModel):
     side_a: TradeSide | None = None
     side_b: TradeSide | None = None
     outlook: TradeOutlook | None = None
-    note: str = 'Conditional offensive lineup points per game, not ROS gains, market fairness or acceptance advice. No byes, injury recovery, keeper pricing or transaction processing modeled.'
+    note: str = 'Conditional offensive lineup points per game, not ROS gains, market fairness or acceptance advice. No byes, injury recovery or transaction processing modeled.'
 
 
 def trade_context(data: dict, request: TradeRequest) -> TradeResult:
@@ -862,7 +818,7 @@ class EngineQualification(BaseModel):
 def qualification_tracks(root) -> list[QualificationTrack]:
     """Latest saved prospective report per track; a missing report is a status, not zeros."""
     import json
-    from src.services.projection_engine_prospective import MIN_WEEKS, VARIANTS
+    from src.services.projection_engine_prospective import VARIANT_MIN_WEEKS, VARIANTS
 
     def summary(raw):
         raw = raw or {}
@@ -870,6 +826,7 @@ def qualification_tracks(root) -> list[QualificationTrack]:
 
     tracks = []
     for variant, label in (('v1', 'Projection engine v1'), ('depth', 'Engine + depth chart/status')):
+        MIN_WEEKS = VARIANT_MIN_WEEKS[variant]
         files = sorted((root / VARIANTS[variant][1]).glob('*.json'))
         if not files:
             tracks.append(QualificationTrack(name=label, status='no_report_yet', required_weeks=MIN_WEEKS))
@@ -887,7 +844,7 @@ def qualification_tracks(root) -> list[QualificationTrack]:
             tracks.append(QualificationTrack(name=name, status=report.get('status', 'unknown'),
                 generated_at=report.get('generated_at'), version=report.get('version'),
                 engine_forecasts=report.get('engine_forecasts') if meta else None, graded_weeks=len(pool.weeks),
-                required_weeks=MIN_WEEKS, eligible_for_owner_review=bool(block.get('eligible_for_owner_review')),
+                required_weeks=block.get('required_weeks', MIN_WEEKS), eligible_for_owner_review=bool(block.get('eligible_for_owner_review')),
                 blockers=block.get('blockers', []), pool=pool, statuses=report.get('statuses', {}) if meta else {}))
     return tracks
 

@@ -51,14 +51,14 @@ export function WorkspaceNav() {
       </nav>
       <p className="border-t border-slate-800 px-5 py-4 text-xs text-slate-500">Research only · nothing is submitted or wagered</p>
     </aside>
-    <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur lg:hidden">
+    <header className="fixed-bar sticky top-0 z-30 flex items-center justify-between border-b border-slate-800 bg-slate-950 px-4 py-3 lg:hidden">
       <Link href={workspaceHref("today", league)} prefetch={false} className="flex items-center gap-2">
         <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-md bg-emerald-500 text-xs font-black text-slate-950">FE</span>
         <span className="font-semibold">Fantasy Edge</span>
       </Link>
       <span className="text-[11px] text-slate-500">Research only</span>
     </header>
-    <nav aria-label="Workspaces (mobile)" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-slate-800 bg-slate-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
+    <nav aria-label="Workspaces (mobile)" className="fixed-bar fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-slate-800 bg-slate-950 pb-[env(safe-area-inset-bottom)] lg:hidden">
       {WORKSPACES.map(view => <a key={view.id} href={workspaceHref(view.id, league)} onClick={busy} aria-current={active === view.id ? "page" : undefined}
         className={`flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300 ${active === view.id ? "text-emerald-300" : "text-slate-400"}`}>
         <Icon view={view.id} />{view.label}

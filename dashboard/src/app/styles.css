@@ -2,5 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 body { @apply bg-slate-950 text-slate-100; }
+/* Mobile: never let the page pan sideways (a panned or zoomed-out visual
+   viewport makes fixed bars appear to detach). `clip`, unlike `hidden`, does
+   not turn html/body into a scroll container, which would also break fixed. */
+html, body { overflow-x: clip; }
+/* Fixed mobile bars get their own compositing layer and no backdrop blur:
+   WebKit lags blurred fixed elements during momentum scrolling. */
+.fixed-bar { transform: translate3d(0, 0, 0); will-change: transform; backface-visibility: hidden; }
 .workspace-scrollbar { scrollbar-width: none; }
 .workspace-scrollbar::-webkit-scrollbar { display: none; }

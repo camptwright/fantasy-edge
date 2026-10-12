@@ -157,11 +157,6 @@ async def _sync_sport(db: AsyncSession, client: httpx.AsyncClient, user: dict, s
         projection_response.raise_for_status()
         await _snapshot(db, league_id, week, "projections", projection_response.json())
         if sport == 'nfl':
-            from src.ingest.keeper_history import collect as collect_keeper_history
-            try:
-                await collect_keeper_history(db, client, league)
-            except (httpx.HTTPError, ValueError, TypeError) as exc:
-                logger.warning('keeper history unavailable league=%s error=%s', league_id, type(exc).__name__)
             from src.services.fantasy_score_history import collect as collect_score_history
             try:
                 await collect_score_history(db, client, league)

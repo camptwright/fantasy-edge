@@ -6,23 +6,6 @@ const ts = require('typescript');
 const React = require('react');
 const {renderToStaticMarkup} = require('react-dom/server');
 
-test('keeper review starts unknown and does not imply verified history',()=>{
-  const {WorkspaceKeeper}=loadComponent('src/components/WorkspaceKeeper.tsx');
-  const html=renderToStaticMarkup(React.createElement(WorkspaceKeeper,{league:'1398509004950376448',players:[]}));
-  assert.match(html,/Manual evidence review/);
-  assert.match(html,/round 6 costs round 5/);
-  assert.match(html,/Load archived draft evidence/);
-  assert.match(html,/Required evidence · 0\/5 supplied/);
-  assert.match(html,/missing provider flag is not/);
-  assert.match(html,/already a keeper in the draft season/);
-  assert.match(html,/Supplied is not verified or eligible/);
-  assert.match(html,/disabled=""[^>]*>Check eligibility and cost/);
-  assert.doesNotMatch(html,/eligible under supplied evidence/);
-  const other=renderToStaticMarkup(React.createElement(WorkspaceKeeper,{league:'other',players:[]}));
-  assert.match(other,/not configured/);
-  assert.doesNotMatch(other,/<select/);
-});
-
 test('initial research shell does not render comparison or trade selectors', () => {
   const target = {exports:{}};
   const fail = () => {throw new Error('Closed research tool rendered eagerly');};

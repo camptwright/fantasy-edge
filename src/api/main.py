@@ -186,16 +186,12 @@ async def fantasy_analysis(league_id: str, db: AsyncSession = Depends(get_db)) -
     league = await db.get(SleeperLeague, league_id)
     if league is None:
         raise HTTPException(status_code=404, detail="league not synced")
-    settings, scoring = league.settings, league.scoring_settings
+    scoring = league.scoring_settings
     insights = []
     if scoring.get("rec"):
         insights.append({"kind": "scoring", "title": f"{scoring['rec']}-PPR scoring", "detail": "Rank receiving volume in start/sit and waiver analysis."})
-    if settings.get("waiver_budget", 0):
-        insights.append({"kind": "waivers", "title": f"${settings['waiver_budget']} FAAB budget", "detail": "Waiver advice will provide bid ranges."})
     if "SUPER_FLEX" in league.roster_positions:
         insights.append({"kind": "lineup", "title": "Superflex", "detail": "Quarterback scarcity must influence lineup and draft values."})
-    if settings.get("max_keepers", 0):
-        insights.append({"kind": "draft", "title": f"{settings['max_keepers']} keeper limit", "detail": "Draft scoring must include keeper and future-pick context."})
     return {"league_id": league_id, "insights": insights, "status": "data_ready", "next": "Add projections and sourced news before player-specific recommendations."}
 
 

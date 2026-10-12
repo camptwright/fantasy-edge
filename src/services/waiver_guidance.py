@@ -9,7 +9,7 @@ as zero for that week, which is what a lineup would actually receive.
 
 K/DEF are not engine-modeled: they get weekly streaming rows from the
 provider projection only. Research only; nothing is submitted and the engine
-is not prospectively qualified. No FAAB (none of the owner's leagues use it).
+is not prospectively qualified. Waiver bidding (FAAB) is out of scope.
 """
 
 from __future__ import annotations

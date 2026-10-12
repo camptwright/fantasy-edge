@@ -12,7 +12,7 @@ record was captured under. Both are graded by fantasy_weekly_evidence.grade
 against the platform's final league-scored points.
 
 Promotion criterion (reported, never applied): for the CURRENT version only,
-at least MIN_WEEKS independent graded weeks, the starter-pool paired MAE
+at least MIN_WEEKS independent graded weeks (VARIANT_MIN_WEEKS: 5 for the depth variant), the starter-pool paired MAE
 difference's week-bootstrap 95% interval entirely below zero, and no
 position's interval entirely above zero. `serving_promoted` stays False
 regardless; replacing Sleeper in serving is a separate owner decision.
@@ -40,6 +40,8 @@ from src.services.projection_engine import RECIPE, project, score
 from src.services.roster_stat_prospective import publish
 
 MIN_WEEKS = 6
+# The depth/status variant qualifies on 5 graded weeks (owner decision, 2026-10-12).
+VARIANT_MIN_WEEKS = {"v1": MIN_WEEKS, "depth": 5}
 SOURCES = ("projection_engine.py", "game_environment.py")
 
 
@@ -177,19 +179,19 @@ def starter_pool(rows: list[dict]) -> list[dict]:
     return selected
 
 
-def promotion_check(rows: list[dict]) -> dict:
+def promotion_check(rows: list[dict], min_weeks: int = MIN_WEEKS) -> dict:
     pool = starter_pool(rows)
     overall = summarize(pool)
     positions = {p: summarize([r for r in pool if r["position"] == p]) for p in POOL}
     blockers = []
-    if len(overall["weeks"]) < MIN_WEEKS:
-        blockers.append(f"needs_{MIN_WEEKS}_graded_weeks_has_{len(overall['weeks'])}")
+    if len(overall["weeks"]) < min_weeks:
+        blockers.append(f"needs_{min_weeks}_graded_weeks_has_{len(overall['weeks'])}")
     if overall["ci"] is None or overall["ci"][1] >= 0:
         blockers.append("pool_improvement_not_established")
     worse = [p for p, s in positions.items() if s["ci"] and s["ci"][0] > 0]
     if worse:
         blockers.append("worse_than_sleeper:" + ",".join(worse))
-    return {"eligible_for_owner_review": not blockers, "blockers": blockers,
+    return {"eligible_for_owner_review": not blockers, "blockers": blockers, "required_weeks": min_weeks,
             "pool": overall, "positions": positions, "serving_promoted": False}
 
 
@@ -254,7 +256,7 @@ async def report(db, variant: str = "v1") -> dict:
     out = {"generated_at": datetime.now(timezone.utc).isoformat(), "variant": variant,
            "candidate_blend": out_blend,
            "recipe": RECIPE if variant == "v1" else RECIPE + "_depth", "version": current, "engine_forecasts": len(engine), "statuses": statuses,
-           "all_paired": summarize(rows), "promotion": promotion_check(rows),
+           "all_paired": summarize(rows), "promotion": promotion_check(rows, VARIANT_MIN_WEEKS[variant]),
            "status": "prospective_research", "serving_promoted": False}
     publish(root / reports_dir / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}.json", out)
     return out

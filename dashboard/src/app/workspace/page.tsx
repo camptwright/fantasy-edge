@@ -2,7 +2,6 @@ import Link from "next/link";
 import { SnapshotWindow } from "@/components/SnapshotWindow";
 import { WorkspaceMatchup } from "@/components/WorkspaceMatchup";
 import { WorkspaceRoster } from "@/components/WorkspaceRoster";
-import { WorkspaceKeeper } from "@/components/WorkspaceKeeper";
 import { WorkspaceResearchStatus } from "@/components/WorkspaceResearchStatus";
 import { WorkspaceLineupReview } from "@/components/WorkspaceLineupReview";
 import { WorkspaceDailyBrief } from "@/components/WorkspaceDailyBrief";
@@ -93,7 +92,6 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
             {view === 'fantasy' && tool === 'startsit' && <WorkspaceStartSit key={`${league}:${overview.generated_at}`} overview={overview} />}
             {view === 'fantasy' && tool === 'team' && <WorkspaceRoster overview={overview} section="team" />}
             {view === 'fantasy' && tool === 'team' && <WorkspaceLineupReview overview={overview} />}
-            {view === 'fantasy' && tool === 'team' && <WorkspaceKeeper key={`${league}:${overview.generated_at}`} league={overview.league_id} players={overview.roster_players} />}
             {view === 'fantasy' && tool === 'waivers' && <WorkspaceEngineWaivers overview={overview} />}
             {view === 'fantasy' && tool === 'waivers' && <WorkspaceRoster overview={overview} section="waivers" />}
             {view === 'fantasy' && tool === 'player' && <WorkspacePlayerProfile overview={overview} playerId={query.player} />}
