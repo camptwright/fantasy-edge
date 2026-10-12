@@ -1,4 +1,5 @@
 import { PageHeader, SportBadge, MarketBadge } from "@/components/ui";
+import { Suspense } from "react";
 
 // Static generation happens during the image build, before the API and its
 // database are available - same reasoning as the Board/Recommendations pages.
@@ -29,6 +30,8 @@ function apiUrl(): string {
 }
 
 type LiveReport = {
+  report_count?: number; next_offset?: number|null;
+  capture_freshness?: {status:string;captured_at:string|null;stale:boolean};
   status: string; graded_at?: string; stale?: boolean; raw_records?: number;
   cohort_records?: number; duplicates_excluded?: number; counts?: Record<string, number>; note?: string;
   unresolved_evidence?: { unique_outcomes: number; counts: Record<string, number>;
@@ -41,10 +44,10 @@ type LiveReport = {
     log_loss: number | null; counts: Record<string, number> }[];
 };
 
-async function liveReports(): Promise<LiveReport> {
+async function liveReports(offset=0): Promise<LiveReport> {
   try {
-    const response = await fetch(`${apiUrl()}/calibration/live`, { headers: { Authorization: `Bearer ${process.env.FANTASY_API_TOKEN || ""}` }, cache: "no-store", signal: AbortSignal.timeout(20000) });
-    return response.ok ? response.json() : { status: "unavailable", reports: [] };
+    const response = await fetch(`${apiUrl()}/calibration/live?compact=true&limit=50&offset=${offset}`, { headers: { Authorization: `Bearer ${process.env.FANTASY_API_TOKEN || ""}` }, cache: "no-store", signal: AbortSignal.timeout(20000) });
+    return response.ok ? await response.json() : { status: "unavailable", reports: [] };
   } catch { return { status: "unavailable", reports: [] }; }
 }
 
@@ -103,19 +106,44 @@ function BrierBar({ score }: { score: number | null }) {
   );
 }
 
-export default async function CalibrationPage() {
-  const [{ reports, note }, live, odds, deployment, readinessResult, contextResult] = await Promise.all([
-    calibrationReports(), liveReports(), optionalReport('/calibration/odds-status'),
-    optionalReport('/calibration/deployment'), optionalReport('/calibration/prop-readiness'),
+async function PropReadinessPanel({ report }: { report: Promise<PropReadiness | null> }) {
+  const readiness = await report;
+  return (
+      <details className="mb-6 rounded-lg border border-slate-700 bg-slate-900/40 p-4">
+        <summary className="cursor-pointer font-semibold text-slate-100">NCAAF prop coverage and blockers</summary>
+        <p className="my-3 text-xs text-slate-400">{readiness?.note || "Readiness data unavailable. Missing coverage is not zero coverage; retry shortly."}</p>
+        <p className="mb-3 text-xs text-slate-400">Historical backfill: up to 50 games hourly. Research: {readiness?.research_at ? timeAgo(readiness.research_at) : "awaiting first report"}.</p>
+        {readiness && <div className="overflow-x-auto"><table className="w-full text-left text-sm text-slate-300">
+          <thead className="text-xs uppercase text-slate-500"><tr>{["Prop", "Status", "Qualified / quotes", "History rows / games", "Reason"].map(t => <th className="p-2" key={t}>{t}</th>)}</tr></thead>
+          <tbody>{readiness.families.map(row => <tr key={row.stat_type} className="border-t border-slate-800">
+            <td className="p-2">{row.stat_type.replaceAll("_", " ")}</td>
+            <td className="p-2">{row.status.replaceAll("_", " ")}</td>
+            <td className="p-2 font-mono">{row.qualified_quotes} / {row.quotes}</td>
+            <td className="p-2 font-mono">{row.historical_rows} / {row.historical_games}</td>
+            <td className="p-2 text-xs text-slate-400">{row.reason}</td>
+          </tr>)}</tbody>
+        </table></div>}
+      </details>
+  );
+}
+
+export default async function CalibrationPage({searchParams}:{searchParams:Promise<{offset?:string}>}) {
+  const query=await searchParams;
+  const offset=Math.max(0,Number.parseInt(query.offset||"0",10)||0);
+  // Start concurrently, but stream this expensive diagnostic independently.
+  // The panel retains its evidence checks and explicit unavailable state.
+  const readinessReport = optionalReport('/calibration/prop-readiness');
+  const [{ reports, note }, live, odds, deployment, contextResult] = await Promise.all([
+    calibrationReports(), liveReports(offset), optionalReport('/calibration/odds-status'),
+    optionalReport('/calibration/deployment'),
     optionalReport('/calibration/context-readiness'),
   ]);
-  const readiness: PropReadiness | null = readinessResult;
   const context: ContextReadiness | null = contextResult;
   const sorted = [...reports].sort((a, b) => a.sport.localeCompare(b.sport) || a.market.localeCompare(b.market));
 
   return (
     <main className="mx-auto max-w-5xl p-4 sm:p-6 md:p-8">
-      {(live.status === "unavailable" || !odds || !deployment || !readiness || !context) &&
+      {(live.status === "unavailable" || !odds || !deployment || !context) &&
         <p role="status" className="mb-4 text-amber-300">Some calibration data is unavailable. Missing results are not zero results; retry shortly.</p>}
       <PageHeader
         eyebrow="Recorded forecasts · measured outcomes"
@@ -155,21 +183,9 @@ export default async function CalibrationPage() {
           </tr>)}</tbody>
         </table></div>}
       </details>
-      <details className="mb-6 rounded-lg border border-slate-700 bg-slate-900/40 p-4">
-        <summary className="cursor-pointer font-semibold text-slate-100">NCAAF prop coverage and blockers</summary>
-        <p className="my-3 text-xs text-slate-400">{readiness?.note || "Readiness data unavailable."}</p>
-        <p className="mb-3 text-xs text-slate-400">Historical backfill: up to 50 games hourly. Research: {readiness?.research_at ? timeAgo(readiness.research_at) : "awaiting first report"}.</p>
-        {readiness && <div className="overflow-x-auto"><table className="w-full text-left text-sm text-slate-300">
-          <thead className="text-xs uppercase text-slate-500"><tr>{["Prop", "Status", "Qualified / quotes", "History rows / games", "Reason"].map(t => <th className="p-2" key={t}>{t}</th>)}</tr></thead>
-          <tbody>{readiness.families.map(row => <tr key={row.stat_type} className="border-t border-slate-800">
-            <td className="p-2">{row.stat_type.replaceAll("_", " ")}</td>
-            <td className="p-2">{row.status.replaceAll("_", " ")}</td>
-            <td className="p-2 font-mono">{row.qualified_quotes} / {row.quotes}</td>
-            <td className="p-2 font-mono">{row.historical_rows} / {row.historical_games}</td>
-            <td className="p-2 text-xs text-slate-400">{row.reason}</td>
-          </tr>)}</tbody>
-        </table></div>}
-      </details>
+      <Suspense fallback={<p role="status" className="mb-6 text-slate-400">Loading NCAAF prop coverage and blockers…</p>}>
+        <PropReadinessPanel report={readinessReport} />
+      </Suspense>
       <section className="mb-8 rounded-lg border border-slate-700 bg-slate-900/40 p-4">
         <h2 className="text-lg font-semibold text-slate-100">Live forecast performance</h2>
         <p className="mt-1 text-sm text-slate-400">
@@ -185,6 +201,8 @@ export default async function CalibrationPage() {
           <span>{live.duplicates_excluded ?? 0} repeated observations excluded</span>
         </div>
         <p className="mb-4 text-xs leading-relaxed text-slate-400">{live.note || "Waiting for the first grading report. No performance claim is available yet."}</p>
+        <p className="mb-3">Production capture: {live.capture_freshness?.status||"unknown"} · {live.capture_freshness?.captured_at||"no verified successful capture"}{live.capture_freshness?.stale?" — needs attention; fresh grading does not imply fresh forecasts":""}</p>
+        <nav className="mb-4 flex flex-wrap gap-4"><span>{live.report_count??live.reports.length} report groups · showing up to 50 from offset {offset}</span>{offset>0&&<a href={`/calibration?offset=${Math.max(0,offset-50)}`}>Previous reports</a>}{live.next_offset!=null&&<a href={`/calibration?offset=${live.next_offset}`}>Next reports</a>}</nav>
         {live.unresolved_evidence && live.unresolved_evidence.unique_outcomes > 0 && <details className="mb-4 rounded border border-amber-800/60 bg-amber-950/20 p-3 text-sm">
           <summary className="cursor-pointer font-medium text-amber-200">
             {live.unresolved_evidence.unique_outcomes} unique outcomes need verified result evidence
@@ -192,7 +210,7 @@ export default async function CalibrationPage() {
           <p className="mt-2 text-xs text-amber-100/70">{live.unresolved_evidence.note}</p>
           <p className="mt-2 text-xs text-amber-100/70">
             {Object.entries(live.unresolved_evidence.counts).map(([reason, count]) => `${count} ${reason.replaceAll("_", " ")}`).join(" · ")}
-            {live.unresolved_evidence.truncated ? " · examples capped at 200" : ""}
+            {live.unresolved_evidence.truncated ? " · showing a bounded sample; see the shared missing-result queue" : ""}
           </p>
           <div className="mt-3 max-h-72 overflow-auto"><table className="w-full text-left text-xs text-slate-300">
             <thead className="sticky top-0 bg-slate-950 text-slate-500"><tr>{["Sport / event", "Market", "Evidence gap", "Observed player stats"].map(label => <th key={label} className="p-2">{label}</th>)}</tr></thead>

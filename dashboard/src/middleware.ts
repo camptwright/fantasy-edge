@@ -1,6 +1,8 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { NextResponse, type NextRequest } from "next/server";
 
+let keyset: { team: string; keys: ReturnType<typeof createRemoteJWKSet> } | undefined;
+
 export async function middleware(request: NextRequest) {
   // Enabled only on the separately deployed, loopback-published Mac preview.
   // Host checking is defense in depth, not a replacement for that network boundary.
@@ -27,8 +29,10 @@ export async function middleware(request: NextRequest) {
   const token = request.headers.get("Cf-Access-Jwt-Assertion");
   if (!token) return new NextResponse("Cloudflare Access authentication required", { status: 401 });
   try {
-    const jwks = createRemoteJWKSet(new URL(`https://${team}/cdn-cgi/access/certs`));
-    await jwtVerify(token, jwks, { audience });
+    if (!keyset || keyset.team !== team) {
+      keyset = { team, keys: createRemoteJWKSet(new URL(`https://${team}/cdn-cgi/access/certs`)) };
+    }
+    await jwtVerify(token, keyset.keys, { audience, issuer: `https://${team}` });
     return NextResponse.next();
   } catch {
     return new NextResponse("Invalid Cloudflare Access credential", { status: 401 });

@@ -3,12 +3,15 @@ import { useState } from "react";
 import {OpportunityCandidate, type OpportunityStat, type AvailabilityCandidate} from "./OpportunityCandidate";
 type Stat = OpportunityStat & {stat:string;status:string;games:number;baseline?:number;candidate?:number};
 export type CollegeLab = {status:string;generated_at?:string;coverage?:Record<string,unknown>;notes?:string[];
+ teams?:string[];selected_team?:string|null;view_scope?:string;
+ pagination?:{offset:number;limit:number;total:number;all_players:number;next_offset:number|null};
  prospective?:{status:string;generated_at?:string;total_forecasts?:number;counts?:Record<string,number>;refresh_error?:string|null;metrics:{version:string;stat:string;n:number;baseline_mae:number;candidate_mae:number}[]};
  players:{player_id:string;name:string;team:string;conference:string;position:string;game_time:string|null;availability_candidate?:AvailabilityCandidate;stats:Stat[]}[];
  metrics:{conference:string;stat:string;samples:number;games:number;baseline_mae:number;candidate_mae:number;usage_blend_samples:number}[]};
 export function CollegePlayerLab({data}:{data:CollegeLab}) {
- const teams=Array.from(new Set(data.players.map(p=>p.team))).sort();
- const [team,setTeam]=useState(teams.find(t=>t==="Texas Longhorns")||teams[0]||"");
+ const teams=data.teams||Array.from(new Set(data.players.map(p=>p.team))).sort();
+ const [team,setTeam]=useState(data.selected_team??teams.find(t=>t==="Texas Longhorns")??teams[0]??"");
+ const pageHref=(offset:number)=>`/experimental?lab=college&team=${encodeURIComponent(team)}&offset=${offset}`;
  const players=data.players.filter(p=>p.team===team);
  const conference=players[0]?.conference;
  return <section className="my-8 space-y-3 rounded-xl border border-slate-700 p-4">
@@ -24,7 +27,9 @@ export function CollegePlayerLab({data}:{data:CollegeLab}) {
   <p className="text-sm text-amber-200">Retrospective 2026 evaluation, not pregame-recorded performance. ACC · Big Ten · Big 12 · SEC.</p>
   <p className="text-xs text-slate-400">Updated: {data.generated_at||"Not started"}. Minimum eight prior recorded games; missing history stays unsupported.</p>
   {data.coverage && <details><summary>Data coverage and exclusions</summary><pre className="overflow-x-auto text-xs">{JSON.stringify(data.coverage,null,2)}</pre></details>}
-  <label className="block text-sm">Team <select value={team} onChange={e=>setTeam(e.target.value)} className="ml-2 rounded border border-slate-600 bg-slate-900 p-2">{teams.map(t=><option key={t}>{t}</option>)}</select></label>
+  <label className="block text-sm">Team <select value={team} onChange={e=>{if(data.pagination){window.location.assign(`/experimental?lab=college&team=${encodeURIComponent(e.target.value)}`);}else{setTeam(e.target.value);}}} className="ml-2 rounded border border-slate-600 bg-slate-900 p-2">{teams.map(t=><option key={t}>{t}</option>)}</select></label>
+  {data.pagination&&<div className="space-x-4 text-sm"><span>{players.length} of {data.pagination.total} team players · {data.pagination.all_players} across all teams</span>{data.pagination.offset>0&&<a href={pageHref(Math.max(0,data.pagination.offset-data.pagination.limit))}>Previous players</a>}{data.pagination.next_offset!==null&&<a href={pageHref(data.pagination.next_offset)}>Next players</a>}<p className="text-xs text-slate-400">{data.view_scope}</p></div>}
+  {data.status==='experimental'&&!players.length&&<p>No players on this team/page. Select a team or return to the previous page; missing coverage is not a zero projection.</p>}
   {data.status!=="experimental" && <p>College evaluation has not run yet.</p>}
   <details><summary>{conference||"Conference"} completed-game errors (lower MAE is better)</summary>
    <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr>{["Stat","Samples / games","Baseline MAE","Candidate MAE","Usage-adjusted samples"].map(h=><th className="p-2" key={h}>{h}</th>)}</tr></thead><tbody>{data.metrics.filter(m=>m.conference===conference).map(m=><tr key={m.stat}><td className="p-2">{m.stat.replaceAll("_"," ")}</td><td>{m.samples} / {m.games}</td><td>{m.baseline_mae.toFixed(2)}</td><td>{m.candidate_mae.toFixed(2)}</td><td>{m.usage_blend_samples}</td></tr>)}</tbody></table></div>

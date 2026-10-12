@@ -12,12 +12,7 @@ type Draft = { score: number; covered_direct_slots: number; required_direct_slot
 type Matchup = { week: number; your_roster: { points: number }; opponent: { points: number } | null };
 export const dynamic = "force-dynamic";
 
-async function api<T>(path: string): Promise<T | null> {
-  const token = process.env.FANTASY_API_TOKEN;
-  if (!token) return null;
-  const response = await fetch(`${process.env.FANTASY_API_URL || "http://api:8000"}${path}`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
-  return response.ok ? response.json() : null;
-}
+import { fantasyApi as api } from "@/lib/fantasy-api";
 
 function NewsBlurb({ news }: { news?: NewsItem[] }) {
   if (!news || !news.length) return null;

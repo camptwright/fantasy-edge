@@ -1,7 +1,7 @@
 "use client";
 import {useState} from "react";
 type Player={player_id:string;name:string;position:string;team:string;injury_status:string|null;history_through:string|null;roster_ids:number[];weekly_evidence?:{status:string;points:number|null;week:number;source:string};ros:{full_ros_value:number|null};value:{status:string;conditional_points_per_game:number|null;above_available_replacement_per_game:number|null;replacement_player:string|null;blockers:string[]}};
-export type ValueData={status:string;league_id:string;generated_at:string;valuation_version:string;input_timestamps:Record<string,string>;valuation_notes:string[];value_coverage:Record<string,number>;players:Player[];trade_candidates:{give:string;receive:string;other_team:string;your_gain:number;their_gain:number}[]};
+export type ValueData={status:string;catalog_page?:{total_additional_players:number;next_offset:number|null};league_id:string;generated_at:string;valuation_version:string;input_timestamps:Record<string,string>;valuation_notes:string[];value_coverage:Record<string,number>;players:Player[];trade_candidates:{give:string;receive:string;other_team:string;your_gain:number;their_gain:number}[]};
 const num=(n:number|null|undefined)=>n==null?"—":n.toFixed(2);
 type Impact={status:string;blockers?:string[];note?:string;side_a?:{team:string;conditional_lineup_gain:number|null};side_b?:{team:string;conditional_lineup_gain:number|null};detail?:string;market?:{status:string;captured_at?:string;note?:string;format?:Record<string,unknown>;players?:{player_id:string;value:number|null}[]}};
 export function Values({data}:{data:ValueData}) {
