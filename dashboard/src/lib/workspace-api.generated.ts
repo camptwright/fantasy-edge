@@ -197,6 +197,11 @@ export type PlayerDetail = {
   roster_names: Array<string>;
   roster_id: string | null;
   specialist_ros_research: SpecialistResearch | null;
+  sos_ros_stars: number | null;
+  sos_next4_stars: number | null;
+  opponent: string | null;
+  week_game_status: string | null;
+  week_kickoff: string | null;
   espn_week_points: number | null;
   consensus_week_points: number | null;
   consensus_sources: number;
@@ -244,6 +249,55 @@ export type QualificationTrack = {
   statuses: Record<string, number>;
 };
 
+export type Recap = {
+  status: string;
+  week: RecapWeek | null;
+  completed_weeks: Array<number>;
+  season: RecapSeason;
+  note: string;
+};
+
+export type RecapGame = {
+  home: string | null;
+  away: string | null;
+  home_points: number;
+  away_points: number;
+};
+
+export type RecapSeason = {
+  weeks: Array<number>;
+  my_points: Array<number>;
+  median_points: Array<number>;
+  all_play_wins: number;
+  all_play_losses: number;
+  wins: number;
+  expected_wins: number | null;
+  luck: number | null;
+};
+
+export type RecapWeek = {
+  week: number;
+  points: number;
+  opponent: string | null;
+  opponent_points: number | null;
+  result: "W" | "L" | "T" | null;
+  league_median: number;
+  score_rank: number;
+  teams: number;
+  all_play_wins: number;
+  all_play_losses: number;
+  top_scorer: string | null;
+  top_scorer_points: number | null;
+  best_bench: string | null;
+  best_bench_points: number | null;
+  bench_points_left: number | null;
+  high_score: RecapGame | null;
+  closest_game: RecapGame | null;
+  biggest_blowout: RecapGame | null;
+  low_team: string | null;
+  low_points: number | null;
+};
+
 export type ResearchCount = {
   reason: string;
   count: number;
@@ -258,6 +312,14 @@ export type ResearchStatus = {
   counts: Array<ResearchCount>;
   blockers: Array<ResearchCount>;
   serving_promoted: false;
+};
+
+export type SlotStrength = {
+  slot: string;
+  player_name: string | null;
+  value: number | null;
+  rank: number | null;
+  teams: number;
 };
 
 export type SpecialistResearch = {
@@ -312,6 +374,16 @@ export type StrengthView = {
   overall_rank: number | null;
   teams: number;
   positions: Array<PositionStrength>;
+  slots: Array<SlotStrength>;
+  team_rankings: Array<TeamRanking>;
+};
+
+export type TeamRanking = {
+  roster_id: string;
+  name: string | null;
+  is_mine: boolean;
+  score: number;
+  rank: number;
 };
 
 export type TradeIdea = {

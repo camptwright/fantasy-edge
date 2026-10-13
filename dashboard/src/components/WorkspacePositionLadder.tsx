@@ -42,11 +42,12 @@ export function WorkspacePositionLadder({ overview }: { overview: Overview }) {
             <span className="w-8 text-right text-[11px] tabular-nums text-slate-500">{pos}{rank.get(p.player_id)}</span>
             <a href={playerProfileHref(overview.league_id, p.player_id)} className="min-w-0 flex-1 truncate hover:underline">{p.name}</a>
             <span className="text-[11px] tabular-nums text-slate-400">{pts(value(p, basis))}</span>
+            {(basis === "ros" ? p.sos_ros_stars : p.sos_next4_stars) != null && <span aria-label={`Schedule ${(basis === "ros" ? p.sos_ros_stars : p.sos_next4_stars)} of 5 stars, 5 is easiest`} className="text-[10px] tabular-nums text-amber-300">{basis === "ros" ? p.sos_ros_stars : p.sos_next4_stars}★</span>}
             <span className={`w-14 text-right text-[10px] uppercase tracking-wider ${mine ? "text-sky-300" : "text-emerald-300"}`}>{mine ? "Yours" : "Available"}</span>
           </li>;
         })}</ol>}
       </div>;
     })}</div>
-    <p className="mt-2 text-xs text-slate-500">Ranks are among every player at the position in this league{basis === "ros" ? " by engine rest-of-season points (research)" : " by this week’s consensus, else the engine, else the provider"}. Available means unrostered in this snapshot; confirm on your platform.</p>
+    <p className="mt-2 text-xs text-slate-500">Ranks are among every player at the position in this league{basis === "ros" ? " by engine rest-of-season points (research)" : " by this week’s consensus, else the engine, else the provider"}. ★ = strength of schedule (5 easiest; rest of season or the next four games). Available means unrostered in this snapshot; confirm on your platform.</p>
   </section>;
 }

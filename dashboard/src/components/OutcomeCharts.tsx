@@ -34,3 +34,11 @@ export function Meter({ probability, tone, label }: { probability: number | null
     {Array.from({ length: 5 }, (_, i) => <span key={i} className={`h-1.5 w-3 rounded-full ${i < filled ? (tone === "up" ? "bg-emerald-400" : "bg-rose-400") : "bg-slate-700"}`} />)}
   </span>;
 }
+
+/** Strength-of-schedule stars (5 = easiest); unknown renders a dash, never zero stars. */
+export function SosStars({ stars, label }: { stars: number | null | undefined; label: string }) {
+  if (stars == null) return <span className="text-[11px] text-slate-500">{label} —</span>;
+  return <span className="inline-flex items-center gap-1 text-[11px] text-slate-400" aria-label={`${label}: ${stars} of 5 stars, 5 is easiest`}>
+    {label}<span aria-hidden="true" className="tracking-tight text-amber-300">{"★".repeat(stars)}<span className="text-slate-700">{"★".repeat(5 - stars)}</span></span>
+  </span>;
+}

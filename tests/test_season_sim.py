@@ -61,3 +61,31 @@ async def test_standings_endpoint_uses_snapshots_and_schedule(db, monkeypatch):
     view = await workspace.league_standings("L", Response(), db)
     assert view.status == "research" and view.remaining_games == 4 and view.playoff_teams == 2
     assert [r.name for r in view.rows][:1] == ["T1"] and view.rows[0].is_mine and view.rows[0].playoff_odds > 0.9
+
+
+@pytest.mark.asyncio
+async def test_recap_reports_result_all_play_bench_and_luck(db, monkeypatch):
+    from fastapi import Response
+    from src.api.routers import workspace
+    from src.models.sleeper import SleeperLeague, SleeperLeagueSnapshot
+    db.add(SleeperLeague(league_id="R", sport="nfl", name="Recap", season="2026", status="in_season", roster_positions=["QB", "WR", "BN"],
+                         settings={}, scoring_settings={}, raw={}))
+    week1 = [{"roster_id": 1, "matchup_id": 1, "points": 100.0, "starters": ["qb", "wr"], "players": ["qb", "wr", "bn"],
+              "players_points": {"qb": 70.0, "wr": 30.0, "bn": 45.0}},
+             {"roster_id": 2, "matchup_id": 1, "points": 120.0}, {"roster_id": 3, "matchup_id": 2, "points": 90.0},
+             {"roster_id": 4, "matchup_id": 2, "points": 60.0}]
+    db.add(SleeperLeagueSnapshot(league_id="R", week=1, kind="matchups", payload=week1))
+    await db.commit()
+
+    async def fake_read(_db, _id):
+        return {"week": 2, "roster_positions": ["QB", "WR", "BN"],
+                "players": [{"player_id": "qb", "name": "QB One", "position": "QB"}, {"player_id": "wr", "name": "WR One", "position": "WR"},
+                            {"player_id": "bn", "name": "Bench Star", "position": "WR"}],
+                "rosters": [{"roster_id": i, "name": f"T{i}", "is_mine": i == 1, "player_ids": []} for i in (1, 2, 3, 4)]}
+    monkeypatch.setattr(workspace, "read", fake_read)
+    r = await workspace.league_recap("R", Response(), None, db)
+    w = r.week
+    assert (r.status, w.result, w.opponent, w.score_rank, w.all_play_wins, w.all_play_losses) == ("available", "L", "T2", 2, 2, 1)
+    assert (w.top_scorer, w.best_bench, w.bench_points_left, w.league_median) == ("QB One", "Bench Star", 15.0, 95.0)
+    assert w.biggest_blowout.home_points == 90.0 and w.low_team == "T4"
+    assert (r.season.wins, r.season.expected_wins, r.season.luck) == (0, 0.67, -0.67)  # unlucky: 2-1 all-play, lost

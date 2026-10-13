@@ -187,6 +187,10 @@ League tool with standings and simulated playoff odds (2016 Warriors 99.9%;
 FantasyPros: 99%), bye-week plan-ahead review items. Remaining schedules are
 now stored for both platforms.
 
-Not yet adopted: post-game recap, "Are they playing?" inactive alerts,
-strength-of-schedule stars on waiver targets, weekly points vs league-median
-chart, starter-slot and bench ranks.
+Then adopted (2026-10-13, later): "Are they playing?" (designation, bye,
+game-linked report, game state per starter), League Analyzer team rankings
+with starter-slot and bench ranks, a Post-game recap (result, league rank,
+all-play, bench points left, superlatives; season all-play, expected wins,
+luck, weekly points vs league median chart), and strength-of-schedule stars
+(half-PPR points allowed by position, quintiles of remaining schedules) on
+waiver guidance and the position ladder. Every review item is now built.

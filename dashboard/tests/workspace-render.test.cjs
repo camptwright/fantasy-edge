@@ -150,16 +150,18 @@ test('player profile never substitutes a missing player and labels engine resear
 });
 test('waiver guidance fails closed and shows tiers, lineup gains and waiver priority',()=>{
   const lib=loadComponent('src/lib/workspace.ts');
-  const {WorkspaceEngineWaivers}=loadComponent('src/components/WorkspaceEngineWaivers.tsx',{'@/lib/workspace':lib});
+  const charts=loadComponent('src/components/OutcomeCharts.tsx',{'@/lib/workspace':lib});
+  const {WorkspaceEngineWaivers}=loadComponent('src/components/WorkspaceEngineWaivers.tsx',{'@/lib/workspace':lib,'./OutcomeCharts':charts});
   const base={waiver_type:'rolling',waiver_position:6,teams:12,waiver_clear_days:2,tier_rule:'rule',trending:[]};
   const closed=renderToStaticMarkup(React.createElement(WorkspaceEngineWaivers,{overview:{league_id:'a',engine_waivers:{...base,status:'owner_roster_unresolved',rows:[]}}}));
   assert.match(closed,/No waiver guidance for this snapshot \(owner roster unresolved\)/);
   const html=renderToStaticMarkup(React.createElement(WorkspaceEngineWaivers,{overview:{league_id:'a',engine_waivers:{...base,status:'research',rows:[
-    {add:enginePlayer('FA'),compare:enginePlayer('Mine'),ros_gain:16,week:6,week_gain:-2,tier:'priority',reasons:['why']},
+    {add:enginePlayer('FA',{sos_ros_stars:4,sos_next4_stars:null}),compare:enginePlayer('Mine'),ros_gain:16,week:6,week_gain:-2,tier:'priority',reasons:['why']},
     {add:enginePlayer('K2',{position:'K',engine_ros_points:null}),compare:enginePlayer('K1'),ros_gain:null,week:null,week_gain:3.5,tier:'stream',reasons:['k']}]}}}));
   assert.match(html,/your priority 6 of 12/);
   assert.match(html,/Priority/); assert.match(html,/\+16\.0/); assert.match(html,/-2\.0/); assert.match(html,/Stream/);
   assert.match(html,/drop Mine/);
+  assert.match(html,/Schedule ROS: 4 of 5 stars/); assert.match(html,/Next 4 —/);
   assert.doesNotMatch(html,/Trending adds/);
   const hot=renderToStaticMarkup(React.createElement(WorkspaceEngineWaivers,{overview:{league_id:'a',engine_waivers:{...base,status:'research',rows:[],trending:[{player:enginePlayer('Riser'),adds:5400}]}}}));
   assert.match(hot,/Trending adds on Sleeper/); assert.match(hot,/\+5,400/); assert.match(hot,/does not change the guidance/);
@@ -345,4 +347,40 @@ test('season tiles and standings show record, odds and the playoff line',()=>{
   const table=renderToStaticMarkup(React.createElement(WorkspaceStandings,{standings}));
   assert.match(table,/Tel Aviv Ted.*You/); assert.match(table,/10,000 simulated seasons/);
   assert.equal(renderToStaticMarkup(React.createElement(SeasonTiles,{standings:{...standings,status:'updating'}})),'');
+});
+
+test('are they playing puts byes and outs first and never calls no designation a clearance',()=>{
+  const lib=loadComponent('src/lib/workspace.ts');
+  const {WorkspaceAreTheyPlaying,verdict}=loadComponent('src/components/WorkspaceAreTheyPlaying.tsx',{'@/lib/workspace':lib});
+  const pl=(id,name,extra)=>({player_id:id,name,position:'WR',team:'DET',injury_status:null,locked:false,game_availability_hold:false,week_game_status:'scheduled',week_kickoff:'2026-10-18T17:00:00Z',opponent:'GB',...extra});
+  const players=[pl('a','Healthy'),pl('b','Hockenson',{week_game_status:'no_game_this_week'}),pl('c','Flowers',{injury_status:'Questionable'}),pl('d','Hurt',{injury_status:'Out'})];
+  assert.equal(verdict(players[0]).label,'Playing'); assert.equal(verdict(players[1]).label,'Bye'); assert.equal(verdict(players[3]).label,'Out');
+  const html=renderToStaticMarkup(React.createElement(WorkspaceAreTheyPlaying,{overview:{league_id:'L',roster_players:players,matchup:{mine:{starters:players.map((p,i)=>({slot:['WR','WR','FLEX','TE'][i],player_id:p.player_id}))}}}}));
+  assert.match(html,/2 starters not expected to play/);
+  assert.ok(html.indexOf('Hockenson')<html.indexOf('Healthy') && html.indexOf('Hurt')<html.indexOf('Flowers'));
+  assert.match(html,/not a clearance/);
+});
+
+test('league analyzer lists team scores and slot ranks',()=>{
+  const lib=loadComponent('src/lib/workspace.ts');
+  const {WorkspaceLeagueAnalyzer}=loadComponent('src/components/WorkspaceLeagueAnalyzer.tsx',{'@/lib/workspace':lib});
+  const overview={strength:{status:'research',teams:12,team_rankings:[{roster_id:'2',name:'Transfer Portal',score:100,rank:1},{roster_id:'1',name:'Tel Aviv Ted',score:96,rank:2,is_mine:true}],
+    slots:[{slot:'QB',player_name:'Bo Nix',value:180,rank:12,teams:12},{slot:'RB1',player_name:'Kenneth Walker',value:150,rank:3,teams:12},{slot:'BENCH',player_name:null,value:200,rank:12,teams:12}]}};
+  const html=renderToStaticMarkup(React.createElement(WorkspaceLeagueAnalyzer,{overview}));
+  assert.match(html,/Transfer Portal.*100/); assert.match(html,/Tel Aviv Ted.*You.*96/);
+  assert.match(html,/Bo Nix.*12th/); assert.match(html,/Kenneth Walker.*3rd/); assert.match(html,/Top bench players.*12th/);
+  assert.match(html,/bg-rose-400/); assert.match(html,/bg-emerald-400/);
+});
+
+test('post-game recap shows result, all-play, bench and the median chart',()=>{
+  const lib=loadComponent('src/lib/workspace.ts');
+  const {WorkspaceRecap}=loadComponent('src/components/WorkspaceRecap.tsx',{'@/lib/workspace':lib});
+  const g={home:'A',away:'B',home_points:150,away_points:90};
+  const recap={status:'available',completed_weeks:[1,2,3],note:'n',week:{week:3,points:135.2,opponent:'Bite Club',opponent_points:120,result:'W',league_median:118,score_rank:3,teams:12,all_play_wins:9,all_play_losses:2,
+    top_scorer:'Jaxon Smith-Njigba',top_scorer_points:28.4,best_bench:'Rachaad White',best_bench_points:17,bench_points_left:13.8,high_score:g,closest_game:g,biggest_blowout:g,low_team:'Jack',low_points:70},
+    season:{weeks:[1,2,3],my_points:[188,146,135],median_points:[140,130,118],all_play_wins:28,all_play_losses:5,wins:3,expected_wins:2.55,luck:.45}};
+  const html=renderToStaticMarkup(React.createElement(WorkspaceRecap,{recap,league:'L'}));
+  assert.match(html,/Win · 135\.2 – 120\.0 vs Bite Club/); assert.match(html,/9–2/); assert.match(html,/\+17\.2 for you/);
+  assert.match(html,/Rachaad White/); assert.match(html,/\+0\.5 wins/); assert.match(html,/<svg/); assert.match(html,/week=2/);
+  assert.match(renderToStaticMarkup(React.createElement(WorkspaceRecap,{recap:{status:'no_completed_weeks',completed_weeks:[],season:{}},league:'L'})),/No recap yet/);
 });

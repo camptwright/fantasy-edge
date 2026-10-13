@@ -33,12 +33,13 @@ async function page(tool, status='snapshot_available', view='fantasy') {
   return {html:renderToStaticMarkup(await module.default({searchParams:Promise.resolve({tool,view,league:'a'})})),calls};
 }
 test('fantasy screens render only their requested tools with two bounded reads',async()=>{
-  const expected={overview:['SeasonTiles','WorkspaceMatchup','QuickActions','WorkspaceDailyBrief','PositionStrength','WorkspaceOutlook'],startsit:['WorkspaceStartSit'],team:['WorkspaceRoster','WorkspaceLineupReview'],waivers:['WorkspaceResearchStatus','WorkspaceEngineWaivers','WorkspacePositionLadder','WorkspaceRoster'],players:['WorkspaceResearchStatus','WorkspaceComparison'],trade:['WorkspaceTradeIdeas','WorkspaceTrade'],league:['WorkspaceStandings','PositionStrength'],player:['WorkspacePlayerProfile']};
+  const expected={overview:['SeasonTiles','WorkspaceMatchup','WorkspaceAreTheyPlaying','QuickActions','WorkspaceDailyBrief','PositionStrength','WorkspaceOutlook'],startsit:['WorkspaceStartSit'],team:['WorkspaceAreTheyPlaying','WorkspaceRoster','WorkspaceLineupReview'],waivers:['WorkspaceResearchStatus','WorkspaceEngineWaivers','WorkspacePositionLadder','WorkspaceRoster'],players:['WorkspaceResearchStatus','WorkspaceComparison'],trade:['WorkspaceTradeIdeas','WorkspaceTrade'],league:['WorkspaceStandings','WorkspaceLeagueAnalyzer','PositionStrength'],recap:['WorkspaceRecap'],player:['WorkspacePlayerProfile']};
   for(const [tool,names] of Object.entries(expected)) {
     const {html,calls}=await page(tool);
     // Trade adds one bounded read for the win-win trade finder.
     // Trade adds the trade finder read; Overview and League add the standings read.
-    assert.equal(calls.length,['trade','overview','league'].includes(tool) ? 3 : 2);
+    assert.equal(calls.length,['trade','overview','league','recap'].includes(tool) ? 3 : 2);
+    if(tool === 'recap') assert.match(calls[2],/\/recap$/);
     if(tool === 'trade') assert.match(calls[2],/\/trade-ideas$/);
     if(tool === 'overview' || tool === 'league') assert.match(calls[2],/\/standings$/);
     assert.deepEqual([...html.matchAll(/data-tool="([^"]+)"/g)].map(m=>m[1]),names);

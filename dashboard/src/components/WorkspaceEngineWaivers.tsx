@@ -1,4 +1,5 @@
 import { playerProfileHref, pts, type Overview } from "@/lib/workspace";
+import { SosStars } from "./OutcomeCharts";
 
 const TIER: Record<string, [string, string]> = {
   priority: ["Priority", "bg-emerald-400 text-slate-950"], consider: ["Consider", "bg-emerald-400/20 text-emerald-200"],
@@ -32,6 +33,7 @@ export function WorkspaceEngineWaivers({ overview }: { overview: Overview }) {
             {row.add.engine_ros_points != null && <div><dt className="text-slate-500">Add ROS</dt><dd className="text-base tabular-nums text-slate-300">{pts(row.add.engine_ros_points)}</dd></div>}
           </dl>
         </div>
+        {row.add.position !== "K" && row.add.position !== "DEF" && <p className="mt-2 flex flex-wrap gap-3"><SosStars stars={row.add.sos_ros_stars} label="Schedule ROS" /><SosStars stars={row.add.sos_next4_stars} label="Next 4" /></p>}
         <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs text-slate-400">{row.reasons.map(r => <li key={r}>{r}</li>)}</ul>
       </li>;
     })}</ol>}

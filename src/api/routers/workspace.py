@@ -418,12 +418,52 @@ class PositionStrength(BaseModel):
     league_best: float | None = None
 
 
+class SlotStrength(BaseModel):
+    slot: str                 # QB, RB1, RB2, WR1, ..., FLEX, or BENCH
+    player_name: str | None = None
+    value: float | None = None
+    rank: int | None = None
+    teams: int = 0
+
+
+class TeamRanking(BaseModel):
+    roster_id: str
+    name: str | None = None
+    is_mine: bool = False
+    score: float              # 0-100: starting-lineup ROS points vs the league's best
+    rank: int
+
+
 class StrengthView(BaseModel):
     status: str = 'unavailable'
     scope: str = 'engine_ros_research_best_starters_by_position_not_validated'
     overall_rank: int | None = None
     teams: int = 0
     positions: list[PositionStrength] = Field(default_factory=list)
+    slots: list[SlotStrength] = Field(default_factory=list)
+    team_rankings: list[TeamRanking] = Field(default_factory=list)
+
+
+def lineup_slots(players: list[dict], roster_positions: list[str], bench_size: int):
+    """Best ROS lineup by slot (RB1/RB2 ordered by value) plus the top bench players' total."""
+    from src.services.fantasy_decision_models import optimize
+    slots = [s for s in roster_positions if s not in ('BN', 'IR', 'TAXI', 'K', 'DEF', 'DST')]
+    pool = [{'player_id': p['player_id'], 'name': p.get('name'), 'position': p.get('position'),
+             'weekly_points': (p.get('engine') or {}).get('ros_points')} for p in players
+            if (p.get('engine') or {}).get('status') == 'research' and finite_points((p.get('engine') or {}).get('ros_points')) is not None]
+    if not slots or not pool:
+        return {}, None
+    lineup = optimize(pool, slots)['lineup']
+    out = {}
+    for base in dict.fromkeys(e['slot'] for e in lineup):
+        filled = sorted((e for e in lineup if e['slot'] == base and e['player_id'] is not None), key=lambda e: -(e['points'] or 0))
+        many = sum(e['slot'] == base for e in lineup) > 1
+        for i, e in enumerate(filled, 1):
+            label = f'{base}{i}' if many else base
+            out[label] = (e['name'], round(e['points'], 1))
+    used = {e['player_id'] for e in lineup if e['player_id'] is not None}
+    bench = sorted((p['weekly_points'] for p in pool if p['player_id'] not in used), reverse=True)[:bench_size]
+    return out, round(sum(bench), 1)
 
 
 class EngineWeek(BaseModel):
@@ -468,6 +508,13 @@ class PlayerDetail(BaseModel):
     # Second source and consensus (FantasyPros method): ESPN's projection in
     # this league's scoring and the mean of the available sources (provider,
     # ESPN, engine). Research columns, graded prospectively; never decisions.
+    # Strength of schedule for the player's position: 1-5 stars, 5 = easiest.
+    sos_ros_stars: int | None = None
+    sos_next4_stars: int | None = None
+    # This week's NFL game (for "Are they playing?"): opponent, status, kickoff.
+    opponent: str | None = None
+    week_game_status: str | None = None
+    week_kickoff: str | None = None
     espn_week_points: float | None = None
     consensus_week_points: float | None = None
     consensus_sources: int = 0
@@ -637,6 +684,9 @@ def player_detail(player: dict) -> PlayerDetail:
         known_remaining_games=ros.get('known_remaining_games'), unknown_kickoffs=ros.get('unknown_kickoffs'),
         through_week=ros.get('through_week'), **engine_detail(player.get('engine') or {}),
         **consensus_detail(player),
+        sos_ros_stars=(player.get('_sos') or {}).get('ros_stars'), sos_next4_stars=(player.get('_sos') or {}).get('next4_stars'),
+        opponent=player.get('opponent'), week_game_status=player.get('week_game_status'),
+        week_kickoff=player.get('week_kickoff'),
         game_log=[GameLogWeek(week=r['week'], points=r['points'])
                   for r in (player.get('distribution_evidence') or {}).get('evidence', [])
                   if isinstance(r.get('week'), int) and finite_points(r.get('points')) is not None])
@@ -710,7 +760,27 @@ def strength_context(data: dict, by_id: dict) -> StrengthView:
     totals = {r['roster_id']: sum(values[(r['roster_id'], p)] for p in dict.fromkeys(slots))
               for r in rosters if all(values[(r['roster_id'], p)] is not None for p in dict.fromkeys(slots))}
     overall = 1 + sum(v > totals[mine] for v in totals.values()) if mine in totals else None
-    return StrengthView(status='research', overall_rank=overall, teams=len(totals), positions=out)
+    # League Analyzer: starter-slot and bench ranks, and a team ranking table.
+    bench_size = max(1, data.get('roster_positions', []).count('BN'))
+    per = {r['roster_id']: lineup_slots([by_id[pid] for pid in map(str, r.get('player_ids', [])) if pid in by_id],
+                                        data.get('roster_positions', []), bench_size) for r in rosters}
+    slot_rows = []
+    for label, (name, value) in (per.get(mine, ({}, None))[0] or {}).items():
+        others = [v[label][1] for v in (x[0] for x in per.values()) if label in v]
+        slot_rows.append(SlotStrength(slot=label, player_name=name, value=value, teams=len(others),
+                                      rank=1 + sum(o > value for o in others)))
+    benches = [b for _, b in per.values() if b is not None]
+    if per.get(mine, ({}, None))[1] is not None:
+        mine_bench = per[mine][1]
+        slot_rows.append(SlotStrength(slot='BENCH', value=mine_bench, teams=len(benches), rank=1 + sum(b > mine_bench for b in benches)))
+    starters_total = {rid: sum(v for _, v in slots_.values()) for rid, (slots_, _) in per.items() if slots_}
+    best = max(starters_total.values(), default=0) or 1
+    names = {r['roster_id']: r.get('name') for r in rosters}
+    ordered = sorted(starters_total.items(), key=lambda kv: -kv[1])
+    rankings = [TeamRanking(roster_id=str(rid), name=names.get(rid), is_mine=rid == mine, score=round(100 * v / best, 1), rank=i)
+                for i, (rid, v) in enumerate(ordered, 1)]
+    return StrengthView(status='research', overall_rank=overall, teams=len(totals), positions=out,
+                        slots=slot_rows, team_rankings=rankings)
 
 
 WAIVER_TYPES = {0: 'rolling', 1: 'reverse_standings', 2: 'faab'}
@@ -912,6 +982,13 @@ async def league_overview(league_id: str, response: Response, db: AsyncSession =
                         message='The replacement fantasy workspace currently supports NFL leagues.')
     data = await read(db, league_id)
     await attach_espn(db, league, data)
+    if data:
+        from src.services import schedule_strength
+        sos = (await schedule_strength.latest(db) or {}).get('teams', {})
+        for p in data.get('players', []):
+            row = (sos.get(str(p.get('nfl_team_id'))) or {}).get(p.get('position'))
+            if row:
+                p['_sos'] = row
     if data and league.platform == 'sleeper':
         from src.services import sleeper_trending
         data['_trending'] = (await sleeper_trending.latest(db) or {}).get('players', {})
@@ -1161,3 +1238,139 @@ async def league_standings(league_id: str, response: Response, db: AsyncSession 
     rows.sort(key=lambda r: (-(r.wins + 0.5 * r.ties), -r.points_for))
     return StandingsView(status='research', week=week, playoff_teams=playoff_teams, remaining_games=len(games),
                          simulations=season_sim.SIMS if games else 0, rows=rows)
+
+
+class RecapGame(BaseModel):
+    home: str | None = None
+    away: str | None = None
+    home_points: float
+    away_points: float
+
+
+class RecapWeek(BaseModel):
+    week: int
+    points: float
+    opponent: str | None = None
+    opponent_points: float | None = None
+    result: Literal['W', 'L', 'T'] | None = None
+    league_median: float
+    score_rank: int
+    teams: int
+    all_play_wins: int
+    all_play_losses: int
+    top_scorer: str | None = None
+    top_scorer_points: float | None = None
+    best_bench: str | None = None
+    best_bench_points: float | None = None
+    bench_points_left: float | None = None
+    high_score: RecapGame | None = None
+    closest_game: RecapGame | None = None
+    biggest_blowout: RecapGame | None = None
+    low_team: str | None = None
+    low_points: float | None = None
+
+
+class RecapSeason(BaseModel):
+    weeks: list[int] = Field(default_factory=list)
+    my_points: list[float] = Field(default_factory=list)
+    median_points: list[float] = Field(default_factory=list)
+    all_play_wins: int = 0
+    all_play_losses: int = 0
+    wins: int = 0
+    expected_wins: float | None = None
+    luck: float | None = None
+
+
+class Recap(BaseModel):
+    status: str
+    week: RecapWeek | None = None
+    completed_weeks: list[int] = Field(default_factory=list)
+    season: RecapSeason = Field(default_factory=RecapSeason)
+    note: str = ('From the platform’s recorded matchup results. All-play: your score against every team that week. '
+                 'Expected wins = all-play win rate x games; luck = actual minus expected.')
+
+
+@router.get('/leagues/{league_id}/recap', response_model=Recap)
+async def league_recap(league_id: str, response: Response, week: int | None = None, db: AsyncSession = Depends(get_db)):
+    from statistics import median
+    from src.models.sleeper import SleeperLeagueSnapshot
+    response.headers['Cache-Control'] = 'no-store'
+    league = await db.get(SleeperLeague, league_id)
+    if league is None:
+        raise HTTPException(404, 'League not found')
+    data = await read(db, league_id)
+    if data is None or not data.get('week'):
+        return Recap(status='updating')
+    current = int(data['week'])
+    mine = [r['roster_id'] for r in data.get('rosters', []) if r.get('is_mine') is True]
+    if len(mine) != 1:
+        return Recap(status='owner_roster_unresolved')
+    me = mine[0]
+    names = {r['roster_id']: r.get('name') for r in data.get('rosters', [])}
+    by_id = {str(p['player_id']): p for p in data.get('players', [])}
+    snaps = {s.week: s.payload for s in (await db.scalars(select(SleeperLeagueSnapshot).where(
+        SleeperLeagueSnapshot.league_id == league_id, SleeperLeagueSnapshot.kind == 'matchups',
+        SleeperLeagueSnapshot.week >= 1, SleeperLeagueSnapshot.week < current))).all() if isinstance(s.payload, list)}
+    completed = sorted(w for w, rows in snaps.items() if any(r.get('roster_id') == me for r in rows))
+    if not completed:
+        return Recap(status='no_completed_weeks')
+    season = RecapSeason()
+    games_played = 0
+    for w in completed:
+        rows = [r for r in snaps[w] if isinstance(r, dict) and r.get('points') is not None]
+        scores = {r['roster_id']: float(r['points']) for r in rows}
+        mine_pts = scores.get(me)
+        if mine_pts is None:
+            continue
+        season.weeks.append(w)
+        season.my_points.append(round(mine_pts, 2))
+        season.median_points.append(round(median(scores.values()), 2))
+        season.all_play_wins += sum(mine_pts > v for t, v in scores.items() if t != me)
+        season.all_play_losses += sum(mine_pts < v for t, v in scores.items() if t != me)
+        mine_row = next(r for r in rows if r['roster_id'] == me)
+        opp = next((r for r in rows if r.get('matchup_id') == mine_row.get('matchup_id') and r['roster_id'] != me), None)
+        if opp is not None and mine_row.get('matchup_id') is not None:
+            games_played += 1
+            season.wins += mine_pts > float(opp['points'])
+    total_ap = season.all_play_wins + season.all_play_losses
+    if total_ap and games_played:
+        season.expected_wins = round(games_played * season.all_play_wins / total_ap, 2)
+        season.luck = round(season.wins - season.expected_wins, 2)
+    target = week if week in completed else completed[-1]
+    rows = [r for r in snaps[target] if isinstance(r, dict) and r.get('points') is not None]
+    scores = {r['roster_id']: float(r['points']) for r in rows}
+    mine_row = next(r for r in rows if r['roster_id'] == me)
+    opp = next((r for r in rows if r.get('matchup_id') == mine_row.get('matchup_id') and r['roster_id'] != me
+                and mine_row.get('matchup_id') is not None), None)
+    pairs = {}
+    for r in rows:
+        if r.get('matchup_id') is not None:
+            pairs.setdefault(r['matchup_id'], []).append(r)
+    games = [RecapGame(home=names.get(a['roster_id']), away=names.get(b['roster_id']), home_points=float(a['points']),
+                       away_points=float(b['points'])) for a, b in (g for g in pairs.values() if len(g) == 2)]
+    points = mine_row.get('players_points') or {}
+    starters = [str(x) for x in mine_row.get('starters') or [] if x not in (None, '0', 0)]
+    bench = [str(x) for x in mine_row.get('players') or [] if str(x) not in starters]
+    def best(ids):
+        scored = [(finite_points(points.get(pid)), pid) for pid in ids if finite_points(points.get(pid)) is not None]
+        return max(scored, default=(None, None))
+    top_pts, top_id = best(starters)
+    bench_pts, bench_id = best(bench)
+    optimal, _ = hindsight(mine_row, by_id, data.get('roster_positions', []))
+    mine_pts = scores[me]
+    low = min(scores.items(), key=lambda kv: kv[1])
+    recap = RecapWeek(
+        week=target, points=round(mine_pts, 2), opponent=names.get(opp['roster_id']) if opp else None,
+        opponent_points=round(float(opp['points']), 2) if opp else None,
+        result=None if opp is None else 'W' if mine_pts > float(opp['points']) else 'L' if mine_pts < float(opp['points']) else 'T',
+        league_median=round(median(scores.values()), 2), score_rank=1 + sum(v > mine_pts for v in scores.values()), teams=len(scores),
+        all_play_wins=sum(mine_pts > v for t, v in scores.items() if t != me),
+        all_play_losses=sum(mine_pts < v for t, v in scores.items() if t != me),
+        top_scorer=(by_id.get(top_id) or {}).get('name') if top_id else None, top_scorer_points=top_pts,
+        best_bench=(by_id.get(bench_id) or {}).get('name') if bench_id else None, best_bench_points=bench_pts,
+        bench_points_left=round(optimal - mine_pts, 2) if optimal else None,
+        high_score=max(games, key=lambda g: max(g.home_points, g.away_points), default=None),
+        closest_game=min(games, key=lambda g: abs(g.home_points - g.away_points), default=None),
+        biggest_blowout=max(games, key=lambda g: abs(g.home_points - g.away_points), default=None),
+        low_team=names.get(low[0]), low_points=round(low[1], 2))
+    return Recap(status='available', week=recap, completed_weeks=completed, season=season)

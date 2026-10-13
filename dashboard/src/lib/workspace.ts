@@ -28,7 +28,7 @@ export const FANTASY_TOOLS = [
   {id: 'overview', label: 'Overview'}, {id: 'team', label: 'My team'},
   {id: 'startsit', label: 'Start/Sit'},
   {id: 'waivers', label: 'Waivers'}, {id: 'players', label: 'Players'},
-  {id: 'trade', label: 'Trade analyzer'}, {id: 'league', label: 'League'},
+  {id: 'trade', label: 'Trade analyzer'}, {id: 'league', label: 'League'}, {id: 'recap', label: 'Post-game'},
 ] as const;
 /** `player` is a detail screen reached from rows, not a tab. */
 export type FantasyTool = typeof FANTASY_TOOLS[number]['id'] | 'player';

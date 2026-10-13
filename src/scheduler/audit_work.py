@@ -100,10 +100,12 @@ def projection_engine_research():
             from src.services import espn_projections, sleeper_trending
             espn=await espn_projections.capture(db)
             trending=await sleeper_trending.refresh(db)
+            from src.services import schedule_strength
+            sos=await schedule_strength.refresh(db)
             from src.services import outcome_prospective
             win=await outcome_prospective.capture(db)
             win_report=await outcome_prospective.report(db)
-        return {'capture':captured,'espn':espn,'trending':trending,'win_probability':{'captured':win,'statuses':win_report['statuses']},'statuses':graded['statuses'],
+        return {'capture':captured,'espn':espn,'trending':trending,'schedule_strength':sos,'win_probability':{'captured':win,'statuses':win_report['statuses']},'statuses':graded['statuses'],
                 'promotion_blockers':graded['promotion']['blockers'],
                 'depth_statuses':depth['statuses'],'research':research,'serving_promoted':False}
     return asyncio.run(run())

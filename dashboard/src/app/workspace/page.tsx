@@ -17,7 +17,10 @@ import { WorkspaceAllLeagues } from "@/components/WorkspaceAllLeagues";
 import { WorkspaceTradeIdeas } from "@/components/WorkspaceTradeIdeas";
 import { WorkspacePositionLadder } from "@/components/WorkspacePositionLadder";
 import { SeasonTiles, WorkspaceStandings } from "@/components/WorkspaceStandings";
-import type { StandingsView, TradeIdeas } from "@/lib/workspace-api.generated";
+import { WorkspaceAreTheyPlaying } from "@/components/WorkspaceAreTheyPlaying";
+import { WorkspaceLeagueAnalyzer } from "@/components/WorkspaceLeagueAnalyzer";
+import { WorkspaceRecap } from "@/components/WorkspaceRecap";
+import type { Recap, StandingsView, TradeIdeas } from "@/lib/workspace-api.generated";
 import { WorkspaceResearch } from "@/components/WorkspaceResearch";
 import { WorkspaceSettings } from "@/components/WorkspaceSettings";
 import { fantasyApi } from "@/lib/fantasy-api";
@@ -52,7 +55,7 @@ function Tool({ href, title, detail }: { href: string; title: string; detail: st
   </Link>;
 }
 
-export default async function WorkspacePage({ searchParams }: { searchParams: Promise<{ view?: string; league?: string; tool?: string; player?: string; compare?: string }> }) {
+export default async function WorkspacePage({ searchParams }: { searchParams: Promise<{ view?: string; league?: string; tool?: string; player?: string; compare?: string; week?: string }> }) {
   const query = await searchParams;
   const view = workspaceView(query.view);
   const tool = fantasyTool(query.tool);
@@ -71,6 +74,9 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
   const league = selected?.league_id ?? query.league;
   const wantsStandings = (view === "today" || (view === "fantasy" && (tool === "overview" || tool === "league"))) && !!selected && overview?.status === "snapshot_available";
   const standings = wantsStandings ? await fantasyApi<StandingsView>(`/api/v2/fantasy/leagues/${encodeURIComponent(selected!.league_id)}/standings`, 4000) : null;
+  const recapWeek = /^\d{1,2}$/.test(query.week ?? "") ? `?week=${query.week}` : "";
+  const recap = view === "fantasy" && tool === "recap" && selected && overview?.status === "snapshot_available"
+    ? await fantasyApi<Recap>(`/api/v2/fantasy/leagues/${encodeURIComponent(selected.league_id)}/recap${recapWeek}`, 4000) : null;
   const ideas = view === "fantasy" && tool === "trade" && selected && overview?.status === "snapshot_available"
     ? await fantasyApi<TradeIdeas>(`/api/v2/fantasy/leagues/${encodeURIComponent(selected.league_id)}/trade-ideas`, 4000) : null;
   const ready = overview?.status === "snapshot_available";
@@ -103,9 +109,11 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
         </section> : <div className="mt-6">
           <SnapshotWindow expiresAt={overview.expires_at}>
             {view === 'fantasy' && (tool === 'waivers' || tool === 'players') && <WorkspaceResearchStatus research={overview.research} />}
-            {(view === 'today' || tool === 'overview') && <><SeasonTiles standings={standings} /><WorkspaceMatchup overview={overview} /><QuickActions overview={overview} /><WorkspaceDailyBrief overview={overview} /><PositionStrength overview={overview} /><WorkspaceOutlook overview={overview} /></>}
-            {view === 'fantasy' && tool === 'league' && <div className="space-y-8"><WorkspaceStandings standings={standings} /><PositionStrength overview={overview} /></div>}
+            {(view === 'today' || tool === 'overview') && <><SeasonTiles standings={standings} /><WorkspaceMatchup overview={overview} /><WorkspaceAreTheyPlaying overview={overview} /><QuickActions overview={overview} /><WorkspaceDailyBrief overview={overview} /><PositionStrength overview={overview} /><WorkspaceOutlook overview={overview} /></>}
+            {view === 'fantasy' && tool === 'recap' && <WorkspaceRecap recap={recap} league={overview.league_id} />}
+            {view === 'fantasy' && tool === 'league' && <div className="space-y-8"><WorkspaceStandings standings={standings} /><WorkspaceLeagueAnalyzer overview={overview} /><PositionStrength overview={overview} /></div>}
             {view === 'fantasy' && tool === 'startsit' && <WorkspaceStartSit key={`${league}:${overview.generated_at}`} overview={overview} />}
+            {view === 'fantasy' && tool === 'team' && <WorkspaceAreTheyPlaying overview={overview} />}
             {view === 'fantasy' && tool === 'team' && <WorkspaceRoster overview={overview} section="team" />}
             {view === 'fantasy' && tool === 'team' && <WorkspaceLineupReview overview={overview} />}
             {view === 'fantasy' && tool === 'waivers' && <WorkspaceEngineWaivers overview={overview} />}

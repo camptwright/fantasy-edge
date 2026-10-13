@@ -534,3 +534,18 @@ async def test_season_accuracy_reads_each_completed_week(db):
             'players': [{'player_id': 'qb', 'position': 'QB'}, {'player_id': 'wr1', 'position': 'WR'}, {'player_id': 'wr2', 'position': 'WR'}]}
     weeks = await workspace.season_accuracy(db, 'L', data)
     assert [(w.week, w.actual, w.optimal, w.accuracy) for w in weeks] == [(1, 30.0, 30.0, 1.0), (2, 12.0, 28.0, 0.4286)]
+
+
+def test_strength_ranks_starter_slots_bench_and_teams():
+    def p(pid, pos, ros, roster):
+        return dict(player_id=pid, name=pid, position=pos, roster_ids=[roster],
+                    engine={'status': 'research', 'ros_points': ros, 'weeks': []})
+    players = [p('m_qb', 'QB', 200, 1), p('m_rb1', 'RB', 150, 1), p('m_rb2', 'RB', 90, 1), p('m_bn', 'RB', 60, 1),
+               p('t_qb', 'QB', 250, 2), p('t_rb1', 'RB', 120, 2), p('t_rb2', 'RB', 110, 2), p('t_bn', 'RB', 20, 2)]
+    data = {'players': players, 'roster_positions': ['QB', 'RB', 'RB', 'BN'],
+            'rosters': [{'roster_id': 1, 'name': 'Mine', 'is_mine': True, 'player_ids': ['m_qb', 'm_rb1', 'm_rb2', 'm_bn']},
+                        {'roster_id': 2, 'name': 'Them', 'player_ids': ['t_qb', 't_rb1', 't_rb2', 't_bn']}]}
+    view = workspace.strength_context(data, {x['player_id']: x for x in players})
+    slots = {s.slot: (s.player_name, s.value, s.rank) for s in view.slots}
+    assert slots == {'QB': ('m_qb', 200, 2), 'RB1': ('m_rb1', 150, 1), 'RB2': ('m_rb2', 90, 2), 'BENCH': (None, 60, 1)}
+    assert [(t.name, t.score, t.rank, t.is_mine) for t in view.team_rankings] == [('Them', 100.0, 1, False), ('Mine', 91.7, 2, True)]

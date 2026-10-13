@@ -3,7 +3,7 @@ import argparse
 import json
 from pathlib import Path
 
-from src.api.routers.workspace import EngineQualification, Leagues, Overview, StandingsView, TradeIdeas, TradeResult
+from src.api.routers.workspace import EngineQualification, Leagues, Overview, Recap, StandingsView, TradeIdeas, TradeResult
 
 TARGET = Path(__file__).resolve().parents[1] / 'dashboard/src/lib/workspace-api.generated.ts'
 
@@ -35,7 +35,7 @@ def ts_type(schema):
 
 def render():
     schemas = {}
-    for model in (EngineQualification, Leagues, Overview, StandingsView, TradeIdeas, TradeResult):
+    for model in (EngineQualification, Leagues, Overview, Recap, StandingsView, TradeIdeas, TradeResult):
         schema = model.model_json_schema(mode='serialization')
         schemas.update(schema.pop('$defs', {}))
         schemas[model.__name__] = schema
