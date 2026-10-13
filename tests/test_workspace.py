@@ -511,3 +511,26 @@ def test_waiver_rows_note_sleeper_trending_and_list_unrostered_risers():
     view = workspace.overview('league', data).engine_waivers
     assert view.rows[0].trending_adds == 5400 and 'Trending on Sleeper: 5,400 adds' in view.rows[0].reasons[-1]
     assert [(t.player.player_id, t.adds) for t in view.trending] == [('fa_wr', 5400), ('fa_te', 900)]  # rostered excluded
+
+
+def test_hindsight_lineup_uses_recorded_points_across_the_whole_roster():
+    by_id = {'qb': {'name': 'QB', 'position': 'QB'}, 'wr1': {'name': 'W1', 'position': 'WR'},
+             'wr2': {'name': 'W2', 'position': 'WR'}, 'k': {'name': 'K', 'position': 'K'}}
+    row = {'players': ['qb', 'wr1', 'wr2', 'k'], 'starters': ['qb', 'wr1', 'k'], 'points': 30.0,
+           'players_points': {'qb': 20.0, 'wr1': 2.0, 'wr2': 15.0, 'k': 8.0}}
+    best, lineup = workspace.hindsight(row, by_id, ['QB', 'WR', 'K', 'BN'])
+    assert best == 43.0 and [s.player_id for s in lineup] == ['qb', 'wr2', 'k']
+    assert workspace.hindsight({'players': [], 'players_points': {}}, by_id, ['QB'])[0] is None
+
+
+@pytest.mark.asyncio
+async def test_season_accuracy_reads_each_completed_week(db):
+    from src.models.sleeper import SleeperLeagueSnapshot
+    for week, pts in ((1, {'qb': 20.0, 'wr1': 10.0, 'wr2': 5.0}), (2, {'qb': 10.0, 'wr1': 2.0, 'wr2': 18.0})):
+        db.add(SleeperLeagueSnapshot(league_id='L', week=week, kind='matchups', payload=[
+            {'roster_id': 1, 'points': pts['qb'] + pts['wr1'], 'players': ['qb', 'wr1', 'wr2'], 'players_points': pts}]))
+    await db.commit()
+    data = {'week': 3, 'roster_positions': ['QB', 'WR', 'BN'], 'rosters': [{'roster_id': 1, 'is_mine': True}],
+            'players': [{'player_id': 'qb', 'position': 'QB'}, {'player_id': 'wr1', 'position': 'WR'}, {'player_id': 'wr2', 'position': 'WR'}]}
+    weeks = await workspace.season_accuracy(db, 'L', data)
+    assert [(w.week, w.actual, w.optimal, w.accuracy) for w in weeks] == [(1, 30.0, 30.0, 1.0), (2, 12.0, 28.0, 0.4286)]

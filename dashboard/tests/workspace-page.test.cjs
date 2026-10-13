@@ -33,10 +33,12 @@ async function page(tool, status='snapshot_available', view='fantasy') {
   return {html:renderToStaticMarkup(await module.default({searchParams:Promise.resolve({tool,view,league:'a'})})),calls};
 }
 test('fantasy screens render only their requested tools with two bounded reads',async()=>{
-  const expected={overview:['WorkspaceMatchup','QuickActions','WorkspaceDailyBrief','PositionStrength','WorkspaceOutlook'],startsit:['WorkspaceStartSit'],team:['WorkspaceRoster','WorkspaceLineupReview'],waivers:['WorkspaceResearchStatus','WorkspaceEngineWaivers','WorkspaceRoster'],players:['WorkspaceResearchStatus','WorkspaceComparison'],trade:['WorkspaceTrade'],player:['WorkspacePlayerProfile']};
+  const expected={overview:['WorkspaceMatchup','QuickActions','WorkspaceDailyBrief','PositionStrength','WorkspaceOutlook'],startsit:['WorkspaceStartSit'],team:['WorkspaceRoster','WorkspaceLineupReview'],waivers:['WorkspaceResearchStatus','WorkspaceEngineWaivers','WorkspacePositionLadder','WorkspaceRoster'],players:['WorkspaceResearchStatus','WorkspaceComparison'],trade:['WorkspaceTradeIdeas','WorkspaceTrade'],player:['WorkspacePlayerProfile']};
   for(const [tool,names] of Object.entries(expected)) {
     const {html,calls}=await page(tool);
-    assert.equal(calls.length,2);
+    // Trade adds one bounded read for the win-win trade finder.
+    assert.equal(calls.length,tool === 'trade' ? 3 : 2);
+    if(tool === 'trade') assert.match(calls[2],/\/trade-ideas$/);
     assert.deepEqual([...html.matchAll(/data-tool="([^"]+)"/g)].map(m=>m[1]),names);
     assert.match(html,new RegExp(`tool=${tool === 'player' ? 'team' : tool}`));
     assert.match(html,/aria-label="Fantasy tools"/);

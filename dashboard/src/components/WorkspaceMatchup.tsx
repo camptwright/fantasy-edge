@@ -1,9 +1,7 @@
 import type { Overview } from "@/lib/workspace";
-import { pct, playerProfileHref, pts } from "@/lib/workspace";
+import { pct, pts } from "@/lib/workspace";
 import type { MatchupSide, PlayerDetail } from "@/lib/workspace-api.generated";
-
-const evidence = (source: string) => source === "estimated" ? "Provider"
-  : source === "estimated_history" ? "History · if playing" : "Unpriced";
+import { WorkspaceMatchupBoard } from "./WorkspaceMatchupBoard";
 
 /** Engine research sum over offensive starters; partial coverage is reported, never filled. */
 export function engineTotal(side: MatchupSide | null | undefined, players: Map<string, PlayerDetail>) {
@@ -32,20 +30,7 @@ export function WorkspaceMatchup({ overview }: { overview: Overview }) {
     </div>
     <WinBar overview={overview} />
     <p className="break-words border-t border-slate-800 px-5 py-3 text-xs text-slate-400">{matchup.reason} Scores are a platform snapshot ({matchup.recorded_at ?? "time unknown"}), not a live feed; estimates are full-game pregame points, never remaining points.</p>
-    <details className="border-t border-slate-800 px-5 py-2">
-      <summary className="min-h-11 cursor-pointer py-3 text-sm text-slate-300">Starter contributions</summary>
-      <div className="grid gap-6 pb-4 lg:grid-cols-2">{sides.map(({ key, side }) => <table key={key} className="w-full text-sm">
-        <caption className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">{side?.name ?? key}</caption>
-        <thead className="text-xs text-slate-500"><tr><th scope="col" className="w-12 py-1 text-left font-normal">Slot</th><th scope="col" className="py-1 text-left font-normal">Player</th><th scope="col" className="py-1 text-right font-normal">Proj</th><th scope="col" className="py-1 text-right font-normal">Engine</th></tr></thead>
-        <tbody>{(side?.starters ?? []).map((p, i) => <tr key={i} className="border-t border-slate-800/70">
-          <td className="py-2 text-xs text-slate-500">{p.slot}</td>
-          <td className="py-2">{p.player_id ? <a href={playerProfileHref(overview.league_id, p.player_id)} className="hover:text-emerald-300 hover:underline">{p.name}</a> : p.name}
-            <span className="ml-2 text-[11px] text-slate-500">{evidence(p.source)}{p.locked ? " · locked" : ""}</span></td>
-          <td className="py-2 text-right tabular-nums">{pts(p.points)}</td>
-          <td className="py-2 text-right tabular-nums text-sky-300">{pts(p.player_id ? players.get(p.player_id)?.engine_week_points : null)}</td>
-        </tr>)}</tbody>
-      </table>)}</div>
-    </details>
+    <WorkspaceMatchupBoard mine={matchup.mine} opponent={matchup.opponent} league={overview.league_id} season={overview.season_accuracy} />
     {changes.status === "available" && changes.start.length > 0 && <div className="border-t border-slate-800 p-5" aria-label="Candidate lineup changes">
       <h3 className="text-sm font-semibold">Candidate lineup changes · review only</h3>
       <p className="mt-1 text-xs text-slate-400">{changes.reason}</p>

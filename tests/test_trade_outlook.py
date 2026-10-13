@@ -55,3 +55,32 @@ def test_trade_market_values_come_from_the_daily_archive(tmp_path, monkeypatch):
     request = workspace.TradeRequest(generated_at=datetime.now(timezone.utc), side_a=["a1"], side_b=["b1", "zz"])
     out = workspace.with_market(result, {"rosters": [{}] * 12}, league, request).outlook.market
     assert (out.status, out.values, out.side_a_total, out.side_b_total) == ("observed", {"a1": 4200, "b1": 5100, "zz": None}, 4200, None)
+
+
+def finder_data():
+    # Mine: two QBs, weak WR. Theirs: two WRs, weak QB. Swapping QB2 for WR2 helps both.
+    mine = [p("qb1", "QB", {6: 22, 7: 22}, True), p("qb2", "QB", {6: 18, 7: 18}, True), p("wr1", "WR", {6: 4, 7: 4}, True)]
+    theirs = [p("tqb", "QB", {6: 8, 7: 8}, True), p("twr1", "WR", {6: 15, 7: 15}, True), p("twr2", "WR", {6: 12, 7: 12}, True)]
+    for x in theirs:
+        x["roster_ids"] = [2]
+    return {"players": mine + theirs, "roster_positions": ["QB", "WR", "BN", "BN"],
+            "rosters": [{"roster_id": 1, "is_mine": True, "name": "Mine", "player_ids": ["qb1", "qb2", "wr1"]},
+                        {"roster_id": 2, "is_mine": False, "name": "Them", "player_ids": ["tqb", "twr1", "twr2"]}]}
+
+
+def test_trade_finder_returns_only_trades_that_help_both_lineups():
+    from src.services import trade_finder
+    out = trade_finder.find(finder_data())
+    assert out["status"] == "research"
+    top = out["rows"][0]
+    assert (top["give_id"], top["get_id"]) == ("qb2", "twr2")  # spare QB for their spare WR
+    assert top["my_gain"] == 16.0 and top["their_gain"] == 20.0  # (12-4)*2 and (18-8)*2
+    assert all(r["my_gain"] > 0 and r["their_gain"] > 0 for r in out["rows"])
+    assert not any(r["give_id"] == "qb1" and r["get_id"] == "tqb" for r in out["rows"])  # one-sided: excluded
+
+
+def test_trade_finder_needs_an_owner_roster():
+    from src.services import trade_finder
+    data = finder_data()
+    data["rosters"][0]["is_mine"] = False
+    assert trade_finder.find(data)["status"] == "owner_roster_unresolved"

@@ -14,6 +14,9 @@ import { WorkspaceStartSit } from "@/components/WorkspaceStartSit";
 import { QuickActions, PositionStrength } from "@/components/WorkspaceHomeExtras";
 import { WorkspaceMarkets } from "@/components/WorkspaceMarkets";
 import { WorkspaceAllLeagues } from "@/components/WorkspaceAllLeagues";
+import { WorkspaceTradeIdeas } from "@/components/WorkspaceTradeIdeas";
+import { WorkspacePositionLadder } from "@/components/WorkspacePositionLadder";
+import type { TradeIdeas } from "@/lib/workspace-api.generated";
 import { WorkspaceResearch } from "@/components/WorkspaceResearch";
 import { WorkspaceSettings } from "@/components/WorkspaceSettings";
 import { fantasyApi } from "@/lib/fantasy-api";
@@ -65,6 +68,8 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
   const selected = all ? undefined : requested ? leagues.find(league => league.league_id === requested) : leagues[0];
   const overview = selected ? await fantasyApi<Overview>(`/api/v2/fantasy/leagues/${encodeURIComponent(selected.league_id)}/overview`, 3000) : null;
   const league = selected?.league_id ?? query.league;
+  const ideas = view === "fantasy" && tool === "trade" && selected && overview?.status === "snapshot_available"
+    ? await fantasyApi<TradeIdeas>(`/api/v2/fantasy/leagues/${encodeURIComponent(selected.league_id)}/trade-ideas`, 4000) : null;
   const ready = overview?.status === "snapshot_available";
   const title = all ? "All leagues" : view === "fantasy" ? (tool === "player" ? "Player" : FANTASY_TOOLS.find(item => item.id === tool)?.label) : TITLES[view];
   const href = (id: string) => view === "fantasy" ? fantasyToolHref(tool === "player" ? "team" : tool, id) : workspaceHref(view, id);
@@ -100,10 +105,11 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
             {view === 'fantasy' && tool === 'team' && <WorkspaceRoster overview={overview} section="team" />}
             {view === 'fantasy' && tool === 'team' && <WorkspaceLineupReview overview={overview} />}
             {view === 'fantasy' && tool === 'waivers' && <WorkspaceEngineWaivers overview={overview} />}
+            {view === 'fantasy' && tool === 'waivers' && <WorkspacePositionLadder key={`${league}:${overview.generated_at}`} overview={overview} />}
             {view === 'fantasy' && tool === 'waivers' && <WorkspaceRoster overview={overview} section="waivers" />}
             {view === 'fantasy' && tool === 'player' && <WorkspacePlayerProfile overview={overview} playerId={query.player} />}
             {view === 'fantasy' && tool === 'players' && <div className="mt-6"><WorkspaceComparison key={`${league}:${overview.generated_at}:${query.player}:${query.compare}`} players={overview.comparison_players} initialPlayer={query.player} initialCompare={query.compare} lineup={{available:overview.lineup_changes.status === 'available', current:overview.matchup.mine?.starters.flatMap(p=>p.player_id?[p.player_id]:[]) ?? [], candidate:overview.starters.flatMap(p=>p.player_id?[p.player_id]:[]), reason:overview.lineup_changes.reason}} /></div>}
-            {view === 'fantasy' && tool === 'trade' && <div className="mt-6"><WorkspaceTrade key={league} overview={researchContext(overview)} /></div>}
+            {view === 'fantasy' && tool === 'trade' && <div className="mt-6 space-y-6"><WorkspaceTradeIdeas ideas={ideas} league={overview.league_id} /><WorkspaceTrade key={league} overview={researchContext(overview)} /></div>}
           </SnapshotWindow>
           <details className="mt-8 rounded-xl border border-slate-800 p-4 text-sm"><summary className="min-h-11 cursor-pointer text-slate-300">Evidence and limitations</summary>
             <p className="mt-2 text-slate-400">{overview.message}</p>

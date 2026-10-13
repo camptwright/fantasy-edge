@@ -297,3 +297,40 @@ test('all-leagues view summarises each league and players rostered in several',(
   assert.match(html,/Snapshot not ready.*Not an empty league/);
   assert.match(html,/Amon-Ra St\. Brown/); assert.match(html,/League One · starting/); assert.match(html,/League Two · bench/);
 });
+
+test('trade finder shows both gains, market context and fails closed',()=>{
+  const lib=loadComponent('src/lib/workspace.ts');
+  const {WorkspaceTradeIdeas}=loadComponent('src/components/WorkspaceTradeIdeas.tsx',{'@/lib/workspace':lib});
+  assert.match(renderToStaticMarkup(React.createElement(WorkspaceTradeIdeas,{ideas:null,league:'a'})),/service error, not a lack of trades/);
+  const pl=(id,name,pos)=>({player_id:id,name,position:pos,engine_ros_points:100});
+  const ideas={status:'research',mutual_trades:7,note:'Nothing is proposed.',rows:[{give:pl('q','Bo Nix','QB'),get:pl('w','Joe Burrow','QB'),partner:'Bite Club',my_gain:25.5,their_gain:13.7,weeks:12,give_market_value:3000,get_market_value:5200}]};
+  const html=renderToStaticMarkup(React.createElement(WorkspaceTradeIdeas,{ideas,league:'a'}));
+  assert.match(html,/7 trades help both lineups/); assert.match(html,/Give.*Bo Nix/); assert.match(html,/Get.*Joe Burrow/);
+  assert.match(html,/\+25\.5 pts/); assert.match(html,/\+13\.7 pts/); assert.match(html,/values Joe Burrow 2,200 higher/);
+  const none=renderToStaticMarkup(React.createElement(WorkspaceTradeIdeas,{ideas:{...ideas,rows:[]},league:'a'}));
+  assert.match(none,/No one-for-one trade improves both/);
+});
+
+test('position ladder ranks yours and available together and skips other rosters',()=>{
+  const lib=loadComponent('src/lib/workspace.ts');
+  const {WorkspacePositionLadder}=loadComponent('src/components/WorkspacePositionLadder.tsx',{'@/lib/workspace':lib});
+  const pl=(id,name,own,ros)=>({player_id:id,name,position:'WR',ownership:own,engine_ros_points:ros,consensus_week_points:null,engine_week_points:ros/10,points:null});
+  const overview={league_id:'a',week:6,strength:{positions:[{position:'WR',rank:1,teams:12}]},comparison_players:[
+    pl('o','Other Star','other_roster',150),pl('m','My Guy','your_roster',120),pl('f','Free Agent','unrostered_snapshot',130),pl('x','Deep Cut','unrostered_snapshot',40)]};
+  const html=renderToStaticMarkup(React.createElement(WorkspacePositionLadder,{overview}));
+  assert.match(html,/Your rank 1 of 12/);
+  assert.match(html,/WR2.*Free Agent.*Available/); assert.match(html,/WR3.*My Guy.*Yours/);
+  assert.doesNotMatch(html,/Other Star/);
+  assert.match(html,/No ranked players/); // QB/RB/TE columns have no research
+});
+
+test('matchup board pairs slots, colours results against projection and reports accuracy',()=>{
+  const lib=loadComponent('src/lib/workspace.ts');
+  const {WorkspaceMatchupBoard}=loadComponent('src/components/WorkspaceMatchupBoard.tsx',{'@/lib/workspace':lib});
+  const st=(slot,id,name,points,recorded)=>({slot,player_id:id,name,points,recorded_points:recorded,source:'estimated',locked:true,position:slot});
+  const mine={name:'Mine',recorded_points:127.8,starters:[st('QB','a','Jacoby Brissett',19.2,31.3),st('TE','b','T.J. Hockenson',10.4,1.7)],optimal:[st('QB','a','Jacoby Brissett',19.2,31.3)],optimal_points:150,start_sit_accuracy:.852};
+  const opp={name:'Them',recorded_points:213.8,starters:[st('QB','c','Drake Maye',18.8,47.5)],optimal:[],optimal_points:null,start_sit_accuracy:null};
+  const html=renderToStaticMarkup(React.createElement(WorkspaceMatchupBoard,{mine,opponent:opp,league:'L',season:[{week:1,actual:120,optimal:140,accuracy:.857},{week:2,actual:100,optimal:100,accuracy:1}]}));
+  assert.match(html,/Jacoby Brissett.*31\.3/); assert.match(html,/text-emerald-300">19\.2/); assert.match(html,/text-rose-300">10\.4/);
+  assert.match(html,/Drake Maye/); assert.match(html,/85%/); assert.match(html,/Season average.*93%/); assert.match(html,/20\.0/);
+});

@@ -222,6 +222,8 @@ class Starter(BaseModel):
     points: float | None = None
     source: str
     locked: bool = False
+    recorded_points: float | None = None  # the platform's points so far this week
+    position: str | None = None
 
 
 class MatchupSide(BaseModel):
@@ -229,6 +231,35 @@ class MatchupSide(BaseModel):
     recorded_points: float | None = None
     pregame_points: float | None = None
     starters: list[Starter] = Field(default_factory=list)
+    # Hindsight: the best lineup from this roster's recorded points so far.
+    optimal_points: float | None = None
+    optimal: list[Starter] = Field(default_factory=list)
+    start_sit_accuracy: float | None = None
+
+
+class AccuracyWeek(BaseModel):
+    week: int
+    actual: float
+    optimal: float
+    accuracy: float
+
+
+def hindsight(row: dict, by_id: dict, roster_positions: list[str]):
+    """Best possible lineup from the roster's recorded points (FantasyPros' "Optimal" view)."""
+    from src.services.fantasy_decision_models import optimize
+    points = row.get('players_points') or {}
+    pool = [{'player_id': str(pid), 'name': by_id.get(str(pid), {}).get('name') or str(pid),
+             'position': by_id.get(str(pid), {}).get('position'), 'weekly_points': finite_points(points.get(str(pid), points.get(pid)))}
+            for pid in row.get('players', []) or []]
+    pool = [p for p in pool if p['weekly_points'] is not None and p['position']]
+    if not pool:
+        return None, []
+    result = optimize(pool, roster_positions)
+    if not result['modeled_subtotal']:
+        return None, []  # nothing recorded yet this week: no hindsight to show
+    return result['modeled_subtotal'], [Starter(slot=e['slot'], player_id=e['player_id'], name=e['name'] or 'Unfilled slot',
+        source='recorded', recorded_points=e['points'], position=by_id.get(str(e['player_id']), {}).get('position'))
+        for e in result['lineup']]
 
 
 class MatchupView(BaseModel):
@@ -264,15 +295,20 @@ def decision_context(data: dict, by_id: dict, candidate: list[Starter]):
         for i in range(max(len(slots), len(ids))):
             pid = str(ids[i]) if i < len(ids) and ids[i] not in (None, '', '0', 0) else None
             player = by_id.get(pid, {})
+            recorded = (row.get('players_points') or {}).get(pid) if pid else None
             entries.append(Starter(slot=slots[i] if i < len(slots) else 'Unknown slot',
                 player_id=pid, name=player.get('name') or ('Unresolved player' if pid else 'Unfilled slot'),
                 points=finite_points(player.get('decision_points')),
-                source=player.get('decision_tier', 'unknown'), locked=player.get('locked') is not False))
+                source=player.get('decision_tier', 'unknown'), locked=player.get('locked') is not False,
+                recorded_points=finite_points(recorded), position=player.get('position')))
         name = next((r.get('name') for r in data.get('rosters', [])
                      if r.get('roster_id') == row.get('roster_id')), None)
-        return MatchupSide(name=name or fallback, recorded_points=finite_points(row.get('points')),
+        best, optimal = hindsight(row, by_id, data.get('roster_positions', []))
+        actual = finite_points(row.get('points'))
+        return MatchupSide(name=name or fallback, recorded_points=actual,
             pregame_points=finite_points(matchup.get(projection)) if matchup.get('status') == 'pregame_candidate' else None,
-            starters=entries)
+            starters=entries, optimal_points=best, optimal=optimal,
+            start_sit_accuracy=round(actual / best, 4) if actual is not None and best else None)
     view = MatchupView(status=matchup.get('status', 'unavailable'),
         reason=matchup.get('reason') or 'No matchup forecast is available.',
         recorded_at=data.get('input_timestamps', {}).get('matchups'),
@@ -343,6 +379,7 @@ class Overview(BaseModel):
     waivers: 'WaiverView' = Field(default_factory=lambda: WaiverView())
     engine_waivers: 'EngineWaivers' = Field(default_factory=lambda: EngineWaivers())
     outcomes: 'OutcomeView' = Field(default_factory=lambda: OutcomeView())
+    season_accuracy: list[AccuracyWeek] = Field(default_factory=list)
     strength: 'StrengthView' = Field(default_factory=lambda: StrengthView())
     research: FantasyResearch = Field(default_factory=FantasyResearch)
 
@@ -843,6 +880,27 @@ def overview(league_id: str, data: dict | None) -> Overview:
         comparison_players=comparison_context(data, by_id))
 
 
+async def season_accuracy(db, league_id: str, data: dict) -> list[AccuracyWeek]:
+    """Start/sit accuracy for each completed week: recorded points / hindsight-optimal points."""
+    from src.models.sleeper import SleeperLeagueSnapshot
+    mine = [r['roster_id'] for r in data.get('rosters', []) if r.get('is_mine') is True]
+    week = data.get('week')
+    if len(mine) != 1 or not week:
+        return []
+    by_id = {str(p['player_id']): p for p in data.get('players', [])}
+    rows = (await db.scalars(select(SleeperLeagueSnapshot).where(
+        SleeperLeagueSnapshot.league_id == league_id, SleeperLeagueSnapshot.kind == 'matchups',
+        SleeperLeagueSnapshot.week < week, SleeperLeagueSnapshot.week >= 1).order_by(SleeperLeagueSnapshot.week))).all()
+    out = []
+    for snap in rows:
+        row = next((r for r in snap.payload if isinstance(r, dict) and r.get('roster_id') == mine[0]), None) if isinstance(snap.payload, list) else None
+        actual = finite_points((row or {}).get('points'))
+        best, _ = hindsight(row, by_id, data.get('roster_positions', [])) if row else (None, [])
+        if actual is not None and best:
+            out.append(AccuracyWeek(week=snap.week, actual=round(actual, 2), optimal=round(best, 2), accuracy=round(min(1.0, actual / best), 4)))
+    return out
+
+
 @router.get('/leagues/{league_id}/overview', response_model=Overview)
 async def league_overview(league_id: str, response: Response, db: AsyncSession = Depends(get_db)):
     response.headers['Cache-Control'] = 'no-store'
@@ -858,6 +916,8 @@ async def league_overview(league_id: str, response: Response, db: AsyncSession =
         from src.services import sleeper_trending
         data['_trending'] = (await sleeper_trending.latest(db) or {}).get('players', {})
     result = overview(league_id, data)
+    if result.status == 'snapshot_available':
+        result.season_accuracy = await season_accuracy(db, league_id, data)
     from asyncio import to_thread
     from config.settings import get_settings
     from src.services.fantasy_research_status import latest
@@ -970,3 +1030,52 @@ async def engine_qualification(response: Response):
     response.headers['Cache-Control'] = 'no-store'
     return EngineQualification(tracks=qualification_tracks(archive_root()),
                                win_probability=win_probability_check(outcome_root()))
+
+
+class TradeIdea(BaseModel):
+    give: PlayerDetail
+    get: PlayerDetail
+    partner: str | None = None
+    my_gain: float
+    their_gain: float
+    weeks: int
+    give_market_value: float | None = None
+    get_market_value: float | None = None
+
+
+class TradeIdeas(BaseModel):
+    status: str
+    generated_at: datetime | None = None
+    mutual_trades: int = 0
+    rows: list[TradeIdea] = Field(default_factory=list)
+    market_status: str = 'unavailable'
+    note: str = ('One-for-one trades where both starting lineups gain points over the remaining weeks (engine '
+                 'research; byes count as zero). Market values are FantasyCalc trade-index values. Nothing is '
+                 'proposed for you; check injuries and league rules before offering.')
+
+
+@router.get('/leagues/{league_id}/trade-ideas', response_model=TradeIdeas)
+async def trade_ideas(league_id: str, response: Response, db: AsyncSession = Depends(get_db)):
+    from src.services import trade_finder
+    from src.services.fantasy_market import cohort, selected
+    response.headers['Cache-Control'] = 'no-store'
+    league = await db.get(SleeperLeague, league_id)
+    if league is None:
+        raise HTTPException(404, 'League not found')
+    data = await read(db, league_id)
+    if data is None:
+        return TradeIdeas(status='updating')
+    raw = trade_finder.find(data)
+    if raw['status'] != 'research':
+        return TradeIdeas(status=raw['status'], generated_at=data['read_model']['generated_at'])
+    by_id = {str(p['player_id']): p for p in data.get('players', [])}
+    names = {r['roster_id']: r.get('name') for r in data.get('rosters', [])}
+    ids = sorted({x for r in raw['rows'] for x in (r['give_id'], r['get_id'])})[:12]
+    market = selected(cohort(league, len(data.get('rosters', []))), league.platform, ids)
+    values = {m['player_id']: finite_points(m.get('value')) for m in market.get('players', [])}
+    rows = [TradeIdea(give=player_detail(by_id[r['give_id']]), get=player_detail(by_id[r['get_id']]),
+                      partner=names.get(r['partner_roster_id']), my_gain=r['my_gain'], their_gain=r['their_gain'],
+                      weeks=r['weeks'], give_market_value=values.get(r['give_id']), get_market_value=values.get(r['get_id']))
+            for r in raw['rows']]
+    return TradeIdeas(status='research', generated_at=data['read_model']['generated_at'],
+                      mutual_trades=raw['mutual_trades'], rows=rows, market_status=market.get('status', 'unavailable'))
