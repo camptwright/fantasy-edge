@@ -1,4 +1,4 @@
-import { availabilityLabel, environmentLabel, fantasyToolHref, pct, playerResearchHref, pts, type Overview } from "@/lib/workspace";
+import { environmentLabel, fantasyToolHref, pct, playerResearchHref, pts, type Overview } from "@/lib/workspace";
 import { DistributionCurve, Meter } from "./OutcomeCharts";
 import { BOOM_BUST } from "./WorkspaceStartSit";
 
@@ -88,23 +88,6 @@ export function WorkspacePlayerProfile({ overview, playerId }: { overview: Overv
         <span aria-hidden="true" className={`w-full max-w-12 rounded-t ${w.environment === "market_line" ? "bg-sky-500" : "bg-sky-500/40 ring-1 ring-inset ring-sky-400/60"}`} style={{ height: `${Math.max(4, (w.points / max) * 100)}%` }} />
         <span className="text-[11px] text-slate-500">W{w.week}</span>
       </li>)}</ol>}
-    </section>
-    <section className="mt-6 rounded-xl border border-slate-800 p-5" aria-label="Evidence">
-      <h3 className="font-semibold">Evidence</h3>
-      <dl className="mt-3 grid gap-x-6 gap-y-3 text-sm md:grid-cols-2">
-        {([
-          ["Platform injury designation", player.injury_status ?? "Not supplied — not confirmation of availability"],
-          ["Availability evidence", availabilityLabel(player.availability_status)],
-          ["Game-linked injury evidence", `${(player.game_availability_status ?? "not_collected").replaceAll("_", " ")}${player.game_availability_hold ? " · recommendation held" : ""} · observed ${player.game_availability_observed_at ?? "unknown"}`],
-          ["Projection feed observed", player.projection_observed_at ?? "Unknown"],
-          ["Canonical identity", player.identity_status.replaceAll("_", " ")],
-          ["Scoring history", `${player.complete_scored_games ?? "Unknown"} complete scored games · ${player.history_status.replaceAll("_", " ")} · through ${player.history_through ?? "unknown"}`],
-          ["Uncertainty history", `${player.distribution.observed_samples} usable samples · ${player.distribution.source.replaceAll("_", " ")}${player.distribution.assumed_prior ? " · assumed positional prior" : ""}`],
-          ["Engine research generated", player.engine_generated_at ?? "Unknown"],
-          ...(player.missing_scoring_keys.length ? [["Missing scoring categories", player.missing_scoring_keys.join(", ")]] : []),
-          ...(player.specialist_ros_research ? [["Specialist research (not promoted)", `${pts(player.specialist_ros_research.points)} per game · ${player.specialist_ros_research.games} games`]] : []),
-        ] as [string, string][]).map(([label, value]) => <div key={label}><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-0.5 break-words text-slate-200">{value}</dd></div>)}
-      </dl>
     </section>
   </article>;
 }

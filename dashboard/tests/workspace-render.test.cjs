@@ -66,7 +66,7 @@ test('closed trade adjustment plans do not construct their player lists',()=>{
     '@/lib/workspace':helpers,
     'next/navigation':{useRouter:()=>({refresh:()=>{}})},
     '@/components/WorkspaceTradePicker':{WorkspaceTradePicker:()=>React.createElement('div')},
-    '@/components/SnapshotWindow':{SnapshotWindow:({children})=>children},
+    '@/components/SnapshotWindow':{SnapshotWindow:({children})=>children,SnapshotRetry:()=>null},
     '@/components/WorkspaceTradeOutlook':{WorkspaceTradeOutlook:()=>React.createElement('div')},
   });
   const html=renderToStaticMarkup(React.createElement(WorkspaceTrade,{overview:{league_id:'a',generated_at:'now',comparison_players:[]}}));
@@ -221,7 +221,7 @@ test('trade outlook shows value bars, position tiles and never zero-fills missin
 test('full-tool routes stay inside their workspace in the shell',()=>{
   const {routeWorkspace}=loadComponent('src/lib/workspace.ts');
   assert.equal(routeWorkspace('/ledger'),'markets');
-  assert.equal(routeWorkspace('/parlays'),'markets');
+  assert.equal(routeWorkspace('/parlays'),'props');
   assert.equal(routeWorkspace('/calibration/props'),'research');
   assert.equal(routeWorkspace('/fantasy/models'),'research');
   assert.equal(routeWorkspace('/operations'),'settings');
@@ -257,8 +257,8 @@ test('native research and settings views fail closed and never certify health or
   assert.match(downResearch,/connection error, not a failed model/);
 });
 
-test('game projections and the prop board label research and fail closed',()=>{
-  const {GameProjections,PropBoardView}=loadComponent('src/components/WorkspaceMarkets.tsx',{'@/lib/fantasy-api':{fantasyApi:async()=>null}});
+test('game projections label research and fail closed',()=>{
+  const {GameProjections}=loadComponent('src/components/WorkspaceMarkets.tsx',{'@/lib/fantasy-api':{fantasyApi:async()=>null}});
   assert.match(renderToStaticMarkup(React.createElement(GameProjections,{data:null})),/service error, not an empty slate/);
   const data={status:'research',ratings:[{team:'SEA',rating:5.4},{team:'NYJ',rating:-6.1}],games:[
     {game_id:'g',home:'IND',away:'TEN',game_time:'2026-10-18T17:00:00Z',model_margin:9.7,market_margin:7,margin:7.4,home_win_probability:.72,market_weight:.85}],
@@ -266,10 +266,6 @@ test('game projections and the prop board label research and fail closed',()=>{
   const html=renderToStaticMarkup(React.createElement(GameProjections,{data}));
   assert.match(html,/IND −9\.7/); assert.match(html,/IND −7\.0/); assert.match(html,/model keeps 15% of its view/);
   assert.match(html,/0\.2212 vs 0\.2326/); assert.match(html,/\+5\.4/); assert.match(html,/-6\.1/);
-  assert.equal(renderToStaticMarkup(React.createElement(PropBoardView,{data:null})),'');
-  const board=renderToStaticMarkup(React.createElement(PropBoardView,{data:{status:'research',compared:40,note:'Market won.',rows:[
-    {player:'A',position:'WR',stat:'receiving_yards',line:75.5,source:'pinnacle',game_time:'2026-10-18T17:00:00Z',engine_projection:50,engine_over_probability:.25,market_over_probability:.52,difference:-.27}]}}));
-  assert.match(board,/receiving yards 75\.5/); assert.match(board,/-27\.0/); assert.match(board,/Market won\./); assert.match(board,/not an edge/);
 });
 
 test('trade market row shows FantasyCalc totals or its status',()=>{
@@ -383,4 +379,47 @@ test('post-game recap shows result, all-play, bench and the median chart',()=>{
   assert.match(html,/Win · 135\.2 – 120\.0 vs Bite Club/); assert.match(html,/9–2/); assert.match(html,/\+17\.2 for you/);
   assert.match(html,/Rachaad White/); assert.match(html,/\+0\.5 wins/); assert.match(html,/<svg/); assert.match(html,/week=2/);
   assert.match(renderToStaticMarkup(React.createElement(WorkspaceRecap,{recap:{status:'no_completed_weeks',completed_weeks:[],season:{}},league:'L'})),/No recap yet/);
+});
+
+const propRow=(over={})=>({key:'p:g:receptions',sport:'nfl',game_id:'g',game_time:'2026-10-18T17:00:00Z',matchup:'BUF @ KC',player_id:'p',player:'Wide One',
+  position:'WR',team:'KC',opponent:'BUF',stat:'receptions',line:4.5,books:4,quoted:5,fair_over:.55,spread:.03,hold:.045,
+  best_over:{book:'draftkings',price:110},best_under:{book:'fanduel',price:-130},ev_over:.155,ev_under:-.1,other_lines:[5.5],
+  hit:{l5:{hits:4,games:5},l10:{hits:7,games:10},season:{hits:3,games:5},vs_opponent:null,average_l10:5.2,last5:[6,5,7,3,5]},
+  engine:null,dvp:{rank:3,teams:32},offers:[{book:'draftkings',line:4.5,over:110,under:-135,observed_at:'x'}],last_seen:'x',score:.15,...over});
+
+test('prop helpers sort and filter the board by value, trend and matchup',()=>{
+  const p=loadComponent('src/lib/props.ts');
+  const a=propRow(), b=propRow({key:'b',player:'Back Up',ev_over:-.03,ev_under:.01,hit:{...a.hit,l10:{hits:2,games:10}},dvp:{rank:30,teams:32}});
+  assert.equal(p.bestSide(a),'over'); assert.equal(p.bestSide(b),'under');
+  assert.equal(p.sortRows([b,a],'ev').map(r=>r.key).join(),'p:g:receptions,b');
+  // b's best side is the under, which went 8/10; a's over went 7/10.
+  assert.equal(p.sortRows([a,b],'l10').map(r=>r.key).join(),'b,p:g:receptions');
+  // An under vs the 30th-ranked (stingy) defence is as good a matchup as an over vs the 3rd (soft); ties go by key.
+  assert.equal(p.sortRows([a,b],'dvp').map(r=>r.key).join(),'b,p:g:receptions');
+  assert.equal(p.sortRows([a,propRow({key:'c',dvp:{rank:12,teams:32}})],'dvp').map(r=>r.key).join(),'p:g:receptions,c');
+  assert.equal(p.filterRows([a,b],{minEv:0.05}).length,1);
+  assert.equal(p.filterRows([a,b],{q:'kc'}).length,2);
+  assert.equal(p.filterRows([a,b],{book:'fanduel'}).length,0);
+  assert.equal(p.american(110),'+110'); assert.equal(p.signedPct(.155),'+15.5%'); assert.equal(p.rate(null),'—');
+});
+
+test('prop board renders best prices, EV and trend, and explains an empty board',()=>{
+  const helpers=loadComponent('src/lib/props.ts');
+  const {PropBoard}=loadComponent('src/components/PropBoard.tsx',{'@/lib/props':helpers});
+  const html=renderToStaticMarkup(React.createElement(PropBoard,{board:{status:'research',sport:'nfl',books:['draftkings'],stats:['receptions'],total:1,rows:[propRow()],tracker:null}}));
+  assert.match(html,/Wide One/); assert.match(html,/Receptions 4\.5/); assert.match(html,/\+110/); assert.match(html,/DraftKings/);
+  assert.match(html,/\+15\.5%/); assert.match(html,/fair 55%/); assert.match(html,/Over L10 70%/); assert.match(html,/D vs Pos 3\/32/); assert.match(html,/alt 5\.5/);
+  const empty=renderToStaticMarkup(React.createElement(PropBoard,{board:{status:'research',sport:'nfl',books:[],stats:[],total:0,rows:[],tracker:null}}));
+  assert.match(empty,/Books post most NFL props midweek/);
+});
+
+test('parlay card shows EV across games and only fair odds for same-game parlays',()=>{
+  const helpers=loadComponent('src/lib/props.ts');
+  const {ParlayCard}=loadComponent('src/components/ParlayGenerator.tsx',{'@/lib/props':helpers});
+  const leg={id:'l',book:'draftkings',price:110,fair:.55,ev:.155,side:'over',line:4.5,stat:'receptions',player:'Wide One',position:'WR',team:'KC',opponent:'BUF',matchup:'BUF @ KC',game_time:'x',reasons:['+15.5% vs 4-book no-vig consensus (55% fair)']};
+  const cross=renderToStaticMarkup(React.createElement(ParlayCard,{index:0,parlay:{book:'draftkings',legs:[leg,{...leg,id:'m',player:'Two'}],decimal:4.41,american:341,independent_probability:.3025,probability:.3025,fair_american:231,same_game:false,ev:.334,score:1}}));
+  assert.match(cross,/Best · DraftKings/); assert.match(cross,/\+341/); assert.match(cross,/30\.3%/); assert.match(cross,/\+33\.4%/); assert.match(cross,/no-vig consensus/);
+  assert.doesNotMatch(cross,/if independent/);
+  const sgp=renderToStaticMarkup(React.createElement(ParlayCard,{index:1,parlay:{book:'draftkings',legs:[leg,{...leg,id:'n',stat:'receiving_yards'}],decimal:4.41,american:341,independent_probability:.3025,probability:.41,fair_american:144,same_game:true,ev:null,score:1}}));
+  assert.match(sgp,/Price to beat/); assert.match(sgp,/30\.3% if independent/); assert.match(sgp,/longer than \+144/); assert.doesNotMatch(sgp,/>EV</);
 });

@@ -49,6 +49,7 @@ celery_app.conf.update(
         "capture-ledger-closes": {"task":"fantasy.capture_ledger_closes","schedule":300.0},
         "retry-team-ratings": {"task": "fantasy.retry_team_ratings", "schedule": 3600.0},
         "sync-aggregate-props": {"task": "fantasy.sync_aggregate_props", "schedule": 300.0},
+        "prop-board": {"task": "fantasy.prop_board", "schedule": 600.0},
         "validate-active-slate": {"task": "fantasy.validate_active_slate", "schedule": 1800.0},
         "expand-ncaaf-prop-history": {"task": "fantasy.expand_ncaaf_props", "schedule": 3600.0},
         "sync-nfl-player-results": {"task": "fantasy.sync_nfl_results", "schedule": 1800.0},

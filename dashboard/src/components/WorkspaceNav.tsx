@@ -7,6 +7,7 @@ import { FANTASY_TOOLS, WORKSPACES, fantasyTool, fantasyToolHref, routeWorkspace
 const ICONS: Record<Workspace, string> = {
   today: "M3 12l9-8 9 8M5 10v10h5v-6h4v6h5V10",
   fantasy: "M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.4 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z",
+  props: "M4 7h16v3a2 2 0 000 4v3H4v-3a2 2 0 000-4zM14 7v10",
   markets: "M4 19V9m6 10V5m6 14v-7m4 7H2",
   research: "M10 4a6 6 0 104.5 10L20 20M10 7v6m-3-3h6",
   settings: "M12 8a4 4 0 100 8 4 4 0 000-8zm8 4l2-1-2-4-2 1-2-1V5h-4v2l-2 1-2-1-2 4 2 1v2l-2 1 2 4 2-1 2 1v2h4v-2l2-1 2 1 2-4-2-1z",
@@ -59,9 +60,9 @@ export function WorkspaceNav() {
       </Link>
       <span className="text-[11px] text-slate-500">Research only</span>
     </header>
-    <nav aria-label="Workspaces (mobile)" className="fixed-bar fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-slate-800 bg-slate-950 pb-[env(safe-area-inset-bottom)] lg:hidden">
+    <nav aria-label="Workspaces (mobile)" className="fixed-bar fixed inset-x-0 bottom-0 z-40 grid grid-cols-6 border-t border-slate-800 bg-slate-950 pb-[env(safe-area-inset-bottom)] lg:hidden">
       {WORKSPACES.map(view => <a key={view.id} href={workspaceHref(view.id, league)} onClick={busy} aria-current={active === view.id ? "page" : undefined}
-        className={`flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300 ${active === view.id ? "text-emerald-300" : "text-slate-400"}`}>
+        className={`flex min-h-14 min-w-0 flex-col items-center justify-center gap-0.5 text-[10px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300 ${active === view.id ? "text-emerald-300" : "text-slate-400"}`}>
         <Icon view={view.id} />{view.label}
       </a>)}
     </nav>

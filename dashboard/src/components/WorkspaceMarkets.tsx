@@ -9,8 +9,6 @@ type TeamProjections = { status: string; sport?: string; model_version?: string;
   games: { game_id: string; home: string; away: string; game_time: string; model_margin: number; market_margin: number | null; margin: number; home_win_probability: number; market_weight: number | null;
     total?: number; market_total?: number | null; model_total?: number; home_points?: number; away_points?: number; home_name?: string | null; away_name?: string | null }[];
   evidence?: { test_seasons: number[]; model_brier: number; previous_elo_brier: number; market_brier: number; regressed_brier: number } };
-type PropBoard = { status: string; compared?: number; note?: string | null; rows: { player: string; position: string | null; stat: string; line: number; source: string; game_time: string;
-  engine_projection: number; engine_over_probability: number; market_over_probability: number; difference: number }[] };
 type Ledger = { scope: string; items: unknown[]; event_count: number; exposure: Record<string, unknown> };
 
 const pctText = (v: number | null) => v == null ? "—" : `${(v * 100).toFixed(1)}%`;
@@ -23,8 +21,7 @@ export async function WorkspaceMarkets() {
     fantasyApi<Signal[]>("/signals?sport=nfl", 5000), fantasyApi<Signal[]>("/signals?sport=ncaaf", 5000),
     fantasyApi<Ledger>("/api/v1/ledger", 5000), fantasyApi<{ narrative: string; generated_at: string }>("/recommendations", 5000),
     fantasyApi<TeamProjections>("/team-projections/nfl", 5000)]);
-  const [props, college] = await Promise.all([fantasyApi<PropBoard>("/props/engine-board?limit=15", 5000),
-    fantasyApi<TeamProjections>("/team-projections/ncaaf", 5000)]);
+  const college = await fantasyApi<TeamProjections>("/team-projections/ncaaf", 5000);
   const unavailable = nfl === null && ncaaf === null;
   const signals = [...(nfl ?? []), ...(ncaaf ?? [])];
   const actionable = signals.filter(s => s.actionable);
@@ -42,7 +39,7 @@ export async function WorkspaceMarkets() {
     </dl>
     {brief?.narrative && <p className="rounded-xl border border-slate-800 p-4 text-sm text-slate-300"><span className="mr-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Briefing</span>{brief.narrative}</p>}
     <GameProjections data={teams} />
-    <PropBoardView data={props} />
+    <a href="/workspace?view=props" className="block rounded-xl border border-slate-800 bg-slate-900/60 p-4 hover:border-emerald-500/60"><span className="font-semibold">Player props and parlay generator →</span><span className="mt-1 block text-sm text-slate-400">Every book&apos;s prop prices against a no-vig consensus, with hit rates and matchups.</span></a>
     {college?.status === "research" && <GameProjections data={college} />}
     <section aria-label="Market signals">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
@@ -109,28 +106,5 @@ export function GameProjections({ data }: { data: TeamProjections | null }) {
         <span className="w-12 text-right tabular-nums text-slate-300" title={r.offense != null && r.defense != null ? `Offense ${r.offense.toFixed(1)} · defense ${r.defense.toFixed(1)}` : undefined}>{r.rating > 0 ? "+" : ""}{r.rating.toFixed(1)}</span></li>)}</ol>
       <p className="mt-2 text-[11px] text-slate-500">Margin rating; hover for the offense/defense scoring split.</p>
     </div>
-  </section>;
-}
-
-/** Upcoming NFL props where the engine and the no-vig market disagree most. Research comparison, not picks. */
-export function PropBoardView({ data }: { data: PropBoard | null }) {
-  if (!data || data.status !== "research") return null;
-  return <section aria-label="Player props engine comparison">
-    <h2 className="text-lg font-semibold">Player props · engine vs market <span className="ml-1 rounded bg-sky-500/15 px-2 py-0.5 align-middle text-[11px] font-medium uppercase tracking-wider text-sky-300">Research</span></h2>
-    {!data.rows.length ? <p className="mt-2 rounded-xl border border-slate-800 p-4 text-sm text-slate-400">No upcoming props with both an engine projection and two-sided prices.</p> :
-    <div className="workspace-scrollbar mt-3 overflow-x-auto rounded-xl border border-slate-800">
-      <table className="w-full min-w-[40rem] text-sm">
-        <thead className="bg-slate-900/70 text-xs text-slate-400"><tr>{["Player", "Prop", "Engine proj.", "Engine over", "Market over", "Gap"].map((h, i) => <th key={h} scope="col" className={`px-3 py-2 font-medium ${i > 1 ? "text-right" : "text-left"}`}>{h}</th>)}</tr></thead>
-        <tbody>{data.rows.map(r => <tr key={`${r.player}:${r.stat}:${r.source}`} className="border-t border-slate-800/70">
-          <td className="px-3 py-2">{r.player}<span className="block text-[11px] text-slate-500">{r.position} · {when(r.game_time)}</span></td>
-          <td className="px-3 py-2">{r.stat.replaceAll("_", " ")} {r.line}<span className="block text-[11px] text-slate-500">{r.source}</span></td>
-          <td className="px-3 py-2 text-right tabular-nums">{r.engine_projection.toFixed(1)}</td>
-          <td className="px-3 py-2 text-right tabular-nums">{pctText(r.engine_over_probability)}</td>
-          <td className="px-3 py-2 text-right tabular-nums text-slate-400">{pctText(r.market_over_probability)}</td>
-          <td className={`px-3 py-2 text-right tabular-nums ${r.difference > 0 ? "text-emerald-300" : "text-rose-300"}`}>{r.difference > 0 ? "+" : ""}{(r.difference * 100).toFixed(1)}</td>
-        </tr>)}</tbody>
-      </table>
-    </div>}
-    <p className="mt-2 text-xs text-slate-500">{data.compared ?? 0} upcoming props compared. {data.note} Large gaps usually mean the engine is missing news the market has (injury, role change), not an edge.</p>
   </section>;
 }

@@ -190,6 +190,17 @@ def sync_aggregate_props():
     return asyncio.run(collect())
 
 
+@celery_app.task(name='fantasy.prop_board', soft_time_limit=240, time_limit=300)
+def prop_board():
+    """Rebuild the player-prop board (consensus, best prices, trends) and update the value-pick tracker."""
+    from src.services import prop_board as board_service
+
+    async def run():
+        async with get_worker_db() as db:
+            return await board_service.refresh(db)
+    return asyncio.run(run())
+
+
 @celery_app.task(name='fantasy.archive_news', soft_time_limit=240, time_limit=300)
 def archive_news():
     rows = asyncio.run(fetch_rss_headlines(get_settings().fantasy_news_rss_urls))

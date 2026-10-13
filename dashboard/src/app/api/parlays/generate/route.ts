@@ -1,4 +1,5 @@
 import {NextRequest,NextResponse} from 'next/server';
+/** Same-origin proxy to the parlay generator; the API token stays server-side. Nothing is ever placed. */
 export async function POST(request:NextRequest){
  let sameOrigin=false;
  try{sameOrigin=new URL(request.headers.get('origin')||'').host===request.headers.get('host');}catch{}
@@ -9,9 +10,9 @@ export async function POST(request:NextRequest){
   const body=await request.text();
   if(body.length>4096)return NextResponse.json({detail:'Request too large'},{status:413});
   JSON.parse(body);
-  const response=await fetch(`${process.env.FANTASY_API_URL||'http://api:8000'}/parlays/assist`,{
+  const response=await fetch(`${process.env.FANTASY_API_URL||'http://api:8000'}/parlays/generate`,{
    method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-   body,cache:'no-store',signal:AbortSignal.timeout(30000)});
+   body,cache:'no-store',signal:AbortSignal.timeout(45000)});
   return NextResponse.json(await response.json(),{status:response.status});
- }catch{return NextResponse.json({detail:'Assistant unavailable or request invalid; no wager was placed.'},{status:503});}
+ }catch{return NextResponse.json({detail:'Generator unavailable or request invalid.'},{status:503});}
 }

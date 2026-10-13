@@ -887,32 +887,82 @@ class ParlayBuildRequest(BaseModel):
     legs: list[ParlayLegRequest] = Field(min_length=1,max_length=8)
 
 
-class ParlayAssistantRequest(BaseModel):
-    sport: Literal['nfl','ncaaf','nba','mlb','nhl']
-    book: str = Field(min_length=1,max_length=60,pattern=r'^[a-zA-Z0-9_-]+$')
-    leg_count: int = Field(default=2,ge=2,le=4)
-    preferences: str = Field(default='',max_length=500)
+class ParlayGenerateRequest(BaseModel):
+    sport: Literal['nfl', 'ncaaf'] = 'nfl'
+    prompt: str = Field(default='', max_length=500)
+    # Explicit controls override what the request text implies; None means "not set".
+    legs: int | None = Field(default=None, ge=2, le=6)
+    mode: Literal['value', 'balanced', 'safe'] | None = None
+    side: Literal['any', 'over', 'under'] | None = None
+    same_game: bool | None = None
+    books: list[str] | None = Field(default=None, max_length=10)
+    stats: list[str] | None = Field(default=None, max_length=10)
+    min_books: int | None = Field(default=None, ge=1, le=6)
 
 
-@router.post('/parlays/assist')
-async def assist_parlay(request: ParlayAssistantRequest, db: AsyncSession = Depends(get_db)):
-    from src.services.parlay_assistant import candidates,choose
-    pool=candidates(await signal_rows(db,request.sport),
-                    await prop_rows(db,request.sport,live_only=True),request.book)
-    if len({r['game_id'] for r in pool})<request.leg_count:
-        return {'status':'insufficient_eligible_offers','legs':[], 'ai_used':False,
-                'note':'Not enough eligible, positively priced model edges on distinct games at this book. No research-only or stale picks substituted.'}
-    selected=await choose(pool,request.leg_count,request.preferences)
-    # Release the pre-AI read transaction: final construction rechecks live
-    # eligibility after the model latency. Never execute a wager.
-    await db.rollback()
-    result=await build_parlay(ParlayBuildRequest(legs=[
-        {'kind':r['kind'],'id':r['id'],'side':r['side']} for r in selected]),db)
-    if result['skipped_legs'] or len(result['legs'])!=request.leg_count:
-        raise HTTPException(409,'Offers changed during selection; retry with current quotes')
-    return {**result,'status':'research_estimate','ai_used':True,'book':request.book,
-            'actionable':False,'payout_verified':False,
-            'note':'AI selected verified individual offers; arithmetic assumes independence across different games. Combined odds are a theoretical product, not a book-confirmed parlay price. No automatic wager; recheck availability and settlement rules at the book.'}
+@router.get('/props/board/{sport}')
+async def prop_board(sport: str, stat: str | None = None, book: str | None = None, q: str | None = Query(default=None, max_length=60),
+                     min_ev: float | None = Query(default=None, ge=-1, le=1), limit: int = Query(default=150, ge=1, le=500),
+                     db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Player props across books: no-vig consensus, best price per side, EV, hit rates and D vs Pos (research)."""
+    from src.services import prop_board as board_service
+    if sport not in board_service.SPORTS:
+        raise HTTPException(status_code=404, detail=f'no prop board for {sport!r}')
+    board = await board_service.latest(db, sport)
+    tracker = await board_service.tracker(db, sport)
+    if board is None:
+        return {'status': 'updating', 'sport': sport, 'rows': [], 'books': [], 'stats': [], 'total': 0,
+                'tracker': tracker and tracker.get('summary')}
+    rows = board['rows']
+    if stat:
+        rows = [r for r in rows if r['stat'] == stat]
+    if book:
+        rows = [r for r in rows if any(o['book'] == book for o in r['offers'])]
+    if q:
+        needle = q.casefold()
+        rows = [r for r in rows if needle in r['player'].casefold() or needle in (r['matchup'] or '').casefold()]
+    if min_ev is not None:
+        rows = [r for r in rows if max(r['ev_over'] if r['ev_over'] is not None else -1, r['ev_under'] if r['ev_under'] is not None else -1) >= min_ev]
+    return {'status': board['status'], 'sport': sport, 'generated_at': board['generated_at'], 'books': board['books'],
+            'stats': sorted({r['stat'] for r in board['rows']}), 'total': len(rows), 'rows': rows[:limit],
+            'method': board.get('method'), 'tracker': tracker and tracker.get('summary')}
+
+
+@router.get('/props/tracker/{sport}')
+async def prop_tracker(sport: str, limit: int = Query(default=100, ge=1, le=1000), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Value props frozen when first seen, with closing-line value and results."""
+    from src.services import prop_board as board_service
+    tracker = await board_service.tracker(db, sport) if sport in board_service.SPORTS else None
+    if tracker is None:
+        return {'status': 'empty', 'summary': None, 'picks': []}
+    return {'status': 'research', 'summary': tracker['summary'], 'updated_at': tracker.get('updated_at'),
+            'picks': list(reversed(tracker['picks']))[:limit]}
+
+
+@router.post('/parlays/generate')
+async def generate_parlay(request: ParlayGenerateRequest, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Local-AI parlay generator: the model parses the request; deterministic code picks and prices legs.
+
+    Research: nothing is placed. Same-game parlays get fair odds only, because
+    books reprice them with their own correlation models.
+    """
+    from dataclasses import asdict
+    from src.services import parlay_ai, parlay_generator, prop_board as board_service
+    board = await board_service.latest(db, request.sport)
+    if board is None or not board['rows']:
+        return {'status': 'no_board', 'parlays': [], 'constraints': None, 'ai': None,
+                'note': 'No current props on the board yet; books post most NFL props midweek.'}
+    names = {t.nflverse_abbr or t.name: t.name for t in (await db.scalars(select(Team).where(Team.sport == request.sport))).all()}
+    slate = {r[k] for r in board['rows'] for k in ('team', 'opponent') if r.get(k)}
+    teams = {code: names.get(code, code) for code in slate}
+    await db.rollback()  # release the read transaction across model latency
+    parsed = await parlay_ai.interpret(request.prompt, teams, sorted({r['player'] for r in board['rows']}))
+    explicit = {k: v for k, v in request.model_dump(exclude={'sport', 'prompt'}).items() if v is not None}
+    constraints = parlay_generator.Constraints(**{**parsed['constraints'], **explicit}).clean()
+    result = parlay_generator.generate(board['rows'], constraints)
+    return {**result, 'constraints': asdict(constraints), 'ai': parsed['ai'], 'board_generated_at': board['generated_at'],
+            'note': 'Fair odds use the no-vig consensus. Different-game parlays: EV at the product price. '
+                    'Same-game parlays: the book applies its own correlation pricing, so compare its price with the fair odds.'}
 
 
 @router.post("/parlays/build")

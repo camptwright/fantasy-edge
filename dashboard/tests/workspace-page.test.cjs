@@ -26,7 +26,7 @@ async function page(tool, status='snapshot_available', view='fantasy') {
       calls.push(path);
       return path.endsWith('/overview') ? overview : {items:[{league_id:'a',name:'My league',platform:'sleeper',sport:'nfl'}]};
     }};
-    if(id==='@/components/SnapshotWindow') return {SnapshotWindow:({children})=>children};
+    if(id==='@/components/SnapshotWindow') return {SnapshotWindow:({children})=>children,SnapshotRetry:()=>React.createElement('p',{'data-retry':'auto'})};
     if(id.startsWith('@/components/')) return fake();
     return require(id);
   });
@@ -50,8 +50,8 @@ test('fantasy screens render only their requested tools with two bounded reads',
 test('missing checkpoint never mounts research tools',async()=>{
   const {html}=await page('trade','updating');
   assert.doesNotMatch(html,/data-tool=/);
-  assert.match(html,/Check for an updated snapshot/);
-  assert.match(html,/view=fantasy&amp;league=a&amp;tool=trade/);
+  assert.match(html,/data-retry="auto"/);
+  assert.doesNotMatch(html,/Check for an updated snapshot/);
 });
 test('Today shows the daily review without rendering trade or player selectors',async()=>{
   const {html}=await page('trade','snapshot_available','today');

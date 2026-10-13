@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { SnapshotWindow } from "@/components/SnapshotWindow";
+import { SnapshotRetry, SnapshotWindow } from "@/components/SnapshotWindow";
 import { WorkspaceMatchup } from "@/components/WorkspaceMatchup";
 import { WorkspaceRoster } from "@/components/WorkspaceRoster";
 import { WorkspaceResearchStatus } from "@/components/WorkspaceResearchStatus";
@@ -13,6 +13,7 @@ import { WorkspacePlayerProfile } from "@/components/WorkspacePlayerProfile";
 import { WorkspaceStartSit } from "@/components/WorkspaceStartSit";
 import { QuickActions, PositionStrength } from "@/components/WorkspaceHomeExtras";
 import { WorkspaceMarkets } from "@/components/WorkspaceMarkets";
+import { WorkspaceProps } from "@/components/WorkspaceProps";
 import { WorkspaceAllLeagues } from "@/components/WorkspaceAllLeagues";
 import { WorkspaceTradeIdeas } from "@/components/WorkspaceTradeIdeas";
 import { WorkspacePositionLadder } from "@/components/WorkspacePositionLadder";
@@ -27,12 +28,12 @@ import { fantasyApi } from "@/lib/fantasy-api";
 import { FANTASY_TOOLS, ageLabel, fantasyTool, fantasyToolHref, researchContext, fantasyHref, workspaceHref, workspaceView, type League, type Overview } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
-const panels = {
+const panels: Record<"props" | "markets" | "research" | "settings", [string, string, string][]> = {
+  props: [],
   markets: [
     ["/best-bets", "Compare opportunities", "Qualified signals and their source prices. Empty results are not proof of a broken model."],
     ["/board", "Team markets", "Games, team ratings and market context."],
     ["/ledger", "Betting ledger", "Track decisions and outcomes. Proxy closing prices are not verified CLV."],
-    ["/parlays", "Parlay research", "Explore combinations. Research estimates are not betting instructions."],
     ["/recommendations", "Market briefing", "Explanations alongside the underlying signals."],
   ],
   research: [
@@ -46,7 +47,7 @@ const panels = {
     ["/operations", "Operations", "Job failures, backlog and service performance."],
   ],
 };
-const TITLES = { today: "Today", markets: "Markets", research: "Research lab", settings: "Settings & health" };
+const TITLES = { today: "Today", props: "Player props", markets: "Markets", research: "Research lab", settings: "Settings & health" };
 
 function Tool({ href, title, detail }: { href: string; title: string; detail: string }) {
   return <Link href={href} prefetch={false} className="group rounded-xl border border-slate-800 bg-slate-900/60 p-5 hover:border-emerald-500/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300">
@@ -55,7 +56,7 @@ function Tool({ href, title, detail }: { href: string; title: string; detail: st
   </Link>;
 }
 
-export default async function WorkspacePage({ searchParams }: { searchParams: Promise<{ view?: string; league?: string; tool?: string; player?: string; compare?: string; week?: string }> }) {
+export default async function WorkspacePage({ searchParams }: { searchParams: Promise<{ view?: string; league?: string; tool?: string; player?: string; compare?: string; week?: string; sport?: string }> }) {
   const query = await searchParams;
   const view = workspaceView(query.view);
   const tool = fantasyTool(query.tool);
@@ -105,36 +106,29 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
         </section> : !ready ? <section role="status" className="my-6 rounded-xl border border-slate-700 p-5">
           <h2 className="font-semibold">Snapshot not ready</h2>
           <p className="mt-2 text-sm text-slate-300">{overview?.message ?? "The overview service is unavailable. This is not an empty lineup; retry shortly or check Settings."}</p>
-          <a href={view === "fantasy" ? fantasyToolHref(tool, league) : workspaceHref(view, league)} className="mt-4 inline-flex min-h-11 items-center rounded-lg border border-emerald-700 px-4 text-sm text-emerald-200">Check for an updated snapshot</a>
+          <SnapshotRetry />
         </section> : <div className="mt-6">
           <SnapshotWindow expiresAt={overview.expires_at}>
             {view === 'fantasy' && (tool === 'waivers' || tool === 'players') && <WorkspaceResearchStatus research={overview.research} />}
             {(view === 'today' || tool === 'overview') && <><SeasonTiles standings={standings} /><WorkspaceMatchup overview={overview} /><WorkspaceAreTheyPlaying overview={overview} /><QuickActions overview={overview} /><WorkspaceDailyBrief overview={overview} /><PositionStrength overview={overview} /><WorkspaceOutlook overview={overview} /></>}
             {view === 'fantasy' && tool === 'recap' && <WorkspaceRecap recap={recap} league={overview.league_id} />}
             {view === 'fantasy' && tool === 'league' && <div className="space-y-8"><WorkspaceStandings standings={standings} /><WorkspaceLeagueAnalyzer overview={overview} /><PositionStrength overview={overview} /></div>}
-            {view === 'fantasy' && tool === 'startsit' && <WorkspaceStartSit key={`${league}:${overview.generated_at}`} overview={overview} />}
+            {view === 'fantasy' && tool === 'startsit' && <WorkspaceStartSit key={league} overview={overview} />}
             {view === 'fantasy' && tool === 'team' && <WorkspaceAreTheyPlaying overview={overview} />}
             {view === 'fantasy' && tool === 'team' && <WorkspaceRoster overview={overview} section="team" />}
             {view === 'fantasy' && tool === 'team' && <WorkspaceLineupReview overview={overview} />}
             {view === 'fantasy' && tool === 'waivers' && <WorkspaceEngineWaivers overview={overview} />}
-            {view === 'fantasy' && tool === 'waivers' && <WorkspacePositionLadder key={`${league}:${overview.generated_at}`} overview={overview} />}
+            {view === 'fantasy' && tool === 'waivers' && <WorkspacePositionLadder key={league} overview={overview} />}
             {view === 'fantasy' && tool === 'waivers' && <WorkspaceRoster overview={overview} section="waivers" />}
             {view === 'fantasy' && tool === 'player' && <WorkspacePlayerProfile overview={overview} playerId={query.player} />}
-            {view === 'fantasy' && tool === 'players' && <div className="mt-6"><WorkspaceComparison key={`${league}:${overview.generated_at}:${query.player}:${query.compare}`} players={overview.comparison_players} initialPlayer={query.player} initialCompare={query.compare} lineup={{available:overview.lineup_changes.status === 'available', current:overview.matchup.mine?.starters.flatMap(p=>p.player_id?[p.player_id]:[]) ?? [], candidate:overview.starters.flatMap(p=>p.player_id?[p.player_id]:[]), reason:overview.lineup_changes.reason}} /></div>}
+            {view === 'fantasy' && tool === 'players' && <div className="mt-6"><WorkspaceComparison key={`${league}:${query.player}:${query.compare}`} players={overview.comparison_players} initialPlayer={query.player} initialCompare={query.compare} lineup={{available:overview.lineup_changes.status === 'available', current:overview.matchup.mine?.starters.flatMap(p=>p.player_id?[p.player_id]:[]) ?? [], candidate:overview.starters.flatMap(p=>p.player_id?[p.player_id]:[]), reason:overview.lineup_changes.reason}} /></div>}
             {view === 'fantasy' && tool === 'trade' && <div className="mt-6 space-y-6"><WorkspaceTradeIdeas ideas={ideas} league={overview.league_id} /><WorkspaceTrade key={league} overview={researchContext(overview)} /></div>}
           </SnapshotWindow>
-          <details className="mt-8 rounded-xl border border-slate-800 p-4 text-sm"><summary className="min-h-11 cursor-pointer text-slate-300">Evidence and limitations</summary>
-            <p className="mt-2 text-slate-400">{overview.message}</p>
-            <p className="mt-2 text-xs text-slate-400">Snapshot <time dateTime={overview.generated_at ?? undefined}>{overview.generated_at}</time> · expires {overview.expires_at}. Freshness is checked when this page loads; refresh before acting.</p>
-            <ul className="mt-3 list-disc space-y-2 pl-5 text-slate-300">{overview.notes.map(note => <li key={note}>{note}</li>)}
-              <li>Engine columns are projection-engine research (Vegas environment → team volume → usage share → efficiency, adjusted for depth chart and status), conditional on playing and not prospectively validated. Weeks without a market line split each matchup’s recent scoring level by the NFL team model’s projected margin.</li></ul>
-            <p className="mt-3 break-all text-xs text-slate-400">Model: {overview.model_version ?? "unknown"} · Recipe: {overview.recipe_version ?? "unknown"} · Scoring contract: {overview.scoring_contract_hash ?? "unknown"}</p>
-          </details>
         </div>}
       </> : <>
-        <div className="mt-6">{view === "markets" ? <WorkspaceMarkets /> : view === "research" ? <WorkspaceResearch /> : <WorkspaceSettings />}</div>
-        <h2 className="mt-8 text-lg font-semibold">Full tools</h2>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">{panels[view].map(([path, title, detail]) => <Tool key={path} href={path.startsWith("/fantasy") ? fantasyHref(path, league) : path} title={title} detail={detail} />)}</div>
+        <div className="mt-6">{view === "props" ? <WorkspaceProps sport={query.sport === "ncaaf" ? "ncaaf" : "nfl"} /> : view === "markets" ? <WorkspaceMarkets /> : view === "research" ? <WorkspaceResearch /> : <WorkspaceSettings />}</div>
+        {!!panels[view].length && <><h2 className="mt-8 text-lg font-semibold">Full tools</h2>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">{panels[view].map(([path, title, detail]) => <Tool key={path} href={path.startsWith("/fantasy") ? fantasyHref(path, league) : path} title={title} detail={detail} />)}</div></>}
       </>}
     </div>
   </main>;

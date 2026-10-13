@@ -1,7 +1,7 @@
 /** Context is URL-owned and allowlisted; never forward arbitrary query parameters. */
 export const WORKSPACES = [
   { id: "today", label: "Today" }, { id: "fantasy", label: "Fantasy" },
-  { id: "markets", label: "Markets" }, { id: "research", label: "Research" },
+  { id: "props", label: "Props" }, { id: "markets", label: "Markets" }, { id: "research", label: "Research" },
   { id: "settings", label: "Settings" },
 ] as const;
 export type Workspace = typeof WORKSPACES[number]["id"];
@@ -11,7 +11,8 @@ export function workspaceView(value?: string): Workspace {
 /** Which workspace owns a full-tool route, for navigation state outside /workspace. */
 export function routeWorkspace(pathname: string | null): Workspace {
   const top = (pathname ?? "/").split("/")[1] ?? "";
-  if (["best-bets", "board", "ledger", "parlays", "recommendations"].includes(top)) return "markets";
+  if (top === "parlays") return "props";
+  if (["best-bets", "board", "ledger", "recommendations"].includes(top)) return "markets";
   if (["experimental", "calibration", "nfl-predictor"].includes(top) || pathname?.startsWith("/fantasy/models")) return "research";
   if (["providers", "operations"].includes(top)) return "settings";
   return top === "fantasy" ? "fantasy" : "today";

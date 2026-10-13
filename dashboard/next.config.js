@@ -25,6 +25,7 @@ const nextConfig = {
       { source: "/fantasy/values", destination: fantasy("players"), permanent: false },
       { source: "/fantasy/trade", destination: fantasy("trade"), permanent: false },
       { source: "/nfl-predictor", destination: "/experimental", permanent: false },
+      { source: "/parlays", destination: "/workspace?view=props", permanent: false },
     ];
   },
   async rewrites() {

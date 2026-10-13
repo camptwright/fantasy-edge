@@ -1,0 +1,1901 @@
+{
+ "version": "spearman_residual_v1",
+ "train_seasons": [
+  2023,
+  2024,
+  2025
+ ],
+ "min_n": 150,
+ "shrink": 200,
+ "generated_at": "2026-10-13T13:14:19.100965+00:00",
+ "holdout": {
+  "season": 2026,
+  "games": 78,
+  "all": {
+   "copula": {
+    "n": 114697,
+    "brier": 0.15012
+   },
+   "independent": {
+    "n": 114697,
+    "brier": 0.15063
+   }
+  },
+  "strong": {
+   "copula": {
+    "n": 7038,
+    "brier": 0.20043
+   },
+   "independent": {
+    "n": 7038,
+    "brier": 0.20865
+   }
+  }
+ },
+ "pairs": {
+  "opponent|QB:passing_attempts|QB:passing_attempts": {
+   "rho": -0.048,
+   "n": 361
+  },
+  "opponent|QB:passing_attempts|QB:passing_completions": {
+   "rho": -0.059,
+   "n": 722
+  },
+  "opponent|QB:passing_attempts|QB:passing_interceptions": {
+   "rho": -0.12,
+   "n": 692
+  },
+  "opponent|QB:passing_attempts|QB:passing_touchdowns": {
+   "rho": 0.078,
+   "n": 682
+  },
+  "opponent|QB:passing_attempts|QB:passing_yards": {
+   "rho": 0.015,
+   "n": 722
+  },
+  "opponent|QB:passing_attempts|QB:rushing_attempts": {
+   "rho": 0.047,
+   "n": 722
+  },
+  "opponent|QB:passing_attempts|QB:rushing_yards": {
+   "rho": 0.051,
+   "n": 696
+  },
+  "opponent|QB:passing_attempts|RB:receiving_yards": {
+   "rho": -0.019,
+   "n": 1559
+  },
+  "opponent|QB:passing_attempts|RB:receptions": {
+   "rho": -0.044,
+   "n": 1559
+  },
+  "opponent|QB:passing_attempts|RB:rushing_attempts": {
+   "rho": 0.046,
+   "n": 1595
+  },
+  "opponent|QB:passing_attempts|RB:rushing_yards": {
+   "rho": 0.03,
+   "n": 1595
+  },
+  "opponent|QB:passing_attempts|TE:receiving_yards": {
+   "rho": 0.011,
+   "n": 1371
+  },
+  "opponent|QB:passing_attempts|TE:receptions": {
+   "rho": -0.019,
+   "n": 1376
+  },
+  "opponent|QB:passing_attempts|TE:rushing_attempts": {
+   "rho": -0.016,
+   "n": 326
+  },
+  "opponent|QB:passing_attempts|TE:rushing_yards": {
+   "rho": -0.053,
+   "n": 253
+  },
+  "opponent|QB:passing_attempts|WR:receiving_yards": {
+   "rho": -0.008,
+   "n": 2586
+  },
+  "opponent|QB:passing_attempts|WR:receptions": {
+   "rho": -0.032,
+   "n": 2586
+  },
+  "opponent|QB:passing_attempts|WR:rushing_attempts": {
+   "rho": -0.025,
+   "n": 1229
+  },
+  "opponent|QB:passing_attempts|WR:rushing_yards": {
+   "rho": 0.0,
+   "n": 1109
+  },
+  "opponent|QB:passing_completions|QB:passing_completions": {
+   "rho": -0.023,
+   "n": 361
+  },
+  "opponent|QB:passing_completions|QB:passing_interceptions": {
+   "rho": -0.115,
+   "n": 692
+  },
+  "opponent|QB:passing_completions|QB:passing_touchdowns": {
+   "rho": 0.1,
+   "n": 682
+  },
+  "opponent|QB:passing_completions|QB:passing_yards": {
+   "rho": 0.035,
+   "n": 722
+  },
+  "opponent|QB:passing_completions|QB:rushing_attempts": {
+   "rho": 0.037,
+   "n": 722
+  },
+  "opponent|QB:passing_completions|QB:rushing_yards": {
+   "rho": 0.049,
+   "n": 696
+  },
+  "opponent|QB:passing_completions|RB:receiving_yards": {
+   "rho": -0.019,
+   "n": 1559
+  },
+  "opponent|QB:passing_completions|RB:receptions": {
+   "rho": -0.035,
+   "n": 1559
+  },
+  "opponent|QB:passing_completions|RB:rushing_attempts": {
+   "rho": 0.001,
+   "n": 1595
+  },
+  "opponent|QB:passing_completions|RB:rushing_yards": {
+   "rho": -0.009,
+   "n": 1595
+  },
+  "opponent|QB:passing_completions|TE:receiving_yards": {
+   "rho": 0.002,
+   "n": 1371
+  },
+  "opponent|QB:passing_completions|TE:receptions": {
+   "rho": -0.021,
+   "n": 1376
+  },
+  "opponent|QB:passing_completions|TE:rushing_attempts": {
+   "rho": -0.021,
+   "n": 326
+  },
+  "opponent|QB:passing_completions|TE:rushing_yards": {
+   "rho": -0.033,
+   "n": 253
+  },
+  "opponent|QB:passing_completions|WR:receiving_yards": {
+   "rho": 0.014,
+   "n": 2586
+  },
+  "opponent|QB:passing_completions|WR:receptions": {
+   "rho": -0.01,
+   "n": 2586
+  },
+  "opponent|QB:passing_completions|WR:rushing_attempts": {
+   "rho": -0.022,
+   "n": 1229
+  },
+  "opponent|QB:passing_completions|WR:rushing_yards": {
+   "rho": -0.007,
+   "n": 1109
+  },
+  "opponent|QB:passing_interceptions|QB:passing_interceptions": {
+   "rho": -0.091,
+   "n": 333
+  },
+  "opponent|QB:passing_interceptions|QB:passing_touchdowns": {
+   "rho": 0.004,
+   "n": 654
+  },
+  "opponent|QB:passing_interceptions|QB:passing_yards": {
+   "rho": -0.085,
+   "n": 692
+  },
+  "opponent|QB:passing_interceptions|QB:rushing_attempts": {
+   "rho": 0.036,
+   "n": 692
+  },
+  "opponent|QB:passing_interceptions|QB:rushing_yards": {
+   "rho": -0.011,
+   "n": 669
+  },
+  "opponent|QB:passing_interceptions|RB:receiving_yards": {
+   "rho": -0.034,
+   "n": 1504
+  },
+  "opponent|QB:passing_interceptions|RB:receptions": {
+   "rho": -0.064,
+   "n": 1504
+  },
+  "opponent|QB:passing_interceptions|RB:rushing_attempts": {
+   "rho": 0.051,
+   "n": 1538
+  },
+  "opponent|QB:passing_interceptions|RB:rushing_yards": {
+   "rho": 0.027,
+   "n": 1538
+  },
+  "opponent|QB:passing_interceptions|TE:receiving_yards": {
+   "rho": -0.027,
+   "n": 1320
+  },
+  "opponent|QB:passing_interceptions|TE:receptions": {
+   "rho": -0.037,
+   "n": 1324
+  },
+  "opponent|QB:passing_interceptions|TE:rushing_attempts": {
+   "rho": 0.033,
+   "n": 315
+  },
+  "opponent|QB:passing_interceptions|TE:rushing_yards": {
+   "rho": -0.016,
+   "n": 248
+  },
+  "opponent|QB:passing_interceptions|WR:receiving_yards": {
+   "rho": -0.033,
+   "n": 2481
+  },
+  "opponent|QB:passing_interceptions|WR:receptions": {
+   "rho": -0.052,
+   "n": 2481
+  },
+  "opponent|QB:passing_interceptions|WR:rushing_attempts": {
+   "rho": -0.003,
+   "n": 1177
+  },
+  "opponent|QB:passing_interceptions|WR:rushing_yards": {
+   "rho": -0.013,
+   "n": 1069
+  },
+  "opponent|QB:passing_touchdowns|QB:passing_touchdowns": {
+   "rho": 0.048,
+   "n": 323
+  },
+  "opponent|QB:passing_touchdowns|QB:passing_yards": {
+   "rho": 0.107,
+   "n": 682
+  },
+  "opponent|QB:passing_touchdowns|QB:rushing_attempts": {
+   "rho": 0.038,
+   "n": 682
+  },
+  "opponent|QB:passing_touchdowns|QB:rushing_yards": {
+   "rho": 0.05,
+   "n": 659
+  },
+  "opponent|QB:passing_touchdowns|RB:receiving_yards": {
+   "rho": 0.064,
+   "n": 1487
+  },
+  "opponent|QB:passing_touchdowns|RB:receptions": {
+   "rho": 0.053,
+   "n": 1487
+  },
+  "opponent|QB:passing_touchdowns|RB:rushing_attempts": {
+   "rho": -0.037,
+   "n": 1519
+  },
+  "opponent|QB:passing_touchdowns|RB:rushing_yards": {
+   "rho": 0.004,
+   "n": 1519
+  },
+  "opponent|QB:passing_touchdowns|TE:receiving_yards": {
+   "rho": 0.069,
+   "n": 1308
+  },
+  "opponent|QB:passing_touchdowns|TE:receptions": {
+   "rho": 0.04,
+   "n": 1312
+  },
+  "opponent|QB:passing_touchdowns|TE:rushing_attempts": {
+   "rho": -0.014,
+   "n": 313
+  },
+  "opponent|QB:passing_touchdowns|TE:rushing_yards": {
+   "rho": -0.011,
+   "n": 242
+  },
+  "opponent|QB:passing_touchdowns|WR:receiving_yards": {
+   "rho": 0.041,
+   "n": 2459
+  },
+  "opponent|QB:passing_touchdowns|WR:receptions": {
+   "rho": 0.061,
+   "n": 2459
+  },
+  "opponent|QB:passing_touchdowns|WR:rushing_attempts": {
+   "rho": 0.02,
+   "n": 1171
+  },
+  "opponent|QB:passing_touchdowns|WR:rushing_yards": {
+   "rho": 0.025,
+   "n": 1061
+  },
+  "opponent|QB:passing_yards|QB:passing_yards": {
+   "rho": 0.069,
+   "n": 361
+  },
+  "opponent|QB:passing_yards|QB:rushing_attempts": {
+   "rho": 0.042,
+   "n": 722
+  },
+  "opponent|QB:passing_yards|QB:rushing_yards": {
+   "rho": 0.057,
+   "n": 696
+  },
+  "opponent|QB:passing_yards|RB:receiving_yards": {
+   "rho": -0.022,
+   "n": 1559
+  },
+  "opponent|QB:passing_yards|RB:receptions": {
+   "rho": -0.017,
+   "n": 1559
+  },
+  "opponent|QB:passing_yards|RB:rushing_attempts": {
+   "rho": -0.014,
+   "n": 1595
+  },
+  "opponent|QB:passing_yards|RB:rushing_yards": {
+   "rho": -0.012,
+   "n": 1595
+  },
+  "opponent|QB:passing_yards|TE:receiving_yards": {
+   "rho": 0.038,
+   "n": 1371
+  },
+  "opponent|QB:passing_yards|TE:receptions": {
+   "rho": 0.016,
+   "n": 1376
+  },
+  "opponent|QB:passing_yards|TE:rushing_attempts": {
+   "rho": -0.008,
+   "n": 326
+  },
+  "opponent|QB:passing_yards|TE:rushing_yards": {
+   "rho": -0.024,
+   "n": 253
+  },
+  "opponent|QB:passing_yards|WR:receiving_yards": {
+   "rho": 0.04,
+   "n": 2586
+  },
+  "opponent|QB:passing_yards|WR:receptions": {
+   "rho": 0.029,
+   "n": 2586
+  },
+  "opponent|QB:passing_yards|WR:rushing_attempts": {
+   "rho": -0.002,
+   "n": 1229
+  },
+  "opponent|QB:passing_yards|WR:rushing_yards": {
+   "rho": -0.0,
+   "n": 1109
+  },
+  "opponent|QB:receptions|RB:receiving_yards": {
+   "rho": 0.039,
+   "n": 192
+  },
+  "opponent|QB:receptions|RB:receptions": {
+   "rho": 0.078,
+   "n": 192
+  },
+  "opponent|QB:receptions|RB:rushing_attempts": {
+   "rho": -0.042,
+   "n": 193
+  },
+  "opponent|QB:receptions|RB:rushing_yards": {
+   "rho": -0.073,
+   "n": 193
+  },
+  "opponent|QB:receptions|TE:receiving_yards": {
+   "rho": 0.044,
+   "n": 168
+  },
+  "opponent|QB:receptions|TE:receptions": {
+   "rho": 0.017,
+   "n": 169
+  },
+  "opponent|QB:receptions|WR:receiving_yards": {
+   "rho": 0.051,
+   "n": 329
+  },
+  "opponent|QB:receptions|WR:receptions": {
+   "rho": 0.074,
+   "n": 329
+  },
+  "opponent|QB:receptions|WR:rushing_attempts": {
+   "rho": -0.004,
+   "n": 168
+  },
+  "opponent|QB:receptions|WR:rushing_yards": {
+   "rho": 0.008,
+   "n": 154
+  },
+  "opponent|QB:rushing_attempts|QB:rushing_attempts": {
+   "rho": -0.037,
+   "n": 361
+  },
+  "opponent|QB:rushing_attempts|QB:rushing_yards": {
+   "rho": 0.057,
+   "n": 696
+  },
+  "opponent|QB:rushing_attempts|RB:receiving_yards": {
+   "rho": 0.036,
+   "n": 1559
+  },
+  "opponent|QB:rushing_attempts|RB:receptions": {
+   "rho": 0.039,
+   "n": 1559
+  },
+  "opponent|QB:rushing_attempts|RB:rushing_attempts": {
+   "rho": -0.092,
+   "n": 1595
+  },
+  "opponent|QB:rushing_attempts|RB:rushing_yards": {
+   "rho": -0.045,
+   "n": 1595
+  },
+  "opponent|QB:rushing_attempts|TE:receiving_yards": {
+   "rho": -0.034,
+   "n": 1371
+  },
+  "opponent|QB:rushing_attempts|TE:receptions": {
+   "rho": -0.038,
+   "n": 1376
+  },
+  "opponent|QB:rushing_attempts|TE:rushing_attempts": {
+   "rho": -0.027,
+   "n": 326
+  },
+  "opponent|QB:rushing_attempts|TE:rushing_yards": {
+   "rho": -0.021,
+   "n": 253
+  },
+  "opponent|QB:rushing_attempts|WR:receiving_yards": {
+   "rho": -0.003,
+   "n": 2586
+  },
+  "opponent|QB:rushing_attempts|WR:receptions": {
+   "rho": -0.011,
+   "n": 2586
+  },
+  "opponent|QB:rushing_attempts|WR:rushing_attempts": {
+   "rho": -0.013,
+   "n": 1229
+  },
+  "opponent|QB:rushing_attempts|WR:rushing_yards": {
+   "rho": -0.001,
+   "n": 1109
+  },
+  "opponent|QB:rushing_yards|QB:rushing_yards": {
+   "rho": 0.068,
+   "n": 336
+  },
+  "opponent|QB:rushing_yards|RB:receiving_yards": {
+   "rho": 0.027,
+   "n": 1520
+  },
+  "opponent|QB:rushing_yards|RB:receptions": {
+   "rho": 0.033,
+   "n": 1520
+  },
+  "opponent|QB:rushing_yards|RB:rushing_attempts": {
+   "rho": -0.036,
+   "n": 1555
+  },
+  "opponent|QB:rushing_yards|RB:rushing_yards": {
+   "rho": -0.012,
+   "n": 1555
+  },
+  "opponent|QB:rushing_yards|TE:receiving_yards": {
+   "rho": -0.048,
+   "n": 1334
+  },
+  "opponent|QB:rushing_yards|TE:receptions": {
+   "rho": -0.041,
+   "n": 1339
+  },
+  "opponent|QB:rushing_yards|TE:rushing_attempts": {
+   "rho": -0.007,
+   "n": 320
+  },
+  "opponent|QB:rushing_yards|TE:rushing_yards": {
+   "rho": -0.016,
+   "n": 249
+  },
+  "opponent|QB:rushing_yards|WR:receiving_yards": {
+   "rho": 0.007,
+   "n": 2518
+  },
+  "opponent|QB:rushing_yards|WR:receptions": {
+   "rho": -0.009,
+   "n": 2518
+  },
+  "opponent|QB:rushing_yards|WR:rushing_attempts": {
+   "rho": 0.004,
+   "n": 1202
+  },
+  "opponent|QB:rushing_yards|WR:rushing_yards": {
+   "rho": -0.009,
+   "n": 1087
+  },
+  "opponent|RB:passing_attempts|RB:receiving_yards": {
+   "rho": 0.048,
+   "n": 202
+  },
+  "opponent|RB:passing_attempts|RB:receptions": {
+   "rho": 0.061,
+   "n": 202
+  },
+  "opponent|RB:passing_attempts|RB:rushing_attempts": {
+   "rho": -0.036,
+   "n": 211
+  },
+  "opponent|RB:passing_attempts|RB:rushing_yards": {
+   "rho": 0.003,
+   "n": 211
+  },
+  "opponent|RB:passing_attempts|TE:receiving_yards": {
+   "rho": -0.027,
+   "n": 196
+  },
+  "opponent|RB:passing_attempts|TE:receptions": {
+   "rho": -0.037,
+   "n": 197
+  },
+  "opponent|RB:passing_attempts|WR:receiving_yards": {
+   "rho": -0.017,
+   "n": 358
+  },
+  "opponent|RB:passing_attempts|WR:receptions": {
+   "rho": 0.006,
+   "n": 358
+  },
+  "opponent|RB:passing_attempts|WR:rushing_attempts": {
+   "rho": -0.022,
+   "n": 179
+  },
+  "opponent|RB:passing_attempts|WR:rushing_yards": {
+   "rho": -0.03,
+   "n": 167
+  },
+  "opponent|RB:receiving_yards|RB:receiving_yards": {
+   "rho": 0.025,
+   "n": 1678
+  },
+  "opponent|RB:receiving_yards|RB:receptions": {
+   "rho": 0.009,
+   "n": 3356
+  },
+  "opponent|RB:receiving_yards|RB:rushing_attempts": {
+   "rho": -0.018,
+   "n": 3431
+  },
+  "opponent|RB:receiving_yards|RB:rushing_yards": {
+   "rho": -0.021,
+   "n": 3431
+  },
+  "opponent|RB:receiving_yards|TE:receiving_yards": {
+   "rho": -0.011,
+   "n": 2965
+  },
+  "opponent|RB:receiving_yards|TE:receptions": {
+   "rho": -0.02,
+   "n": 2973
+  },
+  "opponent|RB:receiving_yards|TE:rushing_attempts": {
+   "rho": -0.051,
+   "n": 699
+  },
+  "opponent|RB:receiving_yards|TE:rushing_yards": {
+   "rho": -0.044,
+   "n": 549
+  },
+  "opponent|RB:receiving_yards|WR:passing_attempts": {
+   "rho": -0.022,
+   "n": 204
+  },
+  "opponent|RB:receiving_yards|WR:receiving_yards": {
+   "rho": 0.008,
+   "n": 5615
+  },
+  "opponent|RB:receiving_yards|WR:receptions": {
+   "rho": 0.004,
+   "n": 5615
+  },
+  "opponent|RB:receiving_yards|WR:rushing_attempts": {
+   "rho": -0.016,
+   "n": 2674
+  },
+  "opponent|RB:receiving_yards|WR:rushing_yards": {
+   "rho": -0.011,
+   "n": 2440
+  },
+  "opponent|RB:receptions|RB:receptions": {
+   "rho": -0.01,
+   "n": 1678
+  },
+  "opponent|RB:receptions|RB:rushing_attempts": {
+   "rho": 0.005,
+   "n": 3431
+  },
+  "opponent|RB:receptions|RB:rushing_yards": {
+   "rho": -0.002,
+   "n": 3431
+  },
+  "opponent|RB:receptions|TE:receiving_yards": {
+   "rho": 0.009,
+   "n": 2965
+  },
+  "opponent|RB:receptions|TE:receptions": {
+   "rho": -0.002,
+   "n": 2973
+  },
+  "opponent|RB:receptions|TE:rushing_attempts": {
+   "rho": -0.016,
+   "n": 699
+  },
+  "opponent|RB:receptions|TE:rushing_yards": {
+   "rho": -0.01,
+   "n": 549
+  },
+  "opponent|RB:receptions|WR:passing_attempts": {
+   "rho": 0.028,
+   "n": 204
+  },
+  "opponent|RB:receptions|WR:receiving_yards": {
+   "rho": -0.0,
+   "n": 5615
+  },
+  "opponent|RB:receptions|WR:receptions": {
+   "rho": -0.011,
+   "n": 5615
+  },
+  "opponent|RB:receptions|WR:rushing_attempts": {
+   "rho": -0.016,
+   "n": 2674
+  },
+  "opponent|RB:receptions|WR:rushing_yards": {
+   "rho": -0.022,
+   "n": 2440
+  },
+  "opponent|RB:rushing_attempts|RB:rushing_attempts": {
+   "rho": -0.153,
+   "n": 1755
+  },
+  "opponent|RB:rushing_attempts|RB:rushing_yards": {
+   "rho": -0.132,
+   "n": 3510
+  },
+  "opponent|RB:rushing_attempts|TE:receiving_yards": {
+   "rho": -0.015,
+   "n": 3026
+  },
+  "opponent|RB:rushing_attempts|TE:receptions": {
+   "rho": -0.022,
+   "n": 3034
+  },
+  "opponent|RB:rushing_attempts|TE:rushing_attempts": {
+   "rho": -0.04,
+   "n": 717
+  },
+  "opponent|RB:rushing_attempts|TE:rushing_yards": {
+   "rho": -0.049,
+   "n": 564
+  },
+  "opponent|RB:rushing_attempts|WR:passing_attempts": {
+   "rho": -0.004,
+   "n": 208
+  },
+  "opponent|RB:rushing_attempts|WR:receiving_yards": {
+   "rho": -0.008,
+   "n": 5743
+  },
+  "opponent|RB:rushing_attempts|WR:receptions": {
+   "rho": -0.01,
+   "n": 5743
+  },
+  "opponent|RB:rushing_attempts|WR:rushing_attempts": {
+   "rho": -0.027,
+   "n": 2733
+  },
+  "opponent|RB:rushing_attempts|WR:rushing_yards": {
+   "rho": -0.066,
+   "n": 2489
+  },
+  "opponent|RB:rushing_yards|RB:rushing_yards": {
+   "rho": -0.12,
+   "n": 1755
+  },
+  "opponent|RB:rushing_yards|TE:receiving_yards": {
+   "rho": -0.007,
+   "n": 3026
+  },
+  "opponent|RB:rushing_yards|TE:receptions": {
+   "rho": -0.014,
+   "n": 3034
+  },
+  "opponent|RB:rushing_yards|TE:rushing_attempts": {
+   "rho": -0.044,
+   "n": 717
+  },
+  "opponent|RB:rushing_yards|TE:rushing_yards": {
+   "rho": -0.042,
+   "n": 564
+  },
+  "opponent|RB:rushing_yards|WR:passing_attempts": {
+   "rho": 0.001,
+   "n": 208
+  },
+  "opponent|RB:rushing_yards|WR:receiving_yards": {
+   "rho": -0.011,
+   "n": 5743
+  },
+  "opponent|RB:rushing_yards|WR:receptions": {
+   "rho": -0.016,
+   "n": 5743
+  },
+  "opponent|RB:rushing_yards|WR:rushing_attempts": {
+   "rho": -0.022,
+   "n": 2733
+  },
+  "opponent|RB:rushing_yards|WR:rushing_yards": {
+   "rho": -0.045,
+   "n": 2489
+  },
+  "opponent|TE:passing_attempts|WR:receiving_yards": {
+   "rho": 0.038,
+   "n": 196
+  },
+  "opponent|TE:passing_attempts|WR:receptions": {
+   "rho": 0.079,
+   "n": 196
+  },
+  "opponent|TE:receiving_yards|TE:receiving_yards": {
+   "rho": 0.006,
+   "n": 1314
+  },
+  "opponent|TE:receiving_yards|TE:receptions": {
+   "rho": -0.013,
+   "n": 2635
+  },
+  "opponent|TE:receiving_yards|TE:rushing_attempts": {
+   "rho": 0.034,
+   "n": 627
+  },
+  "opponent|TE:receiving_yards|TE:rushing_yards": {
+   "rho": 0.04,
+   "n": 484
+  },
+  "opponent|TE:receiving_yards|WR:passing_attempts": {
+   "rho": 0.01,
+   "n": 186
+  },
+  "opponent|TE:receiving_yards|WR:receiving_yards": {
+   "rho": 0.016,
+   "n": 4974
+  },
+  "opponent|TE:receiving_yards|WR:receptions": {
+   "rho": -0.002,
+   "n": 4974
+  },
+  "opponent|TE:receiving_yards|WR:rushing_attempts": {
+   "rho": -0.01,
+   "n": 2429
+  },
+  "opponent|TE:receiving_yards|WR:rushing_yards": {
+   "rho": -0.007,
+   "n": 2192
+  },
+  "opponent|TE:receptions|TE:receptions": {
+   "rho": -0.029,
+   "n": 1321
+  },
+  "opponent|TE:receptions|TE:rushing_attempts": {
+   "rho": 0.032,
+   "n": 628
+  },
+  "opponent|TE:receptions|TE:rushing_yards": {
+   "rho": 0.021,
+   "n": 484
+  },
+  "opponent|TE:receptions|WR:passing_attempts": {
+   "rho": 0.007,
+   "n": 187
+  },
+  "opponent|TE:receptions|WR:receiving_yards": {
+   "rho": 0.011,
+   "n": 4989
+  },
+  "opponent|TE:receptions|WR:receptions": {
+   "rho": -0.0,
+   "n": 4989
+  },
+  "opponent|TE:receptions|WR:rushing_attempts": {
+   "rho": -0.04,
+   "n": 2437
+  },
+  "opponent|TE:receptions|WR:rushing_yards": {
+   "rho": -0.034,
+   "n": 2198
+  },
+  "opponent|TE:rushing_attempts|WR:receiving_yards": {
+   "rho": -0.031,
+   "n": 1161
+  },
+  "opponent|TE:rushing_attempts|WR:receptions": {
+   "rho": -0.04,
+   "n": 1161
+  },
+  "opponent|TE:rushing_attempts|WR:rushing_attempts": {
+   "rho": 0.0,
+   "n": 565
+  },
+  "opponent|TE:rushing_attempts|WR:rushing_yards": {
+   "rho": 0.028,
+   "n": 518
+  },
+  "opponent|TE:rushing_yards|WR:receiving_yards": {
+   "rho": -0.027,
+   "n": 916
+  },
+  "opponent|TE:rushing_yards|WR:receptions": {
+   "rho": -0.037,
+   "n": 916
+  },
+  "opponent|TE:rushing_yards|WR:rushing_attempts": {
+   "rho": 0.0,
+   "n": 440
+  },
+  "opponent|TE:rushing_yards|WR:rushing_yards": {
+   "rho": 0.01,
+   "n": 403
+  },
+  "opponent|WR:passing_attempts|WR:receiving_yards": {
+   "rho": 0.003,
+   "n": 360
+  },
+  "opponent|WR:passing_attempts|WR:receptions": {
+   "rho": -0.034,
+   "n": 360
+  },
+  "opponent|WR:passing_attempts|WR:rushing_attempts": {
+   "rho": 0.003,
+   "n": 180
+  },
+  "opponent|WR:passing_attempts|WR:rushing_yards": {
+   "rho": 0.002,
+   "n": 160
+  },
+  "opponent|WR:passing_completions|WR:receiving_yards": {
+   "rho": 0.043,
+   "n": 185
+  },
+  "opponent|WR:passing_completions|WR:receptions": {
+   "rho": 0.009,
+   "n": 185
+  },
+  "opponent|WR:passing_yards|WR:receiving_yards": {
+   "rho": 0.041,
+   "n": 185
+  },
+  "opponent|WR:passing_yards|WR:receptions": {
+   "rho": 0.008,
+   "n": 185
+  },
+  "opponent|WR:receiving_yards|WR:receiving_yards": {
+   "rho": 0.013,
+   "n": 4721
+  },
+  "opponent|WR:receiving_yards|WR:receptions": {
+   "rho": 0.013,
+   "n": 9442
+  },
+  "opponent|WR:receiving_yards|WR:rushing_attempts": {
+   "rho": 0.013,
+   "n": 4477
+  },
+  "opponent|WR:receiving_yards|WR:rushing_yards": {
+   "rho": 0.017,
+   "n": 4053
+  },
+  "opponent|WR:receptions|WR:receptions": {
+   "rho": 0.003,
+   "n": 4721
+  },
+  "opponent|WR:receptions|WR:rushing_attempts": {
+   "rho": 0.009,
+   "n": 4477
+  },
+  "opponent|WR:receptions|WR:rushing_yards": {
+   "rho": 0.018,
+   "n": 4053
+  },
+  "opponent|WR:rushing_attempts|WR:rushing_attempts": {
+   "rho": 0.009,
+   "n": 1054
+  },
+  "opponent|WR:rushing_attempts|WR:rushing_yards": {
+   "rho": 0.0,
+   "n": 1915
+  },
+  "opponent|WR:rushing_yards|WR:rushing_yards": {
+   "rho": -0.003,
+   "n": 872
+  },
+  "same_player|QB:passing_attempts|QB:passing_completions": {
+   "rho": 0.687,
+   "n": 624
+  },
+  "same_player|QB:passing_attempts|QB:passing_interceptions": {
+   "rho": 0.196,
+   "n": 599
+  },
+  "same_player|QB:passing_attempts|QB:passing_touchdowns": {
+   "rho": 0.196,
+   "n": 593
+  },
+  "same_player|QB:passing_attempts|QB:passing_yards": {
+   "rho": 0.573,
+   "n": 624
+  },
+  "same_player|QB:passing_attempts|QB:rushing_attempts": {
+   "rho": 0.119,
+   "n": 624
+  },
+  "same_player|QB:passing_attempts|QB:rushing_yards": {
+   "rho": 0.138,
+   "n": 608
+  },
+  "same_player|QB:passing_completions|QB:passing_interceptions": {
+   "rho": 0.135,
+   "n": 599
+  },
+  "same_player|QB:passing_completions|QB:passing_touchdowns": {
+   "rho": 0.28,
+   "n": 593
+  },
+  "same_player|QB:passing_completions|QB:passing_yards": {
+   "rho": 0.626,
+   "n": 624
+  },
+  "same_player|QB:passing_completions|QB:rushing_attempts": {
+   "rho": 0.144,
+   "n": 624
+  },
+  "same_player|QB:passing_completions|QB:rushing_yards": {
+   "rho": 0.14,
+   "n": 608
+  },
+  "same_player|QB:passing_interceptions|QB:passing_touchdowns": {
+   "rho": -0.063,
+   "n": 580
+  },
+  "same_player|QB:passing_interceptions|QB:passing_yards": {
+   "rho": 0.093,
+   "n": 599
+  },
+  "same_player|QB:passing_interceptions|QB:rushing_attempts": {
+   "rho": 0.005,
+   "n": 599
+  },
+  "same_player|QB:passing_interceptions|QB:rushing_yards": {
+   "rho": 0.05,
+   "n": 591
+  },
+  "same_player|QB:passing_touchdowns|QB:passing_yards": {
+   "rho": 0.372,
+   "n": 593
+  },
+  "same_player|QB:passing_touchdowns|QB:rushing_attempts": {
+   "rho": 0.073,
+   "n": 593
+  },
+  "same_player|QB:passing_touchdowns|QB:rushing_yards": {
+   "rho": 0.052,
+   "n": 589
+  },
+  "same_player|QB:passing_yards|QB:rushing_attempts": {
+   "rho": 0.134,
+   "n": 624
+  },
+  "same_player|QB:passing_yards|QB:rushing_yards": {
+   "rho": 0.089,
+   "n": 608
+  },
+  "same_player|QB:rushing_attempts|QB:rushing_yards": {
+   "rho": 0.448,
+   "n": 608
+  },
+  "same_player|RB:receiving_yards|RB:receptions": {
+   "rho": 0.647,
+   "n": 1349
+  },
+  "same_player|RB:receiving_yards|RB:rushing_attempts": {
+   "rho": 0.093,
+   "n": 1349
+  },
+  "same_player|RB:receiving_yards|RB:rushing_yards": {
+   "rho": 0.086,
+   "n": 1349
+  },
+  "same_player|RB:receptions|RB:rushing_attempts": {
+   "rho": 0.058,
+   "n": 1349
+  },
+  "same_player|RB:receptions|RB:rushing_yards": {
+   "rho": 0.026,
+   "n": 1349
+  },
+  "same_player|RB:rushing_attempts|RB:rushing_yards": {
+   "rho": 0.641,
+   "n": 1379
+  },
+  "same_player|TE:receiving_yards|TE:receptions": {
+   "rho": 0.681,
+   "n": 1195
+  },
+  "same_player|TE:receiving_yards|TE:rushing_attempts": {
+   "rho": -0.006,
+   "n": 276
+  },
+  "same_player|TE:receiving_yards|TE:rushing_yards": {
+   "rho": 0.023,
+   "n": 214
+  },
+  "same_player|TE:receptions|TE:rushing_attempts": {
+   "rho": -0.018,
+   "n": 276
+  },
+  "same_player|TE:receptions|TE:rushing_yards": {
+   "rho": 0.025,
+   "n": 214
+  },
+  "same_player|TE:rushing_attempts|TE:rushing_yards": {
+   "rho": 0.422,
+   "n": 219
+  },
+  "same_player|WR:receiving_yards|WR:receptions": {
+   "rho": 0.715,
+   "n": 2266
+  },
+  "same_player|WR:receiving_yards|WR:rushing_attempts": {
+   "rho": 0.021,
+   "n": 1088
+  },
+  "same_player|WR:receiving_yards|WR:rushing_yards": {
+   "rho": 0.016,
+   "n": 987
+  },
+  "same_player|WR:receptions|WR:rushing_attempts": {
+   "rho": 0.016,
+   "n": 1088
+  },
+  "same_player|WR:receptions|WR:rushing_yards": {
+   "rho": 0.012,
+   "n": 987
+  },
+  "same_player|WR:rushing_attempts|WR:rushing_yards": {
+   "rho": 0.59,
+   "n": 987
+  },
+  "teammate|QB:passing_attempts|QB:passing_completions": {
+   "rho": -0.223,
+   "n": 176
+  },
+  "teammate|QB:passing_attempts|QB:passing_interceptions": {
+   "rho": -0.095,
+   "n": 155
+  },
+  "teammate|QB:passing_attempts|QB:passing_touchdowns": {
+   "rho": -0.126,
+   "n": 150
+  },
+  "teammate|QB:passing_attempts|QB:passing_yards": {
+   "rho": -0.214,
+   "n": 176
+  },
+  "teammate|QB:passing_attempts|QB:rushing_attempts": {
+   "rho": -0.102,
+   "n": 176
+  },
+  "teammate|QB:passing_attempts|QB:rushing_yards": {
+   "rho": -0.076,
+   "n": 162
+  },
+  "teammate|QB:passing_attempts|RB:receiving_yards": {
+   "rho": 0.116,
+   "n": 1564
+  },
+  "teammate|QB:passing_attempts|RB:receptions": {
+   "rho": 0.171,
+   "n": 1564
+  },
+  "teammate|QB:passing_attempts|RB:rushing_attempts": {
+   "rho": -0.104,
+   "n": 1599
+  },
+  "teammate|QB:passing_attempts|RB:rushing_yards": {
+   "rho": -0.095,
+   "n": 1599
+  },
+  "teammate|QB:passing_attempts|TE:receiving_yards": {
+   "rho": 0.153,
+   "n": 1388
+  },
+  "teammate|QB:passing_attempts|TE:receptions": {
+   "rho": 0.208,
+   "n": 1393
+  },
+  "teammate|QB:passing_attempts|TE:rushing_attempts": {
+   "rho": 0.008,
+   "n": 326
+  },
+  "teammate|QB:passing_attempts|TE:rushing_yards": {
+   "rho": 0.018,
+   "n": 255
+  },
+  "teammate|QB:passing_attempts|WR:receiving_yards": {
+   "rho": 0.12,
+   "n": 2616
+  },
+  "teammate|QB:passing_attempts|WR:receptions": {
+   "rho": 0.164,
+   "n": 2616
+  },
+  "teammate|QB:passing_attempts|WR:rushing_attempts": {
+   "rho": -0.012,
+   "n": 1256
+  },
+  "teammate|QB:passing_attempts|WR:rushing_yards": {
+   "rho": -0.006,
+   "n": 1142
+  },
+  "teammate|QB:passing_completions|QB:passing_interceptions": {
+   "rho": -0.1,
+   "n": 155
+  },
+  "teammate|QB:passing_completions|QB:passing_touchdowns": {
+   "rho": -0.119,
+   "n": 150
+  },
+  "teammate|QB:passing_completions|QB:passing_yards": {
+   "rho": -0.204,
+   "n": 176
+  },
+  "teammate|QB:passing_completions|QB:rushing_attempts": {
+   "rho": -0.074,
+   "n": 176
+  },
+  "teammate|QB:passing_completions|QB:rushing_yards": {
+   "rho": -0.069,
+   "n": 162
+  },
+  "teammate|QB:passing_completions|RB:receiving_yards": {
+   "rho": 0.145,
+   "n": 1564
+  },
+  "teammate|QB:passing_completions|RB:receptions": {
+   "rho": 0.211,
+   "n": 1564
+  },
+  "teammate|QB:passing_completions|RB:rushing_attempts": {
+   "rho": -0.076,
+   "n": 1599
+  },
+  "teammate|QB:passing_completions|RB:rushing_yards": {
+   "rho": -0.069,
+   "n": 1599
+  },
+  "teammate|QB:passing_completions|TE:receiving_yards": {
+   "rho": 0.185,
+   "n": 1388
+  },
+  "teammate|QB:passing_completions|TE:receptions": {
+   "rho": 0.247,
+   "n": 1393
+  },
+  "teammate|QB:passing_completions|TE:rushing_attempts": {
+   "rho": -0.004,
+   "n": 326
+  },
+  "teammate|QB:passing_completions|TE:rushing_yards": {
+   "rho": 0.019,
+   "n": 255
+  },
+  "teammate|QB:passing_completions|WR:receiving_yards": {
+   "rho": 0.154,
+   "n": 2616
+  },
+  "teammate|QB:passing_completions|WR:receptions": {
+   "rho": 0.199,
+   "n": 2616
+  },
+  "teammate|QB:passing_completions|WR:rushing_attempts": {
+   "rho": -0.014,
+   "n": 1256
+  },
+  "teammate|QB:passing_completions|WR:rushing_yards": {
+   "rho": -0.015,
+   "n": 1142
+  },
+  "teammate|QB:passing_interceptions|QB:passing_yards": {
+   "rho": -0.113,
+   "n": 155
+  },
+  "teammate|QB:passing_interceptions|QB:rushing_attempts": {
+   "rho": -0.15,
+   "n": 155
+  },
+  "teammate|QB:passing_interceptions|RB:receiving_yards": {
+   "rho": 0.018,
+   "n": 1490
+  },
+  "teammate|QB:passing_interceptions|RB:receptions": {
+   "rho": 0.05,
+   "n": 1490
+  },
+  "teammate|QB:passing_interceptions|RB:rushing_attempts": {
+   "rho": -0.069,
+   "n": 1523
+  },
+  "teammate|QB:passing_interceptions|RB:rushing_yards": {
+   "rho": -0.043,
+   "n": 1523
+  },
+  "teammate|QB:passing_interceptions|TE:receiving_yards": {
+   "rho": 0.001,
+   "n": 1329
+  },
+  "teammate|QB:passing_interceptions|TE:receptions": {
+   "rho": 0.015,
+   "n": 1333
+  },
+  "teammate|QB:passing_interceptions|TE:rushing_attempts": {
+   "rho": -0.011,
+   "n": 318
+  },
+  "teammate|QB:passing_interceptions|TE:rushing_yards": {
+   "rho": 0.012,
+   "n": 249
+  },
+  "teammate|QB:passing_interceptions|WR:receiving_yards": {
+   "rho": -0.03,
+   "n": 2504
+  },
+  "teammate|QB:passing_interceptions|WR:receptions": {
+   "rho": -0.013,
+   "n": 2504
+  },
+  "teammate|QB:passing_interceptions|WR:rushing_attempts": {
+   "rho": -0.021,
+   "n": 1197
+  },
+  "teammate|QB:passing_interceptions|WR:rushing_yards": {
+   "rho": -0.016,
+   "n": 1086
+  },
+  "teammate|QB:passing_touchdowns|QB:passing_yards": {
+   "rho": -0.124,
+   "n": 150
+  },
+  "teammate|QB:passing_touchdowns|QB:rushing_attempts": {
+   "rho": 0.012,
+   "n": 150
+  },
+  "teammate|QB:passing_touchdowns|RB:receiving_yards": {
+   "rho": 0.055,
+   "n": 1483
+  },
+  "teammate|QB:passing_touchdowns|RB:receptions": {
+   "rho": 0.037,
+   "n": 1483
+  },
+  "teammate|QB:passing_touchdowns|RB:rushing_attempts": {
+   "rho": -0.014,
+   "n": 1516
+  },
+  "teammate|QB:passing_touchdowns|RB:rushing_yards": {
+   "rho": 0.004,
+   "n": 1516
+  },
+  "teammate|QB:passing_touchdowns|TE:receiving_yards": {
+   "rho": 0.104,
+   "n": 1329
+  },
+  "teammate|QB:passing_touchdowns|TE:receptions": {
+   "rho": 0.106,
+   "n": 1333
+  },
+  "teammate|QB:passing_touchdowns|TE:rushing_attempts": {
+   "rho": -0.04,
+   "n": 308
+  },
+  "teammate|QB:passing_touchdowns|TE:rushing_yards": {
+   "rho": -0.02,
+   "n": 244
+  },
+  "teammate|QB:passing_touchdowns|WR:receiving_yards": {
+   "rho": 0.127,
+   "n": 2482
+  },
+  "teammate|QB:passing_touchdowns|WR:receptions": {
+   "rho": 0.082,
+   "n": 2482
+  },
+  "teammate|QB:passing_touchdowns|WR:rushing_attempts": {
+   "rho": 0.043,
+   "n": 1184
+  },
+  "teammate|QB:passing_touchdowns|WR:rushing_yards": {
+   "rho": 0.062,
+   "n": 1073
+  },
+  "teammate|QB:passing_yards|QB:rushing_attempts": {
+   "rho": -0.073,
+   "n": 176
+  },
+  "teammate|QB:passing_yards|QB:rushing_yards": {
+   "rho": -0.057,
+   "n": 162
+  },
+  "teammate|QB:passing_yards|RB:receiving_yards": {
+   "rho": 0.143,
+   "n": 1564
+  },
+  "teammate|QB:passing_yards|RB:receptions": {
+   "rho": 0.123,
+   "n": 1564
+  },
+  "teammate|QB:passing_yards|RB:rushing_attempts": {
+   "rho": -0.052,
+   "n": 1599
+  },
+  "teammate|QB:passing_yards|RB:rushing_yards": {
+   "rho": -0.053,
+   "n": 1599
+  },
+  "teammate|QB:passing_yards|TE:receiving_yards": {
+   "rho": 0.2,
+   "n": 1388
+  },
+  "teammate|QB:passing_yards|TE:receptions": {
+   "rho": 0.189,
+   "n": 1393
+  },
+  "teammate|QB:passing_yards|TE:rushing_attempts": {
+   "rho": -0.008,
+   "n": 326
+  },
+  "teammate|QB:passing_yards|TE:rushing_yards": {
+   "rho": 0.011,
+   "n": 255
+  },
+  "teammate|QB:passing_yards|WR:receiving_yards": {
+   "rho": 0.222,
+   "n": 2616
+  },
+  "teammate|QB:passing_yards|WR:receptions": {
+   "rho": 0.169,
+   "n": 2616
+  },
+  "teammate|QB:passing_yards|WR:rushing_attempts": {
+   "rho": -0.005,
+   "n": 1256
+  },
+  "teammate|QB:passing_yards|WR:rushing_yards": {
+   "rho": 0.005,
+   "n": 1142
+  },
+  "teammate|QB:receiving_yards|WR:receiving_yards": {
+   "rho": -0.013,
+   "n": 153
+  },
+  "teammate|QB:receiving_yards|WR:receptions": {
+   "rho": 0.001,
+   "n": 153
+  },
+  "teammate|QB:receptions|RB:receiving_yards": {
+   "rho": 0.007,
+   "n": 185
+  },
+  "teammate|QB:receptions|RB:receptions": {
+   "rho": -0.003,
+   "n": 185
+  },
+  "teammate|QB:receptions|RB:rushing_attempts": {
+   "rho": 0.009,
+   "n": 189
+  },
+  "teammate|QB:receptions|RB:rushing_yards": {
+   "rho": 0.028,
+   "n": 189
+  },
+  "teammate|QB:receptions|TE:receiving_yards": {
+   "rho": -0.017,
+   "n": 168
+  },
+  "teammate|QB:receptions|TE:receptions": {
+   "rho": -0.003,
+   "n": 172
+  },
+  "teammate|QB:receptions|WR:receiving_yards": {
+   "rho": -0.03,
+   "n": 340
+  },
+  "teammate|QB:receptions|WR:receptions": {
+   "rho": -0.031,
+   "n": 340
+  },
+  "teammate|QB:receptions|WR:rushing_attempts": {
+   "rho": 0.013,
+   "n": 164
+  },
+  "teammate|QB:receptions|WR:rushing_yards": {
+   "rho": 0.101,
+   "n": 155
+  },
+  "teammate|QB:rushing_attempts|QB:rushing_yards": {
+   "rho": -0.004,
+   "n": 162
+  },
+  "teammate|QB:rushing_attempts|RB:receiving_yards": {
+   "rho": 0.024,
+   "n": 1564
+  },
+  "teammate|QB:rushing_attempts|RB:receptions": {
+   "rho": 0.003,
+   "n": 1564
+  },
+  "teammate|QB:rushing_attempts|RB:rushing_attempts": {
+   "rho": 0.048,
+   "n": 1599
+  },
+  "teammate|QB:rushing_attempts|RB:rushing_yards": {
+   "rho": 0.027,
+   "n": 1599
+  },
+  "teammate|QB:rushing_attempts|TE:receiving_yards": {
+   "rho": -0.006,
+   "n": 1388
+  },
+  "teammate|QB:rushing_attempts|TE:receptions": {
+   "rho": 0.012,
+   "n": 1393
+  },
+  "teammate|QB:rushing_attempts|TE:rushing_attempts": {
+   "rho": -0.033,
+   "n": 326
+  },
+  "teammate|QB:rushing_attempts|TE:rushing_yards": {
+   "rho": -0.042,
+   "n": 255
+  },
+  "teammate|QB:rushing_attempts|WR:receiving_yards": {
+   "rho": -0.019,
+   "n": 2616
+  },
+  "teammate|QB:rushing_attempts|WR:receptions": {
+   "rho": -0.02,
+   "n": 2616
+  },
+  "teammate|QB:rushing_attempts|WR:rushing_attempts": {
+   "rho": -0.004,
+   "n": 1256
+  },
+  "teammate|QB:rushing_attempts|WR:rushing_yards": {
+   "rho": 0.009,
+   "n": 1142
+  },
+  "teammate|QB:rushing_yards|RB:receiving_yards": {
+   "rho": 0.031,
+   "n": 1519
+  },
+  "teammate|QB:rushing_yards|RB:receptions": {
+   "rho": 0.039,
+   "n": 1519
+  },
+  "teammate|QB:rushing_yards|RB:rushing_attempts": {
+   "rho": -0.012,
+   "n": 1552
+  },
+  "teammate|QB:rushing_yards|RB:rushing_yards": {
+   "rho": -0.025,
+   "n": 1552
+  },
+  "teammate|QB:rushing_yards|TE:receiving_yards": {
+   "rho": 0.001,
+   "n": 1353
+  },
+  "teammate|QB:rushing_yards|TE:receptions": {
+   "rho": 0.029,
+   "n": 1357
+  },
+  "teammate|QB:rushing_yards|TE:rushing_attempts": {
+   "rho": -0.073,
+   "n": 319
+  },
+  "teammate|QB:rushing_yards|TE:rushing_yards": {
+   "rho": -0.051,
+   "n": 248
+  },
+  "teammate|QB:rushing_yards|WR:receiving_yards": {
+   "rho": -0.023,
+   "n": 2546
+  },
+  "teammate|QB:rushing_yards|WR:receptions": {
+   "rho": -0.013,
+   "n": 2546
+  },
+  "teammate|QB:rushing_yards|WR:rushing_attempts": {
+   "rho": 0.008,
+   "n": 1226
+  },
+  "teammate|QB:rushing_yards|WR:rushing_yards": {
+   "rho": -0.015,
+   "n": 1117
+  },
+  "teammate|RB:passing_attempts|TE:receiving_yards": {
+   "rho": 0.034,
+   "n": 169
+  },
+  "teammate|RB:passing_attempts|TE:receptions": {
+   "rho": 0.021,
+   "n": 169
+  },
+  "teammate|RB:passing_attempts|WR:receiving_yards": {
+   "rho": -0.003,
+   "n": 343
+  },
+  "teammate|RB:passing_attempts|WR:receptions": {
+   "rho": -0.01,
+   "n": 343
+  },
+  "teammate|RB:passing_attempts|WR:rushing_attempts": {
+   "rho": 0.027,
+   "n": 172
+  },
+  "teammate|RB:receiving_yards|RB:receiving_yards": {
+   "rho": -0.007,
+   "n": 1103
+  },
+  "teammate|RB:receiving_yards|RB:receptions": {
+   "rho": 0.001,
+   "n": 2206
+  },
+  "teammate|RB:receiving_yards|RB:rushing_attempts": {
+   "rho": -0.026,
+   "n": 2268
+  },
+  "teammate|RB:receiving_yards|RB:rushing_yards": {
+   "rho": -0.018,
+   "n": 2268
+  },
+  "teammate|RB:receiving_yards|TE:receiving_yards": {
+   "rho": 0.052,
+   "n": 3001
+  },
+  "teammate|RB:receiving_yards|TE:receptions": {
+   "rho": 0.049,
+   "n": 3008
+  },
+  "teammate|RB:receiving_yards|TE:rushing_attempts": {
+   "rho": 0.005,
+   "n": 710
+  },
+  "teammate|RB:receiving_yards|TE:rushing_yards": {
+   "rho": -0.015,
+   "n": 576
+  },
+  "teammate|RB:receiving_yards|WR:passing_attempts": {
+   "rho": 0.021,
+   "n": 187
+  },
+  "teammate|RB:receiving_yards|WR:receiving_yards": {
+   "rho": 0.004,
+   "n": 5620
+  },
+  "teammate|RB:receiving_yards|WR:receptions": {
+   "rho": 0.006,
+   "n": 5620
+  },
+  "teammate|RB:receiving_yards|WR:rushing_attempts": {
+   "rho": 0.021,
+   "n": 2698
+  },
+  "teammate|RB:receiving_yards|WR:rushing_yards": {
+   "rho": 0.013,
+   "n": 2467
+  },
+  "teammate|RB:receptions|RB:receptions": {
+   "rho": 0.026,
+   "n": 1103
+  },
+  "teammate|RB:receptions|RB:rushing_attempts": {
+   "rho": -0.072,
+   "n": 2268
+  },
+  "teammate|RB:receptions|RB:rushing_yards": {
+   "rho": -0.05,
+   "n": 2268
+  },
+  "teammate|RB:receptions|TE:receiving_yards": {
+   "rho": 0.046,
+   "n": 3001
+  },
+  "teammate|RB:receptions|TE:receptions": {
+   "rho": 0.058,
+   "n": 3008
+  },
+  "teammate|RB:receptions|TE:rushing_attempts": {
+   "rho": 0.02,
+   "n": 710
+  },
+  "teammate|RB:receptions|TE:rushing_yards": {
+   "rho": 0.02,
+   "n": 576
+  },
+  "teammate|RB:receptions|WR:passing_attempts": {
+   "rho": 0.025,
+   "n": 187
+  },
+  "teammate|RB:receptions|WR:receiving_yards": {
+   "rho": 0.02,
+   "n": 5620
+  },
+  "teammate|RB:receptions|WR:receptions": {
+   "rho": 0.034,
+   "n": 5620
+  },
+  "teammate|RB:receptions|WR:rushing_attempts": {
+   "rho": 0.009,
+   "n": 2698
+  },
+  "teammate|RB:receptions|WR:rushing_yards": {
+   "rho": -0.005,
+   "n": 2467
+  },
+  "teammate|RB:rushing_attempts|RB:rushing_attempts": {
+   "rho": 0.026,
+   "n": 1165
+  },
+  "teammate|RB:rushing_attempts|RB:rushing_yards": {
+   "rho": 0.043,
+   "n": 2330
+  },
+  "teammate|RB:rushing_attempts|TE:receiving_yards": {
+   "rho": 0.013,
+   "n": 3064
+  },
+  "teammate|RB:rushing_attempts|TE:receptions": {
+   "rho": 0.012,
+   "n": 3074
+  },
+  "teammate|RB:rushing_attempts|TE:rushing_attempts": {
+   "rho": 0.025,
+   "n": 719
+  },
+  "teammate|RB:rushing_attempts|TE:rushing_yards": {
+   "rho": 0.014,
+   "n": 585
+  },
+  "teammate|RB:rushing_attempts|WR:passing_attempts": {
+   "rho": 0.02,
+   "n": 187
+  },
+  "teammate|RB:rushing_attempts|WR:receiving_yards": {
+   "rho": -0.025,
+   "n": 5752
+  },
+  "teammate|RB:rushing_attempts|WR:receptions": {
+   "rho": -0.032,
+   "n": 5752
+  },
+  "teammate|RB:rushing_attempts|WR:rushing_attempts": {
+   "rho": 0.022,
+   "n": 2762
+  },
+  "teammate|RB:rushing_attempts|WR:rushing_yards": {
+   "rho": 0.04,
+   "n": 2522
+  },
+  "teammate|RB:rushing_yards|RB:rushing_yards": {
+   "rho": 0.033,
+   "n": 1165
+  },
+  "teammate|RB:rushing_yards|TE:receiving_yards": {
+   "rho": -0.012,
+   "n": 3064
+  },
+  "teammate|RB:rushing_yards|TE:receptions": {
+   "rho": -0.001,
+   "n": 3074
+  },
+  "teammate|RB:rushing_yards|TE:rushing_attempts": {
+   "rho": 0.02,
+   "n": 719
+  },
+  "teammate|RB:rushing_yards|TE:rushing_yards": {
+   "rho": 0.015,
+   "n": 585
+  },
+  "teammate|RB:rushing_yards|WR:passing_attempts": {
+   "rho": -0.01,
+   "n": 187
+  },
+  "teammate|RB:rushing_yards|WR:receiving_yards": {
+   "rho": -0.015,
+   "n": 5752
+  },
+  "teammate|RB:rushing_yards|WR:receptions": {
+   "rho": -0.022,
+   "n": 5752
+  },
+  "teammate|RB:rushing_yards|WR:rushing_attempts": {
+   "rho": 0.042,
+   "n": 2762
+  },
+  "teammate|RB:rushing_yards|WR:rushing_yards": {
+   "rho": 0.064,
+   "n": 2522
+  },
+  "teammate|TE:passing_attempts|WR:receiving_yards": {
+   "rho": -0.008,
+   "n": 186
+  },
+  "teammate|TE:passing_attempts|WR:receptions": {
+   "rho": 0.005,
+   "n": 186
+  },
+  "teammate|TE:receiving_yards|TE:receiving_yards": {
+   "rho": -0.011,
+   "n": 877
+  },
+  "teammate|TE:receiving_yards|TE:receptions": {
+   "rho": -0.005,
+   "n": 1761
+  },
+  "teammate|TE:receiving_yards|TE:rushing_attempts": {
+   "rho": -0.0,
+   "n": 403
+  },
+  "teammate|TE:receiving_yards|TE:rushing_yards": {
+   "rho": 0.013,
+   "n": 318
+  },
+  "teammate|TE:receiving_yards|WR:passing_attempts": {
+   "rho": 0.003,
+   "n": 193
+  },
+  "teammate|TE:receiving_yards|WR:receiving_yards": {
+   "rho": 0.023,
+   "n": 4927
+  },
+  "teammate|TE:receiving_yards|WR:receptions": {
+   "rho": 0.029,
+   "n": 4927
+  },
+  "teammate|TE:receiving_yards|WR:rushing_attempts": {
+   "rho": -0.052,
+   "n": 2333
+  },
+  "teammate|TE:receiving_yards|WR:rushing_yards": {
+   "rho": -0.038,
+   "n": 2102
+  },
+  "teammate|TE:receptions|TE:receptions": {
+   "rho": 0.012,
+   "n": 884
+  },
+  "teammate|TE:receptions|TE:rushing_attempts": {
+   "rho": -0.001,
+   "n": 403
+  },
+  "teammate|TE:receptions|TE:rushing_yards": {
+   "rho": 0.003,
+   "n": 318
+  },
+  "teammate|TE:receptions|WR:passing_attempts": {
+   "rho": 0.01,
+   "n": 193
+  },
+  "teammate|TE:receptions|WR:receiving_yards": {
+   "rho": 0.013,
+   "n": 4948
+  },
+  "teammate|TE:receptions|WR:receptions": {
+   "rho": 0.026,
+   "n": 4948
+  },
+  "teammate|TE:receptions|WR:rushing_attempts": {
+   "rho": -0.051,
+   "n": 2344
+  },
+  "teammate|TE:receptions|WR:rushing_yards": {
+   "rho": -0.036,
+   "n": 2113
+  },
+  "teammate|TE:rushing_attempts|WR:receiving_yards": {
+   "rho": -0.007,
+   "n": 1155
+  },
+  "teammate|TE:rushing_attempts|WR:receptions": {
+   "rho": 0.009,
+   "n": 1155
+  },
+  "teammate|TE:rushing_attempts|WR:rushing_attempts": {
+   "rho": 0.051,
+   "n": 562
+  },
+  "teammate|TE:rushing_attempts|WR:rushing_yards": {
+   "rho": 0.059,
+   "n": 509
+  },
+  "teammate|TE:rushing_yards|WR:receiving_yards": {
+   "rho": 0.003,
+   "n": 913
+  },
+  "teammate|TE:rushing_yards|WR:receptions": {
+   "rho": 0.002,
+   "n": 913
+  },
+  "teammate|TE:rushing_yards|WR:rushing_attempts": {
+   "rho": 0.042,
+   "n": 418
+  },
+  "teammate|TE:rushing_yards|WR:rushing_yards": {
+   "rho": 0.072,
+   "n": 370
+  },
+  "teammate|WR:passing_attempts|WR:receiving_yards": {
+   "rho": 0.001,
+   "n": 255
+  },
+  "teammate|WR:passing_attempts|WR:receptions": {
+   "rho": -0.013,
+   "n": 255
+  },
+  "teammate|WR:receiving_yards|WR:receiving_yards": {
+   "rho": 0.003,
+   "n": 3791
+  },
+  "teammate|WR:receiving_yards|WR:receptions": {
+   "rho": 0.012,
+   "n": 7582
+  },
+  "teammate|WR:receiving_yards|WR:rushing_attempts": {
+   "rho": -0.001,
+   "n": 3702
+  },
+  "teammate|WR:receiving_yards|WR:rushing_yards": {
+   "rho": -0.024,
+   "n": 3371
+  },
+  "teammate|WR:receptions|WR:receptions": {
+   "rho": 0.023,
+   "n": 3791
+  },
+  "teammate|WR:receptions|WR:rushing_attempts": {
+   "rho": 0.011,
+   "n": 3702
+  },
+  "teammate|WR:receptions|WR:rushing_yards": {
+   "rho": -0.012,
+   "n": 3371
+  },
+  "teammate|WR:rushing_attempts|WR:rushing_attempts": {
+   "rho": 0.031,
+   "n": 856
+  },
+  "teammate|WR:rushing_attempts|WR:rushing_yards": {
+   "rho": 0.015,
+   "n": 1564
+  },
+  "teammate|WR:rushing_yards|WR:rushing_yards": {
+   "rho": 0.002,
+   "n": 723
+  }
+ }
+}

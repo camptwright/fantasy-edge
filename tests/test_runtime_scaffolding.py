@@ -18,6 +18,7 @@ def test_celery_schedule_covers_every_ingestion_source():
     scheduled = celery_app.conf.beat_schedule
     assert {item["task"] for item in scheduled.values()} == {
         "fantasy.research_shadow",
+        "fantasy.prop_board",
         "fantasy.register_nfl_lab",
         "fantasy.refresh_nfl_stats",
         "fantasy.refresh_snap_counts",
