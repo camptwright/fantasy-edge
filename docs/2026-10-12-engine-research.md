@@ -140,3 +140,35 @@ recommendation for the owner's review rather than a change.
 - nflverse data: https://github.com/nflverse/nfldata
 - Sleeper trending endpoint (community docs): https://pkg.go.dev/github.com/dsheehan167/go-sleeper@v0.2.0
 - FantasyCalc: https://fantasycalc.com (values API used under its terms)
+
+## Update 2026-10-13
+
+**NFL lab:** blend moved to 85% sharp market / 15% lab (the team model's
+fitted market-regression floor, chosen independently of the lab's results),
+graded from each frozen record's stored lab and market probabilities, so the
+existing cohort is reused. The 25% blend stays as a comparison.
+
+**Team scoring split** (`scripts/research_totals_model.py`): offense/defense
+point ratings. Test 2015–2025: total MAE 10.71 vs 10.95 for the serving
+running averages (market 10.44); over/under Brier 0.257 vs 0.264. The serving
+fit defers to the market total when one exists. Used for NFL totals, team
+points in projections, and the fantasy engine's unlined weeks.
+
+**College model** (`scripts/research_ncaaf_model.py`, ESPN history via
+`scripts/fetch_ncaaf_history.py`, 8,634 FBS games 2016–2025): same math with
+program-anchored offseason reversion (the SP+/FPI preseason practice) and a
+low rating for first-seen (mostly FCS) teams. Test 2021–2025 Brier 0.170 vs
+0.1995 for the serving Elo; market 0.139. NCAAF moneyline/spread keep the
+owner-approved calibration override and carry the model as a research field;
+NCAAF totals use it. Known gap: neutral-site games are not flagged in the
+games table, so home field applies to bowls.
+
+**UI (Chrome review of FantasyPros' web tools):** adopted the Multi-League
+Assistant idea as an "All leagues" Today view, and four-player Start/Sit.
+Browser audit at 390 px: no sideways overflow on any page, the mobile bar
+stays pinned while scrolling; fixed focus rings and 24 px link targets.
+Not yet adopted: FantasyPros' post-game recap and "Rate My Team".
+
+**Data fixes found on the way:** bye/out starters blocked pregame
+win-probability capture; ESPN sync never refreshed games left unfinished
+outside its rolling window (now re-polled).
