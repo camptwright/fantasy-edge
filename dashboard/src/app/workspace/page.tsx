@@ -13,6 +13,7 @@ import { WorkspacePlayerProfile } from "@/components/WorkspacePlayerProfile";
 import { WorkspaceStartSit } from "@/components/WorkspaceStartSit";
 import { QuickActions, PositionStrength } from "@/components/WorkspaceHomeExtras";
 import { WorkspaceMarkets } from "@/components/WorkspaceMarkets";
+import { WorkspaceAllLeagues } from "@/components/WorkspaceAllLeagues";
 import { WorkspaceResearch } from "@/components/WorkspaceResearch";
 import { WorkspaceSettings } from "@/components/WorkspaceSettings";
 import { fantasyApi } from "@/lib/fantasy-api";
@@ -55,12 +56,17 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
   const fantasy = view === "today" || view === "fantasy";
   const leagueData = fantasy ? await fantasyApi<{ items: League[] }>("/api/v2/fantasy/leagues", 3000) : null;
   const leagues = leagueData?.items.filter(league => league.sport === "nfl") ?? [];
+  // "All leagues" (Today only): every league's overview side by side.
+  const all = view === "today" && query.league === "all" && leagues.length > 1;
+  const allItems = all ? await Promise.all(leagues.map(async item => ({ league: item,
+    overview: await fantasyApi<Overview>(`/api/v2/fantasy/leagues/${encodeURIComponent(item.league_id)}/overview`, 3000) }))) : [];
   // Never silently show another league when a requested league is missing.
-  const selected = query.league ? leagues.find(league => league.league_id === query.league) : leagues[0];
+  const requested = query.league === "all" ? undefined : query.league;
+  const selected = all ? undefined : requested ? leagues.find(league => league.league_id === requested) : leagues[0];
   const overview = selected ? await fantasyApi<Overview>(`/api/v2/fantasy/leagues/${encodeURIComponent(selected.league_id)}/overview`, 3000) : null;
   const league = selected?.league_id ?? query.league;
   const ready = overview?.status === "snapshot_available";
-  const title = view === "fantasy" ? (tool === "player" ? "Player" : FANTASY_TOOLS.find(item => item.id === tool)?.label) : TITLES[view];
+  const title = all ? "All leagues" : view === "fantasy" ? (tool === "player" ? "Player" : FANTASY_TOOLS.find(item => item.id === tool)?.label) : TITLES[view];
   const href = (id: string) => view === "fantasy" ? fantasyToolHref(tool === "player" ? "team" : tool, id) : workspaceHref(view, id);
   return <main>
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-8">
@@ -75,10 +81,11 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
         </div>}
       </header>
       {fantasy ? <>
-        {leagues.length > 1 && <nav aria-label="Select league" className="workspace-scrollbar mt-5 flex gap-2 overflow-x-auto">{leagues.map(item => <a key={item.league_id} href={href(item.league_id)} aria-current={selected?.league_id === item.league_id ? "page" : undefined}
+        {leagues.length > 1 && <nav aria-label="Select league" className="workspace-scrollbar mt-5 flex gap-2 overflow-x-auto">{view === "today" && <a href={workspaceHref("today", "all")} aria-current={all ? "page" : undefined}
+          className={`flex min-h-10 shrink-0 items-center rounded-full border px-4 text-sm ${all ? "border-emerald-500 bg-emerald-500/10 text-emerald-200" : "border-slate-700 text-slate-300 hover:border-slate-500"}`}>All leagues</a>}{leagues.map(item => <a key={item.league_id} href={href(item.league_id)} aria-current={selected?.league_id === item.league_id ? "page" : undefined}
           className={`flex min-h-10 shrink-0 items-center gap-2 rounded-full border px-4 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300 ${selected?.league_id === item.league_id ? "border-emerald-500 bg-emerald-500/10 text-emerald-200" : "border-slate-700 text-slate-300 hover:border-slate-500"}`}>{item.name}<span className="text-[10px] uppercase text-slate-500">{item.platform}</span></a>)}</nav>}
         {view === "fantasy" && <nav aria-label="Fantasy tools" className="workspace-scrollbar mt-4 flex gap-1 overflow-x-auto border-b border-slate-800 lg:hidden">{FANTASY_TOOLS.map(item => <a key={item.id} href={fantasyToolHref(item.id, league)} aria-current={tool === item.id ? "page" : undefined} className={`min-h-11 shrink-0 border-b-2 px-3 py-3 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300 ${tool === item.id ? "border-emerald-400 text-emerald-300" : "border-transparent text-slate-400 hover:text-slate-100"}`}>{item.label}</a>)}</nav>}
-        {!selected ? <section role="status" className="my-6 rounded-xl border border-amber-800 p-5">
+        {all ? <div className="mt-6"><WorkspaceAllLeagues items={allItems} /></div> : !selected ? <section role="status" className="my-6 rounded-xl border border-amber-800 p-5">
           <h2 className="font-semibold">{leagueData === null ? "League service unavailable" : query.league ? "Requested league is unavailable" : "No NFL leagues synced"}</h2>
           <p className="mt-2 text-sm text-slate-300">{leagueData === null ? "This is a connection or service error, not an empty roster. Try again or check Operations." : "Choose an available NFL league or check league sync in Settings."}</p>
         </section> : !ready ? <section role="status" className="my-6 rounded-xl border border-slate-700 p-5">

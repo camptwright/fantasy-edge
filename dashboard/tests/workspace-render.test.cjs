@@ -281,3 +281,19 @@ test('trade market row shows FantasyCalc totals or its status',()=>{
   const stale=renderToStaticMarkup(React.createElement(WorkspaceTradeOutlook,{outlook:outlook({status:'stale',values:{}}),a:['a'],b:['b'],players}));
   assert.match(stale,/Trade market value unavailable \(stale\)/);
 });
+
+test('all-leagues view summarises each league and players rostered in several',()=>{
+  const lib=loadComponent('src/lib/workspace.ts');
+  const {WorkspaceAllLeagues}=loadComponent('src/components/WorkspaceAllLeagues.tsx',{'@/lib/workspace':lib});
+  const player=(id,name)=>({player_id:id,name,position:'WR',team:'DET',points:12,consensus_week_points:14.2,injury_status:null});
+  const ov=(starters)=>({status:'snapshot_available',week:6,matchup:{mine:{name:'Mine',recorded_points:0,starters:starters.map(id=>({player_id:id}))},opponent:{name:'Them',recorded_points:0}},
+    outcomes:{status:'estimated_research',win_probability:.43,reason:'r'},engine_waivers:{rows:[{add:{name:'Add'},compare:{name:'Drop'},ros_gain:12.5}]},
+    roster_players:[player('x','Amon-Ra St. Brown')],lineup_changes:{status:'available',start:[],reason:'ok'},waivers:{moves:[]}});
+  const html=renderToStaticMarkup(React.createElement(WorkspaceAllLeagues,{items:[
+    {league:{league_id:'1',name:'League One',platform:'sleeper'},overview:ov(['x'])},
+    {league:{league_id:'2',name:'League Two',platform:'espn'},overview:ov([])},
+    {league:{league_id:'3',name:'League Three',platform:'sleeper'},overview:null}]}));
+  assert.match(html,/43% to win/); assert.match(html,/Best add.*Add/); assert.match(html,/\+12\.5/);
+  assert.match(html,/Snapshot not ready.*Not an empty league/);
+  assert.match(html,/Amon-Ra St\. Brown/); assert.match(html,/League One · starting/); assert.match(html,/League Two · bench/);
+});

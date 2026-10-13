@@ -24,7 +24,8 @@ export function WorkspaceNav() {
   // Full tools (ledger, calibration, …) live under their workspace in the same shell.
   const active = pathname === "/workspace" ? workspaceView(query.get("view") ?? undefined) : routeWorkspace(pathname);
   const tool = fantasyTool(query.get("tool") ?? undefined);
-  const league = query.get("league") ?? undefined;
+  // "all" is a Today-only aggregate; other screens fall back to the default league.
+  const league = query.get("league") === "all" ? undefined : query.get("league") ?? undefined;
   const busy = (event: React.MouseEvent) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     setPending(true);
