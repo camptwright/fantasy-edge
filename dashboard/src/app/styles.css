@@ -11,3 +11,7 @@ html, body { overflow-x: clip; }
 .fixed-bar { transform: translate3d(0, 0, 0); will-change: transform; backface-visibility: hidden; }
 .workspace-scrollbar { scrollbar-width: none; }
 .workspace-scrollbar::-webkit-scrollbar { display: none; }
+/* Keyboard: one visible focus ring everywhere (classes can still override). */
+:where(a, button, summary, select, input, textarea, [tabindex]):focus-visible { outline: 2px solid #6ee7b7; outline-offset: 2px; border-radius: 4px; }
+/* Inline links in tables and lists get a 24px hit area (WCAG 2.2 target size). */
+:where(td, th, li, dd, dt) :where(a) { display: inline-flex; align-items: center; min-height: 24px; }

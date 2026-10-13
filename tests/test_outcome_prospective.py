@@ -9,17 +9,19 @@ from src.services import outcome_prospective as op
 NOW = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
 
 
-def checkpoint(p=0.62, status="estimated_research", final=0):
+def checkpoint(p=0.62, status="estimated_research", final=0, bye=0):
+    ranges = {"a": {"basis": "final_recorded" if final else "provider"}, "b": {"basis": "bye" if bye else "blend"}}
     return {"league_id": "L", "week": 6, "outcome_simulation": {
-        "status": status, "known_final_starters": final, "model": {"fitted_at": "2026-10-12"},
-        "current": {"win_probability": p, "mean": 110.0, "opponent_mean": 104.0}},
-        "matchup_rosters": {"mine": {"roster_id": 3}, "opponent": {"roster_id": 7}}}
+        "status": status, "known_final_starters": final + bye, "model": {"fitted_at": "2026-10-12"},
+        "current": {"win_probability": p, "mean": 110.0, "opponent_mean": 104.0}, "player_ranges": ranges},
+        "matchup_rosters": {"mine": {"roster_id": 3, "starters": ["a"]}, "opponent": {"roster_id": 7, "starters": ["b"]}}}
 
 
 def test_only_fully_pregame_estimates_are_forecasts():
     row = op.forecast(checkpoint(), NOW)
     assert (row["season"], row["week"], row["roster_id"], row["opponent_roster_id"], row["win_probability"]) == (2026, 6, 3, 7, 0.62)
     assert op.forecast(checkpoint(final=1), NOW) is None  # a starter's game already finished
+    assert op.forecast(checkpoint(bye=1), NOW) is not None  # a bye-week starter is a known zero, still pregame
     assert op.forecast(checkpoint(status="withheld"), NOW) is None
     assert op.forecast(checkpoint(p=float("nan")), NOW) is None
 

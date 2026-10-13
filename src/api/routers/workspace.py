@@ -541,7 +541,10 @@ def outcome_context(data: dict, by_id: dict) -> OutcomeView:
     view.best_changes = [LineupChange(slot=c['slot'], start=c['start'], start_name=name(c['start']),
                                       replaces=c['replaces'], replaces_name=name(c['replaces']))
                          for c in best.get('changes', [])]
-    view.known_final_starters = stored.get('known_final_starters', 0)
+    # Count only starters with a recorded final; bye/out zeros are not finished games.
+    starters = {str(x) for side in ('mine', 'opponent') for x in (data.get('matchup_rosters', {}).get(side) or {}).get('starters', [])}
+    view.known_final_starters = sum((stored.get('player_ranges') or {}).get(pid, {}).get('basis') == 'final_recorded'
+                                    for pid in starters)
     view.player_ranges = {pid: PlayerRange(**{k: v if k in ('basis', 'density') else finite_points(v) for k, v in r.items()})
                           for pid, r in (stored.get('player_ranges') or {}).items()}
     return view

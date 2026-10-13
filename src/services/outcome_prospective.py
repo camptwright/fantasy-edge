@@ -41,7 +41,12 @@ def forecast(data: dict, now: datetime) -> dict | None:
     mine, theirs = rosters.get("mine") or {}, rosters.get("opponent") or {}
     current = sim.get("current") or {}
     p = current.get("win_probability")
-    if (sim.get("status") != "estimated_research" or sim.get("known_final_starters") != 0
+    starters = [str(x) for side in (mine, theirs) for x in side.get("starters", [])]
+    ranges = sim.get("player_ranges") or {}
+    # A starter on bye or ruled out is a known zero, not a game in progress:
+    # only a recorded final result means kickoff has passed for that starter.
+    started = any((ranges.get(pid) or {}).get("basis") == "final_recorded" for pid in starters)
+    if (sim.get("status") != "estimated_research" or started
             or not isinstance(p, (int, float)) or not math.isfinite(p)
             or mine.get("roster_id") is None or theirs.get("roster_id") is None or data.get("week") is None):
         return None

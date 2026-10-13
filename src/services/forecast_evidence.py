@@ -23,6 +23,20 @@ async def save(db,kind,payload):
     return key
 
 
+def index_name(directory,kind):
+    return 'archive_index:'+kind+':'+hashlib.sha256(str(Path(directory).resolve()).encode()).hexdigest()[:24]
+
+
+async def save_index(db,name,payload):
+    from datetime import datetime,timezone
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from src.models.governance import DerivedCheckpoint
+    values={'name':name,'digest':digest(payload),'payload':payload,'updated_at':datetime.now(timezone.utc)}
+    statement=pg_insert(DerivedCheckpoint).values(**values)
+    await db.execute(statement.on_conflict_do_update(index_elements=['name'],
+        set_={k:getattr(statement.excluded,k) for k in values if k!='name'}))
+
+
 async def import_archives(db,directory,*,limit=100,kind='forecasts'):
     """Bound parsing of new files; verified unchanged files use a durable index.
 
@@ -34,11 +48,20 @@ async def import_archives(db,directory,*,limit=100,kind='forecasts'):
     if limit<1:raise ValueError('Import limit must be positive')
     known=set((await db.scalars(select(ForecastArchive.digest).where(ForecastArchive.kind==kind))).all())
     directory=Path(directory).resolve()
-    previous=await db.scalar(select(ForecastArchive).where(ForecastArchive.kind=='archive_index',
-        ForecastArchive.payload['directory'].astext==str(directory),
-        ForecastArchive.payload['evidence_kind'].astext==kind)
-        .order_by(ForecastArchive.created_at.desc(),ForecastArchive.digest.desc()).limit(1))
-    index=previous.payload.get('files',{}) if previous and digest(previous.payload)==previous.digest else {}
+    # The file-signature index is a mutable cache (one row per directory/kind),
+    # not evidence: appending a full copy per run grew quadratically
+    # (1.55 GB of 1,332 copies by 2026-10-12). Legacy copies seed it once.
+    from src.models.governance import DerivedCheckpoint
+    name=index_name(directory,kind)
+    row=await db.get(DerivedCheckpoint,name)
+    if row is not None and digest(row.payload)==row.digest:
+        index=row.payload.get('files',{})
+    else:
+        previous=await db.scalar(select(ForecastArchive).where(ForecastArchive.kind=='archive_index',
+            ForecastArchive.payload['directory'].astext==str(directory),
+            ForecastArchive.payload['evidence_kind'].astext==kind)
+            .order_by(ForecastArchive.created_at.desc(),ForecastArchive.digest.desc()).limit(1))
+        index=previous.payload.get('files',{}) if previous and digest(previous.payload)==previous.digest else {}
     checked={}
     imported=0;pending=0
     for path in archive_io.files(directory):
@@ -62,7 +85,7 @@ async def import_archives(db,directory,*,limit=100,kind='forecasts'):
         if key in known:continue
         await save(db,kind,payload)
         known.add(key);imported+=1
-    await save(db,'archive_index',{'directory':str(directory),'evidence_kind':kind,'files':checked})
+    await save_index(db,name,{'directory':str(directory),'evidence_kind':kind,'files':checked})
     await db.commit()
     return {'imported':imported,'pending_files':pending,'complete':pending==0}
 
