@@ -65,7 +65,7 @@ export function WorkspaceRoster({ overview, section = 'team' }: { overview: Over
           <tbody>{[...players].sort(byPosition).map(player => <tr key={player.player_id} className="border-t border-slate-800/70">
             <th scope="row" className="max-w-[14rem] px-3 py-1.5 text-left font-normal">
               <a href={playerProfileHref(overview.league_id, player.player_id)} className="block truncate font-medium hover:text-emerald-300 hover:underline">{player.name}</a>
-              <span className="text-[11px] text-slate-500">{player.position ?? '?'} · {player.team ?? 'FA'}{player.locked ? ' · locked' : ''}{player.injury_status ? <span className="text-amber-300"> · {player.injury_status}</span> : null}</span>
+              <span className="text-[11px] text-slate-500">{player.position ?? '?'} · {player.team ?? 'FA'}{player.locked ? ' · locked' : ''}{player.injury_status ? <span className="text-amber-300"> · {player.injury_status}</span> : null}{player.reserve_slot ? <span className="ml-1 rounded bg-slate-700 px-1.5 py-0.5 text-[10px] font-semibold text-slate-200">{player.reserve_slot}</span> : null}</span>
             </th>
             <td className="px-2 text-right tabular-nums">{pts(player.points)}</td>
             <td className="px-2 text-right tabular-nums text-sky-300">{pts(player.engine_week_points)}</td>

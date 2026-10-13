@@ -55,6 +55,10 @@ class SleeperRoster(Base):
     starters: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     players: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     settings: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # Player ids in IR (Sleeper roster.reserve, ESPN lineupSlotId 21) and
+    # Sleeper taxi slots. Still counted in `players`; never suggested as drops.
+    reserve: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    taxi: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 

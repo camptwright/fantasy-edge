@@ -222,6 +222,12 @@ def _record_player(player: dict, metadata: dict, projections: dict, week: int) -
     return player_id
 
 
+def ir_player_ids(team: dict) -> list[str]:
+    """Players in ESPN's IR slot (lineupSlotId 21), same id form as _record_player."""
+    return [str(e.get("playerPoolEntry", {}).get("player", {}).get("id")) for e in team.get("roster", {}).get("entries", [])
+            if e.get("lineupSlotId") == 21 and e.get("playerPoolEntry", {}).get("player", {}).get("id") is not None]
+
+
 def _parse_roster_entries(team: dict, metadata: dict, projections: dict, week: int) -> tuple[list[str], list[str]]:
     starters: list[str] = []
     players_on_team: list[str] = []
@@ -409,6 +415,8 @@ async def _upsert_roster(db: AsyncSession, league_id: str, roster_id: int, team:
         "starters": starters,
         "players": players_on_team,
         "settings": {},
+        "reserve": ir_player_ids(team),
+        "taxi": [],
         "synced_at": datetime.now(timezone.utc),
     }
     await db.execute(insert(SleeperRoster).values(**values).on_conflict_do_update(index_elements=["league_id", "roster_id"], set_=values))

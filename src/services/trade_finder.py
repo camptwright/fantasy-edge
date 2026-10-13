@@ -43,7 +43,9 @@ def find(data: dict, *, limit: int = LIMIT) -> dict:
         return round(sum(lineup_total(after, slots, w) - base[rid][w] for w in weeks), 2)
 
     owner = {str(p["player_id"]): rid for rid, ps in members.items() for p in ps}
-    my_offense = [p for p in _offense(members[mine_id]) if _research(p)]
+    # IR/taxi players (router-attached '_protected') are never offered.
+    protected = data.get("_protected") or {}
+    my_offense = [p for p in _offense(members[mine_id]) if _research(p) and str(p["player_id"]) not in protected]
     # Players elsewhere who would improve your lineup even as a pure addition.
     added = []
     for rid, ps in members.items():

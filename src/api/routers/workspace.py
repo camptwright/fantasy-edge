@@ -475,6 +475,8 @@ class EngineWeek(BaseModel):
 class PlayerDetail(BaseModel):
     player_id: str
     name: str
+    # 'IR' or 'Taxi' when the platform holds this player in a reserve slot on your roster.
+    reserve_slot: str | None = None
     position: str | None = None
     team: str | None = None
     points: float | None = None
@@ -554,6 +556,8 @@ class EngineWaivers(BaseModel):
     waiver_position: int | None = None
     teams: int | None = None
     waiver_clear_days: int | None = None
+    # Your IR/taxi players: never suggested as drops (each add is re-solved without them).
+    protected: list[PlayerDetail] = Field(default_factory=list)
     tier_rule: str = ('priority: adds >= 15 starting-lineup points over the remaining weeks; consider: >= 5; '
                       'depth: positive but smaller; stream: K/DEF weekly provider gain. '
                       'Engine research thresholds, not validated value.')
@@ -685,6 +689,7 @@ def player_detail(player: dict) -> PlayerDetail:
         through_week=ros.get('through_week'), **engine_detail(player.get('engine') or {}),
         **consensus_detail(player),
         sos_ros_stars=(player.get('_sos') or {}).get('ros_stars'), sos_next4_stars=(player.get('_sos') or {}).get('next4_stars'),
+        reserve_slot=player.get('_reserve_slot'),
         opponent=player.get('opponent'), week_game_status=player.get('week_game_status'),
         week_kickoff=player.get('week_kickoff'),
         game_log=[GameLogWeek(week=r['week'], points=r['points'])
@@ -786,6 +791,16 @@ def strength_context(data: dict, by_id: dict) -> StrengthView:
 WAIVER_TYPES = {0: 'rolling', 1: 'reverse_standings', 2: 'faab'}
 
 
+def resolve_without(data: dict, mine: dict, protected: dict) -> dict | None:
+    """Waiver guidance re-solved with IR/taxi players out of your roster (unavailable while held there,
+    and never a drop). Same function the background snapshot uses; only its input changes."""
+    from src.services.waiver_guidance import guidance
+    owned = {str(pid) for r in data.get('rosters', []) for pid in r.get('player_ids', [])}
+    ids = [str(pid) for pid in mine.get('player_ids', []) if str(pid) not in protected]
+    result = guidance(data.get('players', []), ids, owned, data.get('roster_positions', []))
+    return result if result.get('status') == 'research' else None
+
+
 def engine_waiver_context(data: dict, by_id: dict) -> EngineWaivers:
     """Present background waiver guidance (src/services/waiver_guidance.py); no computation here.
 
@@ -796,6 +811,7 @@ def engine_waiver_context(data: dict, by_id: dict) -> EngineWaivers:
     if len(mine) != 1:
         return EngineWaivers(status='owner_roster_unresolved')
     view = _engine_waivers(data, by_id, mine)
+    view.protected = [player_detail(by_id[pid]) for pid in sorted(data.get('_protected') or {}) if pid in by_id]
     trending = data.get('_trending') or {}
     owned_now = {str(pid) for r in data.get('rosters', []) for pid in r.get('player_ids', [])}
     for row in view.rows:
@@ -816,8 +832,11 @@ def _engine_waivers(data: dict, by_id: dict, mine: list) -> EngineWaivers:
     stored = data.get('waiver_guidance') or {}
     if stored.get('status') != 'research':
         return EngineWaivers(status=stored.get('status', 'unavailable'), **context)
+    protected = data.get('_protected') or {}
+    if protected and any(r.get('drop_id') in protected for r in stored.get('rows', [])):
+        stored = resolve_without(data, mine[0], protected) or stored
     owned = {str(pid) for r in data.get('rosters', []) for pid in r.get('player_ids', [])}
-    my_ids = set(map(str, mine[0].get('player_ids', [])))
+    my_ids = set(map(str, mine[0].get('player_ids', []))) - set(protected)
     rows = []
     for row in stored.get('rows', []):
         add, drop = by_id.get(row['add_id']), by_id.get(row['drop_id'])
@@ -858,8 +877,18 @@ def roster_context(data: dict, by_id: dict):
     stored = data.get('waivers', {})
     view = WaiverView(status=stored.get('status', 'unavailable'))
     starters = set(map(str, (data.get('matchup_rosters', {}).get('mine') or {}).get('starters', [])))
+    protected = data.get('_protected') or {}
     for move in stored.get('moves', []):
         add_id, drop_id = str(move.get('add_id')), str(move.get('drop_id'))
+        if drop_id in protected:
+            # An equally good drop that is not on IR/taxi replaces it; otherwise the move is withheld.
+            swap = next((pid for pid in sorted(map(str, move.get('equivalent_drop_ids', [])))
+                         if pid not in protected and pid != drop_id), None)
+            if swap is None:
+                view.excluded_moves += 1
+                continue
+            move = {**move, 'drop_id': swap, 'equivalent_drop_ids': [x for x in move.get('equivalent_drop_ids', []) if str(x) != swap]}
+            drop_id = swap
         add, drop = by_id.get(add_id), by_id.get(drop_id)
         gain = finite_points(move.get('lineup_gain'))
         eligible = (view.status == 'lock_preserving_candidate' and bool(ids) and bool(starters)
@@ -884,7 +913,7 @@ def roster_context(data: dict, by_id: dict):
             equivalent=[]
             for pid in sorted(set(map(str,move.get('equivalent_drop_ids',[])))):
                 alternative=by_id.get(pid)
-                if (pid != drop_id and pid in ids and pid not in starters and alternative
+                if (pid != drop_id and pid in ids and pid not in starters and pid not in protected and alternative
                         and alternative.get('locked') is False):
                     equivalent.append(player_detail(alternative))
             if equivalent:
@@ -971,6 +1000,24 @@ async def season_accuracy(db, league_id: str, data: dict) -> list[AccuracyWeek]:
     return out
 
 
+async def attach_protected(db: AsyncSession, league_id: str, data: dict | None) -> None:
+    """data['_protected'] = {player_id: 'IR' | 'Taxi'} for your roster, from the latest platform sync."""
+    if not data:
+        return
+    mine = [r for r in data.get('rosters', []) if r.get('is_mine') is True]
+    if len(mine) != 1:
+        return
+    from src.models.sleeper import SleeperRoster
+    row = await db.get(SleeperRoster, (league_id, mine[0]['roster_id']))
+    if row is None:
+        return
+    protected = {**{str(p): 'Taxi' for p in row.taxi or []}, **{str(p): 'IR' for p in row.reserve or []}}
+    data['_protected'] = protected
+    for p in data.get('players', []):
+        if str(p.get('player_id')) in protected:
+            p['_reserve_slot'] = protected[str(p['player_id'])]
+
+
 @router.get('/leagues/{league_id}/overview', response_model=Overview)
 async def league_overview(league_id: str, response: Response, db: AsyncSession = Depends(get_db)):
     response.headers['Cache-Control'] = 'no-store'
@@ -982,6 +1029,7 @@ async def league_overview(league_id: str, response: Response, db: AsyncSession =
                         message='The replacement fantasy workspace currently supports NFL leagues.')
     data = await read(db, league_id)
     await attach_espn(db, league, data)
+    await attach_protected(db, league_id, data)
     if data:
         from src.services import schedule_strength
         sos = (await schedule_strength.latest(db) or {}).get('teams', {})
@@ -1142,6 +1190,7 @@ async def trade_ideas(league_id: str, response: Response, db: AsyncSession = Dep
     data = await read(db, league_id)
     if data is None:
         return TradeIdeas(status='updating')
+    await attach_protected(db, league_id, data)
     raw = trade_finder.find(data)
     if raw['status'] != 'research':
         return TradeIdeas(status=raw['status'], generated_at=data['read_model']['generated_at'])

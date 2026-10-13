@@ -37,6 +37,7 @@ export function WorkspaceEngineWaivers({ overview }: { overview: Overview }) {
         <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs text-slate-400">{row.reasons.map(r => <li key={r}>{r}</li>)}</ul>
       </li>;
     })}</ol>}
+    {!!view.protected?.length && <p className="mt-3 text-xs text-slate-400">Never suggested as drops: {view.protected.map(p => `${p.name}${p.reserve_slot ? ` (${p.reserve_slot})` : ""}`).join(", ")}. Players in IR or taxi slots stay on your roster.</p>}
     {!!view.trending.length && <div className="mt-4 rounded-xl border border-slate-800 p-4">
       <h3 className="text-sm font-semibold">Trending adds on Sleeper <span className="font-normal text-slate-500">· last 24 h · unrostered here</span></h3>
       <ul className="mt-2 flex flex-wrap gap-2">{view.trending.map(t => <li key={t.player.player_id}>

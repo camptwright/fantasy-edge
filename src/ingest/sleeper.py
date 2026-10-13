@@ -219,7 +219,7 @@ async def _upsert_league(db: AsyncSession, league: dict, sport: str) -> None:
 
 async def _upsert_rosters(db: AsyncSession, league_id: str, rosters: list[dict], team_names: dict[str, str]) -> None:
     for roster in rosters:
-        values = {"league_id": league_id, "roster_id": roster["roster_id"], "owner_id": roster.get("owner_id"), "team_name": team_names.get(roster.get("owner_id")), "starters": roster.get("starters") or [], "players": roster.get("players") or [], "settings": roster.get("settings") or {}, "synced_at": datetime.now(timezone.utc)}
+        values = {"league_id": league_id, "roster_id": roster["roster_id"], "owner_id": roster.get("owner_id"), "team_name": team_names.get(roster.get("owner_id")), "starters": roster.get("starters") or [], "players": roster.get("players") or [], "settings": roster.get("settings") or {}, "reserve": [str(p) for p in roster.get("reserve") or []], "taxi": [str(p) for p in roster.get("taxi") or []], "synced_at": datetime.now(timezone.utc)}
         await db.execute(insert(SleeperRoster).values(**values).on_conflict_do_update(index_elements=["league_id", "roster_id"], set_=values))
 
 

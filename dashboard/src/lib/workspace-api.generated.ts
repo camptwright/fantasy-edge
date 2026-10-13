@@ -42,6 +42,7 @@ export type EngineWaivers = {
   waiver_position: number | null;
   teams: number | null;
   waiver_clear_days: number | null;
+  protected: Array<PlayerDetail>;
   tier_rule: string;
 };
 
@@ -169,6 +170,7 @@ export type PairedSummary = {
 export type PlayerDetail = {
   player_id: string;
   name: string;
+  reserve_slot: string | null;
   position: string | null;
   team: string | null;
   points: number | null;
