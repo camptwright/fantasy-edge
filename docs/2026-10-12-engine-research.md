@@ -194,3 +194,33 @@ all-play, bench points left, superlatives; season all-play, expected wins,
 luck, weekly points vs league median chart), and strength-of-schedule stars
 (half-PPR points allowed by position, quintiles of remaining schedules) on
 waiver guidance and the position ladder. Every review item is now built.
+
+## Player props and parlays (2026-10-13)
+
+Reference methods (public descriptions): OddsJam/Unabated value finding
+(de-vig each book, average into a fair price, compare the best available
+price; Pinnacle is not treated as uniquely sharp for props because it often
+does not post them), Props.Cash/Outlier context (L5/L10/season/vs-opponent
+hit rates, D vs Pos), and book same-game pricing (FanDuel has modelled SGP
+correlation since 2019, so multiplying legs misprices them).
+
+Adopted: a prop board refreshed every 10 minutes (no-vig consensus at the
+main line, best price per side, EV, hit rates, D vs Pos, engine P(over)),
+and a tracker that freezes +3% EV picks with 3+ books when first seen,
+closes them at the last pre-kickoff consensus (CLV) and grades them. The
+parlay generator lets the local model (llama3.2:3b via LiteLLM, 1–5 s on
+the M4) parse the request only; every field must be grounded in the text
+and slate, because the model invented players and sides in testing. A
+deterministic optimizer builds the best parlay per book.
+
+Same-game correlation: Spearman correlation of season-centred residuals by
+relationship and position:stat, from 2025 player-games (466 pairs, n >= 150,
+shrunk by n/(n+200)). For example, WR receptions vs receiving yards is 0.72,
+and QB passing yards vs a teammate WR's receiving yards is 0.22. On 2026
+holdout pairs with |rho| >= 0.15, a Gaussian copula beat independence (Brier
+0.2004 vs 0.2087; all pairs 0.1501 vs 0.1506). Correlation is never scored
+as value, because books reprice correlated legs, so same-game parlays get
+fair odds only.
+
+Also: games now carry ESPN's neutral-site flag, so the team models drop home
+field for bowls, the College Football Playoff and international NFL games.

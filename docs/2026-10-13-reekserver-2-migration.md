@@ -1,0 +1,122 @@
+# Moving Fantasy Edge to Reekserver-2 (feasibility, 2026-10-13)
+
+**Verdict: feasible and low risk.** Reekserver-2 has the room (RAM, disk,
+Docker, no port clashes) and the repo's compose override already uses its
+`/home/reek/apps/fantasy-edge/...` paths. The one real decision is how the
+app reaches the local model once the Mac mini is the AI machine: the
+router blocks Reekserver-2 → Mac connections today (details below).
+
+## What was measured
+
+| | Mac mini (today) | Reekserver-2 |
+|---|---|---|
+| Hardware | Apple M4, 16 GB, 460 GB SSD | Intel i5-8400T (6 cores, AVX2), 31 GB, 954 GB NVMe + 1 TB USB HDD |
+| OS / runtime | macOS, Colima VM (4 CPU, **8 GB RAM reserved**, 200 GB disk, 105 GB used) | Debian 13, Docker 29.8 + Compose 5.5 (user `reek` is in the `docker` group) |
+| Free | 235 GB disk | 463 GB NVMe, 453 GB HDD, 25 GB RAM available, load ~0.3 |
+| Already running | this app (14 containers) + native Ollama | 23 containers (media stack, Jellyfin, Open WebUI, Ollama with llama3.2:3b, cloudflared, chisel server, monitoring) |
+
+App footprint to move:
+
+- Postgres data directory 4.1 GB (database ~2.6 GB);
+- raw archive volume 36.4 GB (compresses further as the retention job drains);
+- Redis 41 MB, models/logs < 1 MB;
+- images ~17 GB, rebuilt on the server rather than copied; base images
+  (`python:3.12-slim`, `node:22-slim`, `postgres:16-alpine`,
+  `redis:7-alpine`) and the pinned LiteLLM digest are all multi-arch
+  (amd64 + arm64 verified).
+
+Running memory is ~2.5 GB (Postgres 650 MB, LiteLLM 1.1 GB, workers
+~400 MB), with low steady CPU. No published ports conflict: the main stack
+publishes none, and the preview's `127.0.0.1:13001` is free on Reekserver-2.
+
+## What the Mac mini gets back
+
+- **8 GB of RAM** that the Colima VM reserves today. With all 16 GB, the M4
+  can run a 14B model at 4-bit (~9 GB) with Metal, which a 16 GB machine
+  sharing RAM with a Linux VM cannot.
+- **~110 GB of disk**: the Colima VM (105 GB), plus the build cache and
+  images inside it. Free space goes from 235 GB to ~345 GB.
+- 4 CPU cores and the VM's background I/O.
+
+## Speed on the new host
+
+- Background jobs are I/O- or network-bound (ESPN polls ~1 s, nflverse
+  ~20 s), so the i5 is fine for them. CPU-heavy research jobs (projection
+  engine, 10k-season simulations, trade finder) will run roughly 1.5–2×
+  slower per core than on the M4. That is acceptable for scheduled work, but
+  worth watching on the 15-minute prospective-capture cadence.
+- **Local model:** the parlay parse prompt takes about 14 s on Reekserver-2's
+  CPU (llama3.2:3b, 8 tok/s) against 1–5 s on the M4. That is usable as a
+  fallback but not as the main AI box, which is why the plan keeps the model
+  on the Mac.
+
+## The network catch
+
+Reekserver-2 (192.168.20.137) cannot open connections to the Mac
+(192.168.10.10). Ping gets "host unreachable" and TCP gets "connection
+refused" on every port, while Mac → Reekserver-2 works. That points to a
+router/VLAN rule blocking servers from reaching the Mac's network. Two ways
+to let the app reach the Mac's Ollama:
+
+1. **Reverse tunnel from the Mac (no router change).** Reekserver-2 already
+   runs `chisel server --reverse` on port 9312. A small launchd job on the Mac
+   runs `chisel client reekserver-2:9312 R:11434:localhost:11434` with the
+   existing auth. LiteLLM then uses
+   `OLLAMA_BASE_URL=http://host.docker.internal:11434` (or the chisel
+   container's address). Recommended.
+2. **Router rule.** Allow 192.168.20.137 → 192.168.10.10:11434 only. This is
+   simpler at runtime, but it is a firewall change the owner must make.
+
+Either way the app degrades safely: the parlay generator already falls back
+to its keyword parser when the model is unreachable. LiteLLM could also list
+Reekserver-2's own Ollama as a fallback deployment for the `fast` alias.
+
+## Cutover plan (about 45 minutes of downtime, best on a Tuesday or Wednesday)
+
+1. **Prepare (no downtime):** on Reekserver-2, `git clone` the repo to
+   `~/apps/fantasy-edge-src`. Copy `.env` over with `scp`, then edit
+   `OLLAMA_BASE_URL`. Create `/home/reek/apps/fantasy-edge/{postgres,redis,models,logs}`
+   and `chown 1001:1001` models and logs (constraint #18), using a throwaway
+   root container since `sudo` needs a password:
+   `docker run --rm -v /home/reek/apps/fantasy-edge:/d alpine chown -R 1001:1001 /d/models /d/logs`.
+   Run `docker compose build`.
+2. **Pre-seed the raw archive (no downtime):** rsync the `fantasy-edge_rawdata`
+   volume to Reekserver-2 while the app keeps running. Any tar/rsync from
+   macOS must use `COPYFILE_DISABLE=1` (constraint #15).
+3. **Stop the Mac stack:** `docker --context colima compose stop beat worker evaluation api dashboard`.
+   Keep Postgres up.
+4. **Move the database logically.** A physical copy from arm64 to x86_64 is
+   not supported by Postgres, so run
+   `pg_dump -Fc` (~2.6 GB, a few minutes), copy it, start only `postgres` on
+   Reekserver-2, `pg_restore`, then `alembic upgrade head` (constraint #13
+   practice) and spot-check row counts against the source.
+5. Run a final incremental rsync of the raw archive, then copy
+   `models/celerybeat-schedule`, so beat keeps its last-run times.
+6. **Start on Reekserver-2:** `docker compose up -d` for the main stack, plus
+   `-f docker-compose.workspace.yml`. Move the tunnel by starting the app's
+   `cloudflared` container there with the same tunnel token and stopping the
+   Mac's. Cloudflare Access stays as is, because the hostname and tunnel are
+   unchanged.
+7. **Verify:** API health, a workspace overview snapshot refresh within 2
+   minutes, beat firing (ESPN poll), prop board refresh, a parlay generation
+   through the Mac's model, and Cloudflare Access login.
+8. **Keep the Mac stack stopped, not deleted, for a week as rollback.** Then
+   run `colima delete` to reclaim the disk and RAM.
+
+**Rollback:** stop Reekserver-2's stack and `cloudflared`, then start the Mac
+stack. Anything written on Reekserver-2 after the cutover would be lost unless
+dumped back, so decide within the first day.
+
+## Things that would bite
+
+- Postgres data files are architecture-dependent: always dump and restore,
+  never copy the directory.
+- Bind-mount ownership (#18): healthy containers give no sign of it until the
+  first model or log write fails.
+- macOS AppleDouble files in any tarball (#15) break alembic's import of
+  `alembic/versions/*.py`.
+- Two `cloudflared` connectors on one tunnel would split traffic between
+  hosts. Stop the Mac's before starting the new one.
+- Reekserver-2 also hosts the media stack. Postgres's 1 GB memory cap
+  and the workers' limits in the compose file still apply, so the app cannot
+  starve Jellyfin.

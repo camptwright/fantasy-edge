@@ -350,6 +350,9 @@ def _apply_schedule_fields(
     if kickoff is not None:
         game.game_time = kickoff
 
+    if isinstance(competition.get("neutralSite"), bool):
+        game.neutral_site = competition["neutralSite"]
+
     state = ((competition.get("status") or {}).get("type") or {}).get("state")
     game.status = {"pre": "scheduled", "in": "in_progress", "post": "final"}.get(
         state, "scheduled"

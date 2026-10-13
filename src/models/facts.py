@@ -105,6 +105,9 @@ class Game(Base, UUIDPrimaryKey, CreatedAt):
     home_score: Mapped[int | None] = mapped_column(Integer)
     away_score: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(16), default="scheduled", nullable=False)
+    # ESPN competitions[].neutralSite: bowls, the CFP, international NFL games.
+    # The team models drop home field for these (FiveThirtyEight/nfelo practice).
+    neutral_site: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
 
     home_rest: Mapped[int | None] = mapped_column(Integer)
     away_rest: Mapped[int | None] = mapped_column(Integer)
