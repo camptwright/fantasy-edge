@@ -5,9 +5,9 @@ type Signal = {
   model_probability: number | null; fair_probability: number | null; ev_percent: number | null; actionable: boolean;
   exclusion_reason: string | null; matchup: string | null; game_time: string | null;
 };
-type TeamProjections = { status: string; model_version?: string; ratings: { team: string; rating: number; offense?: number | null; defense?: number | null }[];
+type TeamProjections = { status: string; sport?: string; model_version?: string; ratings: { team: string; name?: string | null; rating: number; offense?: number | null; defense?: number | null }[];
   games: { game_id: string; home: string; away: string; game_time: string; model_margin: number; market_margin: number | null; margin: number; home_win_probability: number; market_weight: number | null;
-    total?: number; market_total?: number | null; model_total?: number; home_points?: number; away_points?: number }[];
+    total?: number; market_total?: number | null; model_total?: number; home_points?: number; away_points?: number; home_name?: string | null; away_name?: string | null }[];
   evidence?: { test_seasons: number[]; model_brier: number; previous_elo_brier: number; market_brier: number; regressed_brier: number } };
 type PropBoard = { status: string; compared?: number; note?: string | null; rows: { player: string; position: string | null; stat: string; line: number; source: string; game_time: string;
   engine_projection: number; engine_over_probability: number; market_over_probability: number; difference: number }[] };
@@ -23,7 +23,8 @@ export async function WorkspaceMarkets() {
     fantasyApi<Signal[]>("/signals?sport=nfl", 5000), fantasyApi<Signal[]>("/signals?sport=ncaaf", 5000),
     fantasyApi<Ledger>("/api/v1/ledger", 5000), fantasyApi<{ narrative: string; generated_at: string }>("/recommendations", 5000),
     fantasyApi<TeamProjections>("/team-projections/nfl", 5000)]);
-  const props = await fantasyApi<PropBoard>("/props/engine-board?limit=15", 5000);
+  const [props, college] = await Promise.all([fantasyApi<PropBoard>("/props/engine-board?limit=15", 5000),
+    fantasyApi<TeamProjections>("/team-projections/ncaaf", 5000)]);
   const unavailable = nfl === null && ncaaf === null;
   const signals = [...(nfl ?? []), ...(ncaaf ?? [])];
   const actionable = signals.filter(s => s.actionable);
@@ -42,6 +43,7 @@ export async function WorkspaceMarkets() {
     {brief?.narrative && <p className="rounded-xl border border-slate-800 p-4 text-sm text-slate-300"><span className="mr-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Briefing</span>{brief.narrative}</p>}
     <GameProjections data={teams} />
     <PropBoardView data={props} />
+    {college?.status === "research" && <GameProjections data={college} />}
     <section aria-label="Market signals">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
         <h2 className="text-lg font-semibold">Upcoming signals</h2>
@@ -75,32 +77,34 @@ const line = (home: string, away: string, margin: number | null) => margin == nu
 export function GameProjections({ data }: { data: TeamProjections | null }) {
   if (!data || data.status !== "research") return <p role="status" className="rounded-xl border border-slate-800 p-4 text-sm text-slate-400">Team projections unavailable. This is a service error, not an empty slate.</p>;
   const ev = data.evidence;
+  const college = data.sport === "ncaaf";
+  const short = (name?: string | null, code?: string) => college ? (name ?? code ?? "?") : (code ?? "?");
   return <section aria-label="Game projections" className="grid gap-4 lg:grid-cols-[1fr_16rem]">
     <div>
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
-        <h2 className="text-lg font-semibold">NFL game projections <span className="ml-1 rounded bg-sky-500/15 px-2 py-0.5 align-middle text-[11px] font-medium uppercase tracking-wider text-sky-300">Team model v2</span></h2>
+        <h2 className="text-lg font-semibold">{college ? "College football" : "NFL"} game projections <span className="ml-1 rounded bg-sky-500/15 px-2 py-0.5 align-middle text-[11px] font-medium uppercase tracking-wider text-sky-300">{college ? "College team model" : "Team model v2"}</span></h2>
       </div>
       {!data.games.length ? <p className="rounded-xl border border-slate-800 p-4 text-sm text-slate-400">No NFL games in the next 8 days.</p> :
       <div className="workspace-scrollbar overflow-x-auto rounded-xl border border-slate-800">
         <table className="w-full min-w-[48rem] text-sm">
           <thead className="bg-slate-900/70 text-xs text-slate-400"><tr>{["Game", "Model", "Market", "Projection", "Total", "Team points", "Home win"].map((h, i) => <th key={h} scope="col" className={`px-3 py-2 font-medium ${i ? "text-right" : "text-left"}`}>{h}</th>)}</tr></thead>
-          <tbody>{data.games.map(g => <tr key={g.game_id} className="border-t border-slate-800/70">
-            <td className="px-3 py-2">{g.away} @ {g.home}<span className="block text-[11px] text-slate-500">{when(g.game_time)}</span></td>
-            <td className="px-3 py-2 text-right tabular-nums text-slate-300">{line(g.home, g.away, g.model_margin)}</td>
-            <td className="px-3 py-2 text-right tabular-nums text-slate-400">{line(g.home, g.away, g.market_margin)}</td>
-            <td className="px-3 py-2 text-right font-medium tabular-nums">{line(g.home, g.away, g.margin)}{g.market_weight != null && g.market_weight < 1 && <span className="block text-[11px] font-normal text-sky-300">model keeps {Math.round((1 - g.market_weight) * 100)}% of its view</span>}</td>
+          <tbody>{data.games.map(g => { const [h, a] = [short(g.home_name, g.home), short(g.away_name, g.away)]; return <tr key={g.game_id} className="border-t border-slate-800/70">
+            <td className="px-3 py-2">{a} @ {h}<span className="block text-[11px] text-slate-500">{when(g.game_time)}</span></td>
+            <td className="px-3 py-2 text-right tabular-nums text-slate-300">{line(h, a, g.model_margin)}</td>
+            <td className="px-3 py-2 text-right tabular-nums text-slate-400">{line(h, a, g.market_margin)}</td>
+            <td className="px-3 py-2 text-right font-medium tabular-nums">{line(h, a, g.margin)}{g.market_weight != null && g.market_weight < 1 && <span className="block text-[11px] font-normal text-sky-300">model keeps {Math.round((1 - g.market_weight) * 100)}% of its view</span>}</td>
             <td className="px-3 py-2 text-right tabular-nums">{g.total != null ? g.total.toFixed(1) : "—"}{g.model_total != null && g.market_total != null && <span className="block text-[11px] text-slate-500">model {g.model_total.toFixed(1)}</span>}</td>
-            <td className="px-3 py-2 text-right tabular-nums">{g.home_points != null && g.away_points != null ? `${g.away} ${g.away_points.toFixed(1)} · ${g.home} ${g.home_points.toFixed(1)}` : "—"}</td>
+            <td className="px-3 py-2 text-right tabular-nums">{g.home_points != null && g.away_points != null ? `${a} ${g.away_points.toFixed(1)} · ${h} ${g.home_points.toFixed(1)}` : "—"}</td>
             <td className="px-3 py-2 text-right tabular-nums">{pctText(g.home_win_probability)}</td>
-          </tr>)}</tbody>
+          </tr>; })}</tbody>
         </table>
       </div>}
-      {ev && <p className="mt-2 text-xs text-slate-500">Rebuilt from FiveThirtyEight’s and nfelo’s published methods. On {ev.test_seasons[0]}–{ev.test_seasons[1]} games it never saw, Brier {ev.model_brier.toFixed(4)} vs {ev.previous_elo_brier.toFixed(4)} for the previous Elo; the closing market ({ev.market_brier.toFixed(4)}) is still better, so projections lean on the market unless the model strongly disagrees.</p>}
+      {ev && <p className="mt-2 text-xs text-slate-500">{college ? "Program-anchored ratings (the SP+/FPI preseason practice) on FiveThirtyEight/nfelo updates; neutral-site games are not flagged yet, so home field applies to every game." : "Rebuilt from FiveThirtyEight’s and nfelo’s published methods."} On {ev.test_seasons[0]}–{ev.test_seasons[1]} games it never saw, Brier {ev.model_brier.toFixed(4)} vs {ev.previous_elo_brier.toFixed(4)} for the previous Elo; the closing market ({ev.market_brier.toFixed(4)}) is still better, so projections lean on the market unless the model strongly disagrees.</p>}
     </div>
     <div className="rounded-xl border border-slate-800 p-4">
-      <h3 className="text-sm font-semibold">Power ratings <span className="font-normal text-slate-500">· pts vs average</span></h3>
-      <ol className="mt-2 space-y-1 text-sm">{data.ratings.slice(0, 32).map((r, i) => <li key={r.team} className="flex items-center gap-2">
-        <span className="w-5 text-right text-[11px] tabular-nums text-slate-500">{i + 1}</span><span className="w-10">{r.team}</span>
+      <h3 className="text-sm font-semibold">{college ? "Top 25" : "Power ratings"} <span className="font-normal text-slate-500">· pts vs average</span></h3>
+      <ol className="mt-2 space-y-1 text-sm">{data.ratings.slice(0, college ? 25 : 32).map((r, i) => <li key={r.team} className="flex items-center gap-2">
+        <span className="w-5 text-right text-[11px] tabular-nums text-slate-500">{i + 1}</span><span className={college ? "w-36 truncate" : "w-10"} title={r.name ?? undefined}>{college ? short(r.name, r.team) : r.team}</span>
         <span aria-hidden="true" className="relative h-1.5 flex-1 rounded bg-slate-800"><span className={`absolute top-0 h-1.5 rounded ${r.rating >= 0 ? "left-1/2 bg-emerald-400" : "right-1/2 bg-rose-400"}`} style={{ width: `${Math.min(50, Math.abs(r.rating) * 4)}%` }} /></span>
         <span className="w-12 text-right tabular-nums text-slate-300" title={r.offense != null && r.defense != null ? `Offense ${r.offense.toFixed(1)} · defense ${r.defense.toFixed(1)}` : undefined}>{r.rating > 0 ? "+" : ""}{r.rating.toFixed(1)}</span></li>)}</ol>
       <p className="mt-2 text-[11px] text-slate-500">Margin rating; hover for the offense/defense scoring split.</p>

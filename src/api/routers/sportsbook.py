@@ -451,14 +451,17 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
 
     # NFL team model v2 (src/services/team_model.py): the NFL baseline for
     # moneyline/spread, regressed toward the pregame consensus spread.
-    team_v2, consensus, consensus_totals = None, {}, {}
-    if any(game.sport == 'nfl' for line, game in rows):
+    # NCAAF uses the college team model (program-anchored reversion) the same way.
+    team_states, consensus, consensus_totals = {}, {}, {}
+    for team_sport in sorted({game.sport for _, game in rows} & {'nfl', 'ncaaf'}):
         from src.services import team_model_serving
-        team_v2 = await team_model_serving.state(db)
-        if team_v2 is not None:
-            nfl_games = list({g.id: g for _, g in rows if g.sport == 'nfl'}.values())
-            consensus = await team_model_serving.market_spreads(db, nfl_games)
-            consensus_totals = await team_model_serving.market_totals(db, nfl_games)
+        team_state = await team_model_serving.state(db, sport=team_sport)
+        if team_state is None:
+            continue
+        team_states[team_sport] = team_state
+        sport_games = list({g.id: g for _, g in rows if g.sport == team_sport}.values())
+        consensus.update(await team_model_serving.market_spreads(db, sport_games))
+        consensus_totals.update(await team_model_serving.market_totals(db, sport_games))
     promoted, selected = {}, {'status':'retained_baseline'}
     if any(game.sport=='nfl' and line.market=='moneyline' for line,game in rows):
         from src.services.model_deployment import forecasts as approved_forecasts
@@ -482,7 +485,8 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
             under_line, _ = under_entry
 
             v2_total = None
-            if game.sport == 'nfl' and team_v2 is not None:
+            team_v2 = team_states.get(game.sport)
+            if team_v2 is not None:
                 from src.services import team_model_serving
                 v2_total = team_model_serving.project(team_v2, game, consensus.get(game.id), consensus_totals.get(game.id))
             home_rating = ratings.get(game.home_team_id)
@@ -540,7 +544,8 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
         away_line, _ = away_entry
 
         v2 = None
-        if game.sport == 'nfl' and team_v2 is not None:
+        team_v2 = team_states.get(game.sport)
+        if team_v2 is not None:
             from src.services import team_model_serving
             v2 = team_model_serving.project(team_v2, game, consensus.get(game.id))
         home_rating_row = ratings.get(game.home_team_id)
@@ -556,12 +561,14 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
         matchup = f"{away_name} @ {home_name}"
 
         distribution_id = None
-        if v2 is not None:
+        # NCAAF moneyline/spread keep the owner-approved calibration override
+        # (2026-09-05); the college team model is attached as research below.
+        if v2 is not None and game.sport == 'nfl':
             from src.services import team_model
             p2 = team_v2['params']
             if market == "moneyline":
                 baseline_home_prob = home_model_prob = v2['home_win_probability']
-                if str(game.id) in promoted:
+                if game.sport == 'nfl' and str(game.id) in promoted:
                     home_model_prob = promoted[str(game.id)]['home_probability']
                 home_selection, away_selection = f"{home_name} ML", f"{away_name} ML"
             else:
@@ -596,10 +603,17 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
             ),
             market=market, source=source, matchup=matchup, game=game,
         )
-        if v2 is not None:
+        if v2 is not None and game.sport == 'nfl':
             for row in out[-2:]:
                 row['model_version'] = row.get('model_version') or team_v2['recipe']
                 row['team_model'] = {k: v2[k] for k in ('model_margin', 'market_margin', 'margin', 'market_weight')}
+        elif v2 is not None:
+            from src.services import team_model
+            p2 = team_v2['params']
+            home_p = v2['home_win_probability'] if market == 'moneyline' else team_model.cover_probability(p2, v2['margin'], home_line.line or 0.0)
+            for row, prob in zip(out[-2:], (home_p, 1.0 - home_p)):
+                row['team_model'] = {'version': team_v2['recipe'], 'probability': round(prob, 4),
+                                     **{k: v2[k] for k in ('model_margin', 'market_margin', 'margin', 'market_weight')}}
         if market=='moneyline' and game.sport=='nfl' and str(game.id) in promoted:
             for row,baseline in zip(out[-2:],(baseline_home_prob,1.0-baseline_home_prob)):
                 row['model_version']=selected['version']
@@ -748,8 +762,8 @@ async def prop_engine_board(limit: int = Query(default=25, ge=1, le=100), db: As
             'evidence': artifact.get('evidence'), 'note': artifact.get('note')}
 
 
-@router.get("/team-projections/nfl")
-async def nfl_team_projections(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+@router.get("/team-projections/{sport}")
+async def team_projections(sport: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """NFL team model v2: power ratings (points vs an average team) and upcoming game lines.
 
     Research projections; the market-regressed line is the model's best
@@ -757,12 +771,16 @@ async def nfl_team_projections(db: AsyncSession = Depends(get_db)) -> dict[str, 
     """
     from datetime import timedelta
     from src.services import team_model_serving
-    state = await team_model_serving.state(db)
+    if sport not in ('nfl', 'ncaaf'):
+        raise HTTPException(status_code=404, detail=f"no team model for {sport!r}")
+    state = await team_model_serving.state(db, sport=sport)
     if state is None:
         return {'status': 'model_unavailable', 'ratings': [], 'games': []}
+    names = {code: team.name for team in (await db.scalars(select(Team).where(Team.sport == sport))).all()
+             for code in [team.nflverse_abbr if sport == 'nfl' else team.espn_id]}
     now = datetime.now(timezone.utc)
     upcoming = (await db.scalars(select(Game).where(
-        Game.sport == 'nfl', Game.status == 'scheduled', Game.game_time.is_not(None),
+        Game.sport == sport, Game.status == 'scheduled', Game.game_time.is_not(None),
         Game.game_time > now, Game.game_time <= now + timedelta(days=8)).order_by(Game.game_time))).all()
     spreads = await team_model_serving.market_spreads(db, upcoming)
     totals = await team_model_serving.market_totals(db, upcoming)
@@ -770,18 +788,27 @@ async def nfl_team_projections(db: AsyncSession = Depends(get_db)) -> dict[str, 
     for g in upcoming:
         row = team_model_serving.project(state, g, spreads.get(g.id), totals.get(g.id))
         if row:
-            games.append({**row, 'game_id': str(g.id), 'week': g.week, 'game_time': g.game_time.isoformat()})
-    ev = state['evidence']['test_metrics']
+            games.append({**row, 'game_id': str(g.id), 'week': g.week, 'game_time': g.game_time.isoformat(),
+                          'home_name': names.get(row['home']), 'away_name': names.get(row['away'])})
+    ev = state['evidence'].get('test_metrics') or state['evidence'].get('test_margin_lined_games') or {}
+    # Offense/defense are identified only up to a shared shift with the league
+    # scoring level (it cancels in every prediction): centre them for display.
+    offdef = state.get('offdef') or {}
+    shown = [t for t in offdef if sport == 'nfl' or t in names]
+    mean_o = sum(offdef[t][0] for t in shown) / len(shown) if shown else 0.0
+    mean_d = sum(offdef[t][1] for t in shown) / len(shown) if shown else 0.0
     return {'status': 'research', 'model_version': state['recipe'], 'season': state['season'],
             'replayed_games': state['replayed_games'],
-            'ratings': [{'team': t, 'rating': round(v, 2),
-                         'offense': round(state['offdef'].get(t, [None, None])[0], 2) if state.get('offdef') and t in state['offdef'] else None,
-                         'defense': round(state['offdef'].get(t, [None, None])[1], 2) if state.get('offdef') and t in state['offdef'] else None}
-                        for t, v in sorted(state['ratings'].items(), key=lambda kv: -kv[1])],
+            'sport': sport,
+            'ratings': [{'team': t, 'name': names.get(t), 'rating': round(v, 2),
+                         'offense': round(offdef[t][0] - mean_o, 2) if t in offdef else None,
+                         'defense': round(offdef[t][1] - mean_d, 2) if t in offdef else None}
+                        for t, v in sorted(state['ratings'].items(), key=lambda kv: -kv[1])
+                        if sport == 'nfl' or t in names],  # college: skip opponents never stored (mostly FCS)
             'games': games,
             'evidence': {'test_seasons': state['evidence']['test'], 'model_brier': ev['rebuilt_raw']['brier'],
                          'previous_elo_brier': ev['serving_elo']['brier'], 'market_brier': ev['market_close']['brier'],
-                         'regressed_brier': ev['rebuilt_market_regressed']['brier']}}
+                         'regressed_brier': (ev.get('rebuilt_market_regressed') or ev.get('rebuilt_regressed'))['brier']}}
 
 
 @router.get("/rankings/{sport}")

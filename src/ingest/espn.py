@@ -77,6 +77,20 @@ def scoreboard_dates(days_ahead=7, dates=None):
     return [(start+timedelta(days=i)).strftime('%Y%m%d') for i in range((end-start).days+1)]
 
 
+async def stale_dates(db: AsyncSession, sport: str, *, now: datetime | None = None, lookback_days: int = 30,
+                      limit: int = 20) -> list[str]:
+    """ESPN date keys (the kickoff's UTC date and the day before, ESPN dates are US local) of stale games."""
+    now = now or datetime.now(timezone.utc)
+    rows = (await db.scalars(select(Game.game_time).where(
+        Game.sport == sport, Game.status.in_(("scheduled", "in_progress")), Game.game_time.is_not(None),
+        Game.game_time < now - timedelta(hours=6), Game.game_time > now - timedelta(days=lookback_days)))).all()
+    keys = set()
+    for kickoff in rows:
+        for shift in (0, 1):
+            keys.add((kickoff - timedelta(days=shift)).strftime('%Y%m%d'))
+    return sorted(keys)[:limit]  # oldest first, so a backlog drains across polls
+
+
 async def sync_scoreboard(
     db: AsyncSession, sport: str = "nfl", days_ahead: int = 7, dates: str | None = None
 ) -> int:
@@ -88,6 +102,12 @@ async def sync_scoreboard(
     """
     settings = get_settings()
     days=scoreboard_dates(days_ahead,dates)
+    if dates is None:
+        # Re-poll the dates of games still unfinished 6h after kickoff: the
+        # rolling window starts yesterday, so a game in progress at the last
+        # poll before its date left the window never got its final (found
+        # 2026-10-12: 74 NCAAF, 137 NHL, 7 MLB games stuck).
+        days=sorted(set(days)|set(await stale_dates(db,sport)))
     events={}
 
     async with record_run(db, f"{SOURCE}_{sport}") as run:

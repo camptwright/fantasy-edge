@@ -99,7 +99,7 @@ async def test_team_projections_endpoint_lists_ratings_and_upcoming_games(db):
         body = (await client.get("/team-projections/nfl")).json()
     finally:
         app.dependency_overrides.clear()
-    assert body["status"] == "research" and len(body["ratings"]) == 32
+    assert body["status"] == "research" and len(body["ratings"]) == 32  # NFL lists every rated team
     assert body["games"][0]["home"] == "KC" and body["games"][0]["market_margin"] is None
     assert body["evidence"]["model_brier"] < body["evidence"]["previous_elo_brier"]
 
@@ -133,3 +133,43 @@ async def test_projection_carries_team_points_and_market_total(db):
     row = team_model_serving.project(s, g, None, totals.get(g.id))
     assert row["market_total"] == 44.5 and row["home_points"] + row["away_points"] == pytest.approx(row["total"])
     assert row["home_points"] - row["away_points"] == pytest.approx(row["margin"])
+
+
+async def test_stale_unfinished_games_are_repolled_by_date(db):
+    from src.ingest.espn import stale_dates
+    kc, lac = await resolve_team(db, "Kansas City Chiefs"), await resolve_team(db, "Los Angeles Chargers")
+    now = datetime(2026, 10, 12, 18, tzinfo=timezone.utc)
+    await _game(db, kc, lac, datetime(2026, 9, 27, 0, 30, tzinfo=timezone.utc), status="in_progress")
+    await _game(db, kc, lac, datetime(2026, 10, 12, 16, tzinfo=timezone.utc), status="in_progress")  # recent: still live
+    await _game(db, kc, lac, datetime(2026, 9, 20, 17, tzinfo=timezone.utc), status="final", home_score=1, away_score=0)
+    await db.commit()
+    assert await stale_dates(db, "nfl", now=now) == ["20260926", "20260927"]
+
+
+async def test_ncaaf_signals_keep_the_owner_override_and_attach_the_college_model(db):
+    from tests.test_api_sportsbook import _client
+    from src.api.main import app
+    osu = await resolve_team(db, "Ohio State Buckeyes", sport="ncaaf")
+    mich = await resolve_team(db, "Michigan Wolverines", sport="ncaaf")
+    now = datetime.now(timezone.utc)
+    g = Game(sport="ncaaf", season=2026, game_type="REG", status="scheduled", game_time=now + timedelta(days=1),
+             home_team_id=osu.id, away_team_id=mich.id)
+    db.add(g)
+    await db.flush()
+    from src.models.ratings import TeamRating
+    db.add_all([TeamRating(team_id=osu.id, sport="ncaaf", rating=1600), TeamRating(team_id=mich.id, sport="ncaaf", rating=1500)])
+    for side, price in (("home", -300), ("away", 240)):
+        db.add(TeamMarketLine(game_id=g.id, market="moneyline", side=side, price_american=price, source="theodds", line_type="live", observed_at=now))
+    await db.commit()
+    client = await _client(db)
+    try:
+        rows = (await client.get("/signals?sport=ncaaf")).json()
+        board = (await client.get("/team-projections/ncaaf")).json()
+    finally:
+        app.dependency_overrides.clear()
+    home = next(r for r in rows if r["side"] == "home")
+    assert home["team_model"]["version"].startswith("ncaaf_team_model_v1:") and 0.5 < home["team_model"]["probability"] < 1
+    assert home["model_probability"] != home["team_model"]["probability"]  # serving keeps the Elo + approved override
+    assert board["sport"] == "ncaaf" and board["games"][0]["home_name"] == osu.name
+    assert [r["name"] for r in board["ratings"]] == [osu.name, mich.name]  # only stored teams are listed
+    assert abs(board["ratings"][0]["offense"]) < 30  # centred, not the unidentified raw level

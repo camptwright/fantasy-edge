@@ -28,6 +28,7 @@ from pathlib import Path
 from src.utils.odds_math import normal_cdf
 
 CONFIG = Path(__file__).resolve().parents[2] / "config" / "nfl_team_model.json"
+CONFIGS = {"nfl": CONFIG, "ncaaf": CONFIG.with_name("ncaaf_team_model.json")}
 # nflverse historical franchise codes -> current codes.
 RELOCATED = {"OAK": "LV", "SD": "LAC", "STL": "LAR", "LA": "LAR"}
 
@@ -68,8 +69,15 @@ def update(p: Params, home: float, away: float, expected: float, margin: float,
     return home + shift / 2, away - shift / 2
 
 
-def rollover(p: Params, ratings: dict[str, float]) -> dict[str, float]:
-    return {team: (1 - p.reversion) * value for team, value in ratings.items()}
+def rollover(p: Params, ratings: dict[str, float], anchors: dict[str, float] | None = None) -> dict[str, float]:
+    """Offseason reversion toward average (NFL) or toward each team's long-run level (college, `anchors`)."""
+    anchors = anchors or {}
+    return {team: (1 - p.reversion) * value + p.reversion * anchors.get(team, 0.0) for team, value in ratings.items()}
+
+
+def update_anchors(anchors: dict[str, float], ratings: dict[str, float], weight: float) -> dict[str, float]:
+    """Long-run program level: an exponentially weighted mean of end-of-season ratings."""
+    return {team: (1 - weight) * anchors.get(team, value) + weight * value for team, value in ratings.items()}
 
 
 def market_weight(p: Params, model: float, market: float) -> float:
@@ -95,12 +103,13 @@ def over_probability(p: Params, expected_total: float, line: float, total_sigma:
     return 1.0 - normal_cdf((line - expected_total) / total_sigma)
 
 
-@lru_cache(maxsize=1)
-def load() -> dict | None:
+@lru_cache(maxsize=4)
+def load(sport: str = "nfl") -> dict | None:
     """The fitted artifact: params, starting ratings (current codes) and its evidence."""
-    if not CONFIG.exists():
+    path = CONFIGS.get(sport)
+    if path is None or not path.exists():
         return None
-    text = CONFIG.read_text()
+    text = path.read_text()
     raw = json.loads(text)
     version = f"{raw['recipe']}:{hashlib.sha256(text.encode()).hexdigest()[:12]}"
     return {**raw, "version": version, "params": Params.from_dict(raw["params"])}

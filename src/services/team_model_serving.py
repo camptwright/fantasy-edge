@@ -22,8 +22,10 @@ from src.models.identity import Team
 from src.services import team_model
 
 
-async def team_codes(db) -> dict:
-    return {t.id: t.nflverse_abbr for t in (await db.scalars(select(Team).where(Team.sport == "nfl"))).all()}
+async def team_codes(db, sport: str = "nfl") -> dict:
+    """Team id -> the artifact's team key (nflverse code for NFL, ESPN id for college)."""
+    teams = (await db.scalars(select(Team).where(Team.sport == sport))).all()
+    return {t.id: (t.nflverse_abbr if sport == "nfl" else t.espn_id) for t in teams}
 
 
 async def market_totals(db, games: list[Game]) -> dict:
@@ -61,16 +63,19 @@ async def _market_lines(db, games: list[Game], market: str, side: str, convert) 
     return out
 
 
-async def state(db, now: datetime | None = None) -> dict | None:
-    artifact = team_model.load()
+async def state(db, now: datetime | None = None, sport: str = "nfl") -> dict | None:
+    artifact = team_model.load(sport)
     if artifact is None:
         return None
     now = now or datetime.now(timezone.utc)
     p = artifact["params"]
-    codes = await team_codes(db)
+    codes = await team_codes(db, sport)
     through = artifact["ratings_through_season"]
+    anchors = dict(artifact.get("anchors") or {})  # college: program level for reversion
+    anchor_weight = artifact.get("anchor_weight", 0.0)
+    new_team = artifact.get("new_team_rating", 0.0)
     games = (await db.scalars(select(Game).where(
-        Game.sport == "nfl", Game.season > through, Game.status == "final", Game.home_score.is_not(None),
+        Game.sport == sport, Game.season > through, Game.status == "final", Game.home_score.is_not(None),
         Game.away_score.is_not(None), Game.game_time.is_not(None), Game.game_time <= now,
         or_(Game.game_type.is_(None), Game.game_type != "PRE")).order_by(Game.game_time))).all()
     spreads = await market_spreads(db, games)
@@ -86,28 +91,35 @@ async def state(db, now: datetime | None = None) -> dict | None:
         if home is None or away is None:
             continue
         if g.season != season:
-            ratings, season = team_model.rollover(p, ratings), g.season
+            if anchors and season != through:
+                anchors = team_model.update_anchors(anchors, ratings, anchor_weight)
+            ratings, season = team_model.rollover(p, ratings, anchors), g.season
             if sp:
                 offdef = team_model.rollover_scoring(sp, offdef)
         rest = rest_difference(last_played, home, away, g.game_time)
-        expected = team_model.expected_margin(p, ratings.get(home, 0.0), ratings.get(away, 0.0), rest_diff=rest)
-        ratings[home], ratings[away] = team_model.update(p, ratings.get(home, 0.0), ratings.get(away, 0.0), expected,
-                                                         g.home_score - g.away_score, spreads.get(g.id))
+        neutral = bool(getattr(g, "neutral_site", False))
+        rh, ra = ratings.get(home, new_team), ratings.get(away, new_team)
+        expected = team_model.expected_margin(p, rh, ra, neutral=neutral, rest_diff=rest)
+        ratings[home], ratings[away] = team_model.update(p, rh, ra, expected, g.home_score - g.away_score, spreads.get(g.id))
         if sp:
-            oh, dh = offdef.get(home, [0.0, 0.0])
-            oa, da = offdef.get(away, [0.0, 0.0])
-            exp = team_model.expected_points(sp, league, oh, dh, oa, da)
+            oh, dh = offdef.setdefault(home, list(scoring.get("new_team", [0.0, 0.0])))
+            oa, da = offdef.setdefault(away, list(scoring.get("new_team", [0.0, 0.0])))
+            exp = team_model.expected_points(sp, league, oh, dh, oa, da, neutral=neutral)
             league = team_model.update_scoring(sp, offdef, home, away, league, exp,
                                                (g.home_score, g.away_score), totals.get(g.id))
         last_played[home] = last_played[away] = g.game_time
         replayed += 1
     current_season = season if replayed else through + 1
     if current_season > season:
-        ratings = team_model.rollover(p, ratings)  # preseason: reversion not yet applied by a replayed game
+        # preseason: reversion not yet applied by a replayed game
+        if anchors and season != through:
+            anchors = team_model.update_anchors(anchors, ratings, anchor_weight)
+        ratings = team_model.rollover(p, ratings, anchors)
         if sp:
             offdef = team_model.rollover_scoring(sp, offdef)
     return {"recipe": artifact["version"], "params": p, "ratings": ratings, "last_played": last_played,
-            "codes": codes, "replayed_games": replayed, "scoring_params": sp, "offdef": offdef, "league": league, "season": current_season, "evidence": artifact["evidence"]}
+            "codes": codes, "replayed_games": replayed, "sport": sport, "new_team": new_team,
+            "new_scoring": (scoring or {}).get("new_team", [0.0, 0.0]), "scoring_params": sp, "offdef": offdef, "league": league, "season": current_season, "evidence": artifact["evidence"]}
 
 
 def rest_difference(last_played: dict, home: str, away: str, kickoff: datetime) -> float:
@@ -120,18 +132,22 @@ def rest_difference(last_played: dict, home: str, away: str, kickoff: datetime) 
 def project(s: dict, game: Game, market_margin: float | None, market_total: float | None = None) -> dict | None:
     """Model and market-regressed home margin, total, team points and probabilities for one upcoming game."""
     home, away = s["codes"].get(game.home_team_id), s["codes"].get(game.away_team_id)
-    if home not in s["ratings"] or away not in s["ratings"]:
+    if home is None or away is None:
+        return None
+    if s.get("sport", "nfl") == "nfl" and (home not in s["ratings"] or away not in s["ratings"]):
         return None
     p = s["params"]
+    neutral = bool(getattr(game, "neutral_site", False))
     rest = rest_difference(s["last_played"], home, away, game.game_time) if game.game_time else 0.0
-    model = team_model.expected_margin(p, s["ratings"][home], s["ratings"][away], rest_diff=rest)
+    model = team_model.expected_margin(p, s["ratings"].get(home, s.get("new_team", 0.0)),
+                                       s["ratings"].get(away, s.get("new_team", 0.0)), neutral=neutral, rest_diff=rest)
     final = team_model.regress_to_market(p, model, market_margin)
     scoring = {}
     sp = s.get("scoring_params")
     if sp:
-        oh, dh = s["offdef"].get(home, [0.0, 0.0])
-        oa, da = s["offdef"].get(away, [0.0, 0.0])
-        model_total = sum(team_model.expected_points(sp, s["league"], oh, dh, oa, da))
+        oh, dh = s["offdef"].get(home, s.get("new_scoring", [0.0, 0.0]))
+        oa, da = s["offdef"].get(away, s.get("new_scoring", [0.0, 0.0]))
+        model_total = sum(team_model.expected_points(sp, s["league"], oh, dh, oa, da, neutral=neutral))
         total = team_model.regress_total(sp, model_total, market_total)
         hp, ap = team_model.implied_points(total, final)
         scoring = {"model_total": round(model_total, 2), "market_total": market_total, "total": round(total, 2),
