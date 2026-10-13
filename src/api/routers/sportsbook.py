@@ -35,6 +35,7 @@ from src.models.governance import CalibrationReport
 from src.models.identity import Player, Team
 from src.models.ratings import TeamRating
 from src.services.elo import moneyline_probability, spread_cover_probability, implied_margin
+from src.utils.odds_math import normal_cdf
 from src.services.serving_calibration import calibrate_home_probability, deployment_status
 from src.services.serving_distributions import prop_parameters, spread_probability, distribution_status
 from src.services.projections import MIN_GAMES_FOR_PROJECTION, over_probability, project_stats
@@ -450,12 +451,14 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
 
     # NFL team model v2 (src/services/team_model.py): the NFL baseline for
     # moneyline/spread, regressed toward the pregame consensus spread.
-    team_v2, consensus = None, {}
-    if any(game.sport == 'nfl' and line.market in ('moneyline', 'spread') for line, game in rows):
+    team_v2, consensus, consensus_totals = None, {}, {}
+    if any(game.sport == 'nfl' for line, game in rows):
         from src.services import team_model_serving
         team_v2 = await team_model_serving.state(db)
         if team_v2 is not None:
-            consensus = await team_model_serving.market_spreads(db, list({g.id: g for _, g in rows if g.sport == 'nfl'}.values()))
+            nfl_games = list({g.id: g for _, g in rows if g.sport == 'nfl'}.values())
+            consensus = await team_model_serving.market_spreads(db, nfl_games)
+            consensus_totals = await team_model_serving.market_totals(db, nfl_games)
     promoted, selected = {}, {'status':'retained_baseline'}
     if any(game.sport=='nfl' and line.market=='moneyline' for line,game in rows):
         from src.services.model_deployment import forecasts as approved_forecasts
@@ -478,11 +481,16 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
             over_line, game = over_entry
             under_line, _ = under_entry
 
+            v2_total = None
+            if game.sport == 'nfl' and team_v2 is not None:
+                from src.services import team_model_serving
+                v2_total = team_model_serving.project(team_v2, game, consensus.get(game.id), consensus_totals.get(game.id))
             home_rating = ratings.get(game.home_team_id)
             away_rating = ratings.get(game.away_team_id)
-            if home_rating is None or away_rating is None:
+            v2_ready = bool(v2_total and v2_total.get('total') is not None)
+            if not v2_ready and (home_rating is None or away_rating is None):
                 continue
-            if not is_qualified(home_rating) or not is_qualified(away_rating):
+            if not v2_ready and (not is_qualified(home_rating) or not is_qualified(away_rating)):
                 # Fewer than MIN_GAMES_FOR_TOTALS games played - the scoring
                 # average isn't trustworthy yet, same "omit rather than
                 # assume" discipline as the moneyline/spread branch below.
@@ -491,10 +499,13 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
             away_name = teams[game.away_team_id].name if game.away_team_id in teams else "Away"
             matchup = f"{away_name} @ {home_name}"
 
-            expected_total = expected_total_points(home_rating, away_rating)
-            over_model_prob = total_over_probability(
-                expected_total, over_line.line or 0.0, game.sport
-            )
+            if v2_ready:
+                over_model_prob = 1.0 - normal_cdf(((over_line.line or 0.0) - v2_total['total']) / v2_total['total_sigma'])
+            else:
+                expected_total = expected_total_points(home_rating, away_rating)
+                over_model_prob = total_over_probability(
+                    expected_total, over_line.line or 0.0, game.sport
+                )
             over_selection = f"Over {over_line.line:.1f}" if over_line.line is not None else "Over"
             under_selection = f"Under {under_line.line:.1f}" if under_line.line is not None else "Under"
 
@@ -512,6 +523,10 @@ async def signal_rows(db: AsyncSession, sport: str | None, *, quote_ids: set[uui
                 ),
                 market=market, source=source, matchup=matchup, game=game,
             )
+            if v2_ready:
+                for row in out[-2:]:
+                    row['model_version'] = team_v2['recipe']
+                    row['team_model'] = {k: v2_total[k] for k in ('model_total', 'market_total', 'total', 'home_points', 'away_points')}
             continue
 
         home_entry = sides.get("home")
@@ -750,15 +765,19 @@ async def nfl_team_projections(db: AsyncSession = Depends(get_db)) -> dict[str, 
         Game.sport == 'nfl', Game.status == 'scheduled', Game.game_time.is_not(None),
         Game.game_time > now, Game.game_time <= now + timedelta(days=8)).order_by(Game.game_time))).all()
     spreads = await team_model_serving.market_spreads(db, upcoming)
+    totals = await team_model_serving.market_totals(db, upcoming)
     games = []
     for g in upcoming:
-        row = team_model_serving.project(state, g, spreads.get(g.id))
+        row = team_model_serving.project(state, g, spreads.get(g.id), totals.get(g.id))
         if row:
             games.append({**row, 'game_id': str(g.id), 'week': g.week, 'game_time': g.game_time.isoformat()})
     ev = state['evidence']['test_metrics']
     return {'status': 'research', 'model_version': state['recipe'], 'season': state['season'],
             'replayed_games': state['replayed_games'],
-            'ratings': [{'team': t, 'rating': round(v, 2)} for t, v in sorted(state['ratings'].items(), key=lambda kv: -kv[1])],
+            'ratings': [{'team': t, 'rating': round(v, 2),
+                         'offense': round(state['offdef'].get(t, [None, None])[0], 2) if state.get('offdef') and t in state['offdef'] else None,
+                         'defense': round(state['offdef'].get(t, [None, None])[1], 2) if state.get('offdef') and t in state['offdef'] else None}
+                        for t, v in sorted(state['ratings'].items(), key=lambda kv: -kv[1])],
             'games': games,
             'evidence': {'test_seasons': state['evidence']['test'], 'model_brier': ev['rebuilt_raw']['brier'],
                          'previous_elo_brier': ev['serving_elo']['brier'], 'market_brier': ev['market_close']['brier'],

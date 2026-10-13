@@ -102,3 +102,34 @@ async def test_team_projections_endpoint_lists_ratings_and_upcoming_games(db):
     assert body["status"] == "research" and len(body["ratings"]) == 32
     assert body["games"][0]["home"] == "KC" and body["games"][0]["market_margin"] is None
     assert body["evidence"]["model_brier"] < body["evidence"]["previous_elo_brier"]
+
+
+def test_nfl_lab_market_blend_reuses_frozen_probabilities():
+    from src.services.nfl_lab_registry import MARKET_WEIGHT, market_blend
+    assert MARKET_WEIGHT == 0.85
+    assert market_blend({"probability": 0.70, "market_probability": 0.50}) == pytest.approx(0.15 * 0.70 + 0.85 * 0.50)
+    assert market_blend({"probability": 0.70, "market_probability": None}) is None
+
+
+def test_scoring_split_points_sum_to_the_total_and_follow_offense_and_defense():
+    s = team_model.ScoringParams(hfa=2.0)
+    hp, ap = team_model.expected_points(s, 22.0, 3.0, 1.0, -1.0, -2.0)
+    assert (hp, ap) == (22.0 + 3.0 + 2.0 + 1.0, 22.0 - 1.0 - 1.0 - 1.0)
+    ratings = {}
+    league = team_model.update_scoring(s, ratings, "KC", "LAC", 22.0, (24.0, 20.0), (34.0, 20.0), None)
+    assert ratings["KC"][0] > 0 and ratings["LAC"][1] < 0 and league > 22.0  # KC scored more than expected
+    assert team_model.implied_points(47.0, 3.0) == (25.0, 22.0)
+    assert team_model.regress_total(team_model.ScoringParams(mr_floor=1.0), 51.0, 44.5) == 44.5
+
+
+async def test_projection_carries_team_points_and_market_total(db):
+    kc, lac = await resolve_team(db, "Kansas City Chiefs"), await resolve_team(db, "Los Angeles Chargers")
+    now = datetime.now(timezone.utc)
+    g = await _game(db, kc, lac, now + timedelta(days=1), status="scheduled")
+    db.add(TeamMarketLine(game_id=g.id, market="total", side="over", line=44.5, price_american=-110, source="pinnacle", line_type="live", observed_at=now - timedelta(minutes=5)))
+    await db.commit()
+    s = await team_model_serving.state(db, now=now)
+    totals = await team_model_serving.market_totals(db, [g])
+    row = team_model_serving.project(s, g, None, totals.get(g.id))
+    assert row["market_total"] == 44.5 and row["home_points"] + row["away_points"] == pytest.approx(row["total"])
+    assert row["home_points"] - row["away_points"] == pytest.approx(row["margin"])

@@ -26,14 +26,23 @@ async def team_codes(db) -> dict:
     return {t.id: t.nflverse_abbr for t in (await db.scalars(select(Team).where(Team.sport == "nfl"))).all()}
 
 
+async def market_totals(db, games: list[Game]) -> dict:
+    """Game total per game from the best available pregame total (same rules as spreads)."""
+    return await _market_lines(db, games, "total", "over", lambda line: line)
+
+
 async def market_spreads(db, games: list[Game]) -> dict:
     """Home expected margin per game from the best available pregame spread."""
+    return await _market_lines(db, games, "spread", "home", lambda line: -line)
+
+
+async def _market_lines(db, games: list[Game], market: str, side: str, convert) -> dict:
     ids = [g.id for g in games]
     if not ids:
         return {}
     kickoff = {g.id: g.game_time for g in games}
     rows = (await db.scalars(select(TeamMarketLine).where(
-        TeamMarketLine.game_id.in_(ids), TeamMarketLine.market == "spread", TeamMarketLine.side == "home",
+        TeamMarketLine.game_id.in_(ids), TeamMarketLine.market == market, TeamMarketLine.side == side,
         TeamMarketLine.line.is_not(None)))).all()
     best: dict = {}
     for r in rows:
@@ -48,7 +57,7 @@ async def market_spreads(db, games: list[Game]) -> dict:
     out = {}
     for game_id, by_source in best.items():
         pick = by_source.get("close") or by_source.get("pinnacle")
-        out[game_id] = -pick.line if pick else -statistics.median(r.line for r in by_source.values())
+        out[game_id] = convert(pick.line if pick else statistics.median(r.line for r in by_source.values()))
     return out
 
 
@@ -65,6 +74,11 @@ async def state(db, now: datetime | None = None) -> dict | None:
         Game.away_score.is_not(None), Game.game_time.is_not(None), Game.game_time <= now,
         or_(Game.game_type.is_(None), Game.game_type != "PRE")).order_by(Game.game_time))).all()
     spreads = await market_spreads(db, games)
+    totals = await market_totals(db, games)
+    scoring = artifact.get("scoring")
+    sp = team_model.ScoringParams.from_dict(scoring["params"]) if scoring else None
+    offdef = {t: list(v) for t, v in scoring["ratings"].items()} if scoring else {}
+    league = scoring["league"] if scoring else None
     ratings = dict(artifact["ratings"])
     season, last_played, replayed = through, {}, 0
     for g in games:
@@ -73,17 +87,27 @@ async def state(db, now: datetime | None = None) -> dict | None:
             continue
         if g.season != season:
             ratings, season = team_model.rollover(p, ratings), g.season
+            if sp:
+                offdef = team_model.rollover_scoring(sp, offdef)
         rest = rest_difference(last_played, home, away, g.game_time)
         expected = team_model.expected_margin(p, ratings.get(home, 0.0), ratings.get(away, 0.0), rest_diff=rest)
         ratings[home], ratings[away] = team_model.update(p, ratings.get(home, 0.0), ratings.get(away, 0.0), expected,
                                                          g.home_score - g.away_score, spreads.get(g.id))
+        if sp:
+            oh, dh = offdef.get(home, [0.0, 0.0])
+            oa, da = offdef.get(away, [0.0, 0.0])
+            exp = team_model.expected_points(sp, league, oh, dh, oa, da)
+            league = team_model.update_scoring(sp, offdef, home, away, league, exp,
+                                               (g.home_score, g.away_score), totals.get(g.id))
         last_played[home] = last_played[away] = g.game_time
         replayed += 1
     current_season = season if replayed else through + 1
     if current_season > season:
         ratings = team_model.rollover(p, ratings)  # preseason: reversion not yet applied by a replayed game
+        if sp:
+            offdef = team_model.rollover_scoring(sp, offdef)
     return {"recipe": artifact["version"], "params": p, "ratings": ratings, "last_played": last_played,
-            "codes": codes, "replayed_games": replayed, "season": current_season, "evidence": artifact["evidence"]}
+            "codes": codes, "replayed_games": replayed, "scoring_params": sp, "offdef": offdef, "league": league, "season": current_season, "evidence": artifact["evidence"]}
 
 
 def rest_difference(last_played: dict, home: str, away: str, kickoff: datetime) -> float:
@@ -93,8 +117,8 @@ def rest_difference(last_played: dict, home: str, away: str, kickoff: datetime) 
     return ((kickoff - last_played[home]) - (kickoff - last_played[away])).total_seconds() / 86400
 
 
-def project(s: dict, game: Game, market_margin: float | None) -> dict | None:
-    """Model and market-regressed home margin and probabilities for one upcoming game."""
+def project(s: dict, game: Game, market_margin: float | None, market_total: float | None = None) -> dict | None:
+    """Model and market-regressed home margin, total, team points and probabilities for one upcoming game."""
     home, away = s["codes"].get(game.home_team_id), s["codes"].get(game.away_team_id)
     if home not in s["ratings"] or away not in s["ratings"]:
         return None
@@ -102,6 +126,16 @@ def project(s: dict, game: Game, market_margin: float | None) -> dict | None:
     rest = rest_difference(s["last_played"], home, away, game.game_time) if game.game_time else 0.0
     model = team_model.expected_margin(p, s["ratings"][home], s["ratings"][away], rest_diff=rest)
     final = team_model.regress_to_market(p, model, market_margin)
-    return {"home": home, "away": away, "model_margin": round(model, 2), "market_margin": market_margin,
+    scoring = {}
+    sp = s.get("scoring_params")
+    if sp:
+        oh, dh = s["offdef"].get(home, [0.0, 0.0])
+        oa, da = s["offdef"].get(away, [0.0, 0.0])
+        model_total = sum(team_model.expected_points(sp, s["league"], oh, dh, oa, da))
+        total = team_model.regress_total(sp, model_total, market_total)
+        hp, ap = team_model.implied_points(total, final)
+        scoring = {"model_total": round(model_total, 2), "market_total": market_total, "total": round(total, 2),
+                   "home_points": round(hp, 2), "away_points": round(ap, 2), "total_sigma": sp.total_sigma}
+    return {**scoring, "home": home, "away": away, "model_margin": round(model, 2), "market_margin": market_margin,
             "margin": round(final, 2), "home_win_probability": round(team_model.win_probability(p, final), 4),
             "market_weight": None if market_margin is None else round(team_model.market_weight(p, model, market_margin), 3)}

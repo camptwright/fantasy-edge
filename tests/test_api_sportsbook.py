@@ -267,7 +267,13 @@ async def test_totals_are_priced_once_both_teams_are_qualified(db):
         totals = [s for s in signals if s["market"] == "total"]
         assert len(totals) == 2
         over = next(s for s in totals if s["selection"].startswith("Over"))
-        assert over["model_probability"] > 0.9
+        # NFL totals use the team model's scoring split; with a market total
+        # present its serving fit defers to the market (fitted floor 1.0), so
+        # the posted line is the projection and the probability is ~even.
+        assert over["model_version"].startswith("nfl_team_model_v2:")
+        assert over["team_model"]["market_total"] == 30.0 and over["team_model"]["model_total"] > 35
+        assert over["team_model"]["home_points"] + over["team_model"]["away_points"] == pytest.approx(30.0, abs=0.05)
+        assert 0.4 < over["model_probability"] < 0.6
         assert over["fair_probability"] is not None
     finally:
         app.dependency_overrides.clear()

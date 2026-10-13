@@ -15,6 +15,18 @@ from src.services.prospective_review import scorecard,nfl_lab_protocol
 from src.services.sharp_pricing import brand,SHARP
 from src.utils.odds_math import remove_vig_two_way
 
+# Market-heavy blend (owner decision 2026-10-12): weight set from the NFL team
+# model's fitted market-regression floor (0.85 on the market, nflverse
+# 2012-2025), independent of this lab's own outcomes. Graded from each frozen
+# record's separately stored lab and sharp-market probabilities, so the
+# existing cohort is reused, not recaptured.
+MARKET_WEIGHT = 0.85
+
+
+def market_blend(record, market_weight=MARKET_WEIGHT):
+    m = record.get('market_probability')
+    return None if m is None else (1 - market_weight) * record['probability'] + market_weight * m
+
 
 def artifact_version(artifact):
     code=(Path(__file__).parent/'nfl_predictor_lab.py').read_bytes()
@@ -154,6 +166,7 @@ async def execute(db):
     review=scorecard(records,now,policy=nfl_lab_protocol())
     blend_records=[{**r,'baseline':r['probability'],'probability':r['blend_25_probability']}
         for r in records if r.get('blend_25_probability') is not None]
+    blend_85=[{**r,'probability':market_blend(r)} for r in records if market_blend(r) is not None]
     report={'version':version,'artifact_path':str(target),'captured':captured,
         'evidence_store':'postgresql','reviewed_at':now.isoformat(),
         'baseline_identity':'retained_serving_elo',
@@ -165,10 +178,15 @@ async def execute(db):
         'market_blend_25_retained_baseline_review':scorecard(
             [{**r,'probability':r['blend_25_probability']} for r in records if r.get('blend_25_probability') is not None],
             now,policy=nfl_lab_protocol()),
-        'blend_recipe':{'lab_weight':.75,'market_weight':.25,'selection':'fixed_before_outcomes','usage':'research_only'},
+        'market_blend_85_review':scorecard([{**r,'baseline':r['market_probability']} for r in blend_85],now,policy=nfl_lab_protocol()),
+        'market_blend_85_retained_baseline_review':scorecard(blend_85,now,policy=nfl_lab_protocol()),
+        'blend_recipe':{'lab_weight':round(1-MARKET_WEIGHT,2),'market_weight':MARKET_WEIGHT,
+                        'selection':'external_fit_team_model_market_regression_floor','usage':'research_only',
+                        'legacy_blend':{'lab_weight':.75,'market_weight':.25}},
         'historical_metrics_scope':'expanding_season_recipe_not_final_artifact_prospective_performance'}
     if report['predictions_missing_frozen_evidence']:
-        for key in ('promotion_check','market_blend_25_review','market_blend_25_retained_baseline_review'):
+        for key in ('promotion_check','market_blend_25_review','market_blend_25_retained_baseline_review',
+                    'market_blend_85_review','market_blend_85_retained_baseline_review'):
             report[key]['review']['blockers'].append('registered_predictions_missing_frozen_evidence')
             report[key]['review']['promotion_eligible']=False
     # Passing a review is evidence, not permission to replace serving behavior.

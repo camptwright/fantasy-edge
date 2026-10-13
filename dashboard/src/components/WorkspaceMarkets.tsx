@@ -5,8 +5,9 @@ type Signal = {
   model_probability: number | null; fair_probability: number | null; ev_percent: number | null; actionable: boolean;
   exclusion_reason: string | null; matchup: string | null; game_time: string | null;
 };
-type TeamProjections = { status: string; model_version?: string; ratings: { team: string; rating: number }[];
-  games: { game_id: string; home: string; away: string; game_time: string; model_margin: number; market_margin: number | null; margin: number; home_win_probability: number; market_weight: number | null }[];
+type TeamProjections = { status: string; model_version?: string; ratings: { team: string; rating: number; offense?: number | null; defense?: number | null }[];
+  games: { game_id: string; home: string; away: string; game_time: string; model_margin: number; market_margin: number | null; margin: number; home_win_probability: number; market_weight: number | null;
+    total?: number; market_total?: number | null; model_total?: number; home_points?: number; away_points?: number }[];
   evidence?: { test_seasons: number[]; model_brier: number; previous_elo_brier: number; market_brier: number; regressed_brier: number } };
 type PropBoard = { status: string; compared?: number; note?: string | null; rows: { player: string; position: string | null; stat: string; line: number; source: string; game_time: string;
   engine_projection: number; engine_over_probability: number; market_over_probability: number; difference: number }[] };
@@ -81,13 +82,15 @@ export function GameProjections({ data }: { data: TeamProjections | null }) {
       </div>
       {!data.games.length ? <p className="rounded-xl border border-slate-800 p-4 text-sm text-slate-400">No NFL games in the next 8 days.</p> :
       <div className="workspace-scrollbar overflow-x-auto rounded-xl border border-slate-800">
-        <table className="w-full min-w-[36rem] text-sm">
-          <thead className="bg-slate-900/70 text-xs text-slate-400"><tr>{["Game", "Model", "Market", "Projection", "Home win"].map((h, i) => <th key={h} scope="col" className={`px-3 py-2 font-medium ${i ? "text-right" : "text-left"}`}>{h}</th>)}</tr></thead>
+        <table className="w-full min-w-[48rem] text-sm">
+          <thead className="bg-slate-900/70 text-xs text-slate-400"><tr>{["Game", "Model", "Market", "Projection", "Total", "Team points", "Home win"].map((h, i) => <th key={h} scope="col" className={`px-3 py-2 font-medium ${i ? "text-right" : "text-left"}`}>{h}</th>)}</tr></thead>
           <tbody>{data.games.map(g => <tr key={g.game_id} className="border-t border-slate-800/70">
             <td className="px-3 py-2">{g.away} @ {g.home}<span className="block text-[11px] text-slate-500">{when(g.game_time)}</span></td>
             <td className="px-3 py-2 text-right tabular-nums text-slate-300">{line(g.home, g.away, g.model_margin)}</td>
             <td className="px-3 py-2 text-right tabular-nums text-slate-400">{line(g.home, g.away, g.market_margin)}</td>
             <td className="px-3 py-2 text-right font-medium tabular-nums">{line(g.home, g.away, g.margin)}{g.market_weight != null && g.market_weight < 1 && <span className="block text-[11px] font-normal text-sky-300">model keeps {Math.round((1 - g.market_weight) * 100)}% of its view</span>}</td>
+            <td className="px-3 py-2 text-right tabular-nums">{g.total != null ? g.total.toFixed(1) : "—"}{g.model_total != null && g.market_total != null && <span className="block text-[11px] text-slate-500">model {g.model_total.toFixed(1)}</span>}</td>
+            <td className="px-3 py-2 text-right tabular-nums">{g.home_points != null && g.away_points != null ? `${g.away} ${g.away_points.toFixed(1)} · ${g.home} ${g.home_points.toFixed(1)}` : "—"}</td>
             <td className="px-3 py-2 text-right tabular-nums">{pctText(g.home_win_probability)}</td>
           </tr>)}</tbody>
         </table>
@@ -99,7 +102,8 @@ export function GameProjections({ data }: { data: TeamProjections | null }) {
       <ol className="mt-2 space-y-1 text-sm">{data.ratings.slice(0, 32).map((r, i) => <li key={r.team} className="flex items-center gap-2">
         <span className="w-5 text-right text-[11px] tabular-nums text-slate-500">{i + 1}</span><span className="w-10">{r.team}</span>
         <span aria-hidden="true" className="relative h-1.5 flex-1 rounded bg-slate-800"><span className={`absolute top-0 h-1.5 rounded ${r.rating >= 0 ? "left-1/2 bg-emerald-400" : "right-1/2 bg-rose-400"}`} style={{ width: `${Math.min(50, Math.abs(r.rating) * 4)}%` }} /></span>
-        <span className="w-12 text-right tabular-nums text-slate-300">{r.rating > 0 ? "+" : ""}{r.rating.toFixed(1)}</span></li>)}</ol>
+        <span className="w-12 text-right tabular-nums text-slate-300" title={r.offense != null && r.defense != null ? `Offense ${r.offense.toFixed(1)} · defense ${r.defense.toFixed(1)}` : undefined}>{r.rating > 0 ? "+" : ""}{r.rating.toFixed(1)}</span></li>)}</ol>
+      <p className="mt-2 text-[11px] text-slate-500">Margin rating; hover for the offense/defense scoring split.</p>
     </div>
   </section>;
 }

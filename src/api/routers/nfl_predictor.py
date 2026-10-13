@@ -117,7 +117,9 @@ async def nfl_predictor(db: AsyncSession = Depends(get_db)):
         if row.get('home_probability') is None:continue
         market=await market_reference(db,game_by_id[row['id']],now)
         row['market_reference']=market
-        row['market_blend_candidate_home_probability']=(.75*row['home_probability']+.25*market['probability']) if market else None
+        from src.services.nfl_lab_registry import MARKET_WEIGHT
+        row['market_blend_market_weight']=MARKET_WEIGHT
+        row['market_blend_candidate_home_probability']=((1-MARKET_WEIGHT)*row['home_probability']+MARKET_WEIGHT*market['probability']) if market else None
         row['market_blend_status']='research_only_unvalidated' if market else 'missing_fresh_sharp_market'
         row['epa_features']=await run_in_threadpool(latest_features,row['home'],row['away'],now)
         row['serving_promoted']=False

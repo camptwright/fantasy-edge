@@ -65,5 +65,6 @@ def forecasts(props, as_of):
         out[quote_id] = {
             'market_consensus_only_v1': {**evidence, 'market_weight': 1.0, 'model_probability': consensus},
             'market_blend_25_v1': {**evidence, 'model_probability': .75*baseline+.25*consensus},
+            'market_blend_85_v1': {**evidence, 'market_weight': .85, 'model_probability': .15*baseline+.85*consensus},
         }
     return out

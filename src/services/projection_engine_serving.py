@@ -87,9 +87,10 @@ async def build(db, *, now: datetime | None = None, catalog: dict | None = None)
                 home = fallback_environment(past, g.home_team_id, league_mean)
                 away = fallback_environment(past, g.away_team_id, league_mean)
                 projected = team_model_serving.project(teams, g, None) if teams else None
-                if projected is not None:
-                    # Keep the teams' combined scoring level, split by the team
-                    # model's projected margin (opponent strength and home field).
+                if projected is not None and projected.get("home_points") is not None:
+                    # Team scoring split: offense/defense total and the team model's margin.
+                    home, away = projected["home_points"], projected["away_points"]
+                elif projected is not None:
                     total, margin = home + away, projected["model_margin"]
                     home, away = total / 2 + margin / 2, total / 2 - margin / 2
                 targets.append((g, home, away, away - home))

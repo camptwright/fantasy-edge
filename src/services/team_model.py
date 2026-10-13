@@ -104,3 +104,70 @@ def load() -> dict | None:
     raw = json.loads(text)
     version = f"{raw['recipe']}:{hashlib.sha256(text.encode()).hexdigest()[:12]}"
     return {**raw, "version": version, "params": Params.from_dict(raw["params"])}
+
+
+# ---- team scoring split: offense / defense ratings (points) ---------------------------------
+# Expected home points = league + home offense - away defense + hfa/2 (and the
+# mirror for the away side). Updated per side with the same log-scaled error
+# and market resist as the margin model, against the closing total.
+
+
+@dataclass(frozen=True)
+class ScoringParams:
+    k: float = 0.4             # update size per log-point of a side's scoring error
+    resist: float = 3.0        # market-resist scale against the closing total
+    reversion: float = 0.35    # offseason pull of offense/defense toward average
+    league_alpha: float = 0.02  # EWMA weight of each game on the league scoring level
+    hfa: float = 2.0           # home scoring edge, split half to each side
+    total_sigma: float = 13.0  # standard deviation of the game total
+    mr_floor: float = 0.85     # weight on the market total for regression
+    mr_mid: float = 2.0
+    mr_steep: float = 2.0
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "ScoringParams":
+        names = {f.name for f in fields(cls)}
+        return cls(**{k: float(v) for k, v in raw.items() if k in names})
+
+
+def expected_points(s: ScoringParams, league: float, off_h: float, def_h: float, off_a: float, def_a: float,
+                    *, neutral: bool = False) -> tuple[float, float]:
+    edge = 0.0 if neutral else s.hfa / 2
+    return league + off_h - def_a + edge, league + off_a - def_h - edge
+
+
+def _shift(s: ScoringParams, error: float, k: float) -> float:
+    return k * math.copysign(math.log1p(abs(error)), error)
+
+
+def update_scoring(s: ScoringParams, ratings: dict, home: str, away: str, league: float, expected: tuple[float, float],
+                   points: tuple[float, float], closing_total: float | None) -> float:
+    """Update offense/defense in place; returns the new league scoring level."""
+    k = s.k
+    if closing_total is not None:
+        model_err = abs(sum(points) - sum(expected))
+        market_err = abs(sum(points) - closing_total)
+        if model_err > max(1.0, market_err):
+            k *= 1 + (model_err - market_err) / s.resist
+    for side, opp, exp, got in ((home, away, expected[0], points[0]), (away, home, expected[1], points[1])):
+        shift = _shift(s, got - exp, k)
+        ratings.setdefault(side, [0.0, 0.0])[0] += shift / 2
+        ratings.setdefault(opp, [0.0, 0.0])[1] -= shift / 2
+    return (1 - s.league_alpha) * league + s.league_alpha * sum(points) / 2
+
+
+def rollover_scoring(s: ScoringParams, ratings: dict) -> dict:
+    return {t: [(1 - s.reversion) * o, (1 - s.reversion) * d] for t, (o, d) in ratings.items()}
+
+
+def regress_total(s: ScoringParams, model: float, market: float | None) -> float:
+    if market is None:
+        return model
+    z = max(-50.0, min(50.0, s.mr_steep * (abs(model - market) - s.mr_mid)))
+    w = s.mr_floor + (1 - s.mr_floor) / (1 + math.exp(z))
+    return model + w * (market - model)
+
+
+def implied_points(total: float, margin: float) -> tuple[float, float]:
+    """Team scoring split: (home, away) points from a game total and home margin."""
+    return total / 2 + margin / 2, total / 2 - margin / 2
