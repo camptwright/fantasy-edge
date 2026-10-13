@@ -36,8 +36,12 @@ def load_evidence(directory, versions, now=None):
     """
     now = now or datetime.now(timezone.utc)
     try:
-        files = archive_io.files(directory)
-        raw = archive_io.read_bytes(files[-1])
+        latest = Path(directory) / "_latest.json"
+        if latest.exists():
+            raw = latest.read_bytes()
+        else:
+            files = [p for p in archive_io.files(directory) if not p.name.startswith("_")]
+            raw = archive_io.read_bytes(files[-1])
         report = json.loads(raw)
         approvals = json.loads(APPROVALS.read_text())
         at = datetime.fromisoformat(report["graded_at"])

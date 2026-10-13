@@ -7,7 +7,7 @@ import json
 import os
 import uuid
 from contextlib import suppress
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from redis.asyncio import Redis
 from config.settings import get_settings
@@ -47,6 +47,44 @@ def archive(kind, payload):
     return str(path)
 
 
+def archive_capture(compact, bodies) -> str:
+    """Raw mirror of the database form: create-only bodies by digest, then the compact capture."""
+    from src.services.roster_stat_prospective import publish
+    root = Path(get_settings().raw_archive_dir) / 'forecasts' / 'records'
+    for key, body in bodies.items():
+        publish(root / f'{key}.json', body)  # create-only: an existing body is the same content
+    return archive('forecasts', compact)
+
+
+def write_latest(directory: Path, payload) -> str:
+    """Atomically replace `_latest.json` (mutable; never compressed or treated as history)."""
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / '_latest.json'
+    temporary = directory / f'._latest-{uuid.uuid4().hex}.tmp'
+    try:
+        with temporary.open('x') as stream:
+            json.dump(payload, stream, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return str(target)
+
+
+def archive_grading(payload, change, *, keyframe_every=timedelta(hours=24)):
+    """Delta every run; a full keyframe at most daily so replay from history stays short."""
+    from src.utils import archive_io
+    root = Path(get_settings().raw_archive_dir) / 'grading'
+    out = {'archive': archive('grading/deltas', change), 'latest': write_latest(root, payload)}
+    keyframes = archive_io.files(root)
+    keyframes = [p for p in keyframes if not p.name.startswith('_')]
+    last = datetime.strptime(keyframes[-1].name[:15], '%Y%m%dT%H%M%S').replace(tzinfo=timezone.utc) if keyframes else None
+    if last is None or datetime.now(timezone.utc) - last >= keyframe_every:
+        out['keyframe'] = archive('grading', payload)
+    return out
+
+
 @celery_app.task(name='fantasy.archive_rosters', soft_time_limit=600, time_limit=660)
 def archive_rosters():
     async def run():
@@ -54,6 +92,14 @@ def archive_rosters():
         async with get_worker_db() as db:
             payload = await collect(db)
         verified = sum(r['status'] == 'verified_roster' for r in payload['teams'])
+        from src.services.roster_evidence import drop_unchanged_payloads
+        from src.utils import archive_io
+        previous_files = archive_io.files(Path(get_settings().raw_archive_dir) / 'roster-evidence')
+        try:
+            previous = archive_io.read_json(previous_files[-1]) if previous_files else None
+        except (OSError, ValueError):
+            previous = None
+        drop_unchanged_payloads(payload, previous)
         path = archive('roster-evidence', payload)
         if payload['teams'] and not verified:
             raise RuntimeError('All roster sources failed; failed evidence archived.')
@@ -237,13 +283,13 @@ def capture_forecasts():
         # capture deliberately opens a READ ONLY repeatable-read transaction.
         # Persist only after closing it, using a fresh worker-owned write session.
         async with get_worker_db() as db:
-            from src.services.forecast_evidence import save
-            await save(db,'forecasts',payload)
+            from src.services.forecast_evidence import save, save_capture
+            compact, bodies = await save_capture(db, payload)
             await save(db,'capture_status',{'capture_id':payload['capture_id'],
                 'captured_at':payload['captured_at'],'records':len(payload['records']),
                 'model_version':payload.get('model_version')})
             await db.commit()
-        output = {'records': len(payload['records']), 'archive': archive('forecasts', payload)}
+        output = {'records': len(payload['records']), 'archive': archive_capture(compact, bodies)}
         from src.services.paper_ledger import capture as capture_paper
         async with get_worker_db() as db:
             output['paper_ledger'] = await capture_paper(db)
@@ -318,10 +364,11 @@ def grade_forecasts():
             checkpoint=await refresh(db)
         async with get_worker_db() as db:
             payload = await grade(db)
+        from src.services.forecast_evidence import save_grading
         async with get_worker_db() as db:
-            await save(db,'grading',payload)
+            change=await save_grading(db,payload)
             await db.commit()
-        return {'counts': payload['counts'], 'cohort_checkpoint':checkpoint,'archive': archive('grading', payload)}
+        return {'counts': payload['counts'], 'cohort_checkpoint':checkpoint, **archive_grading(payload, change)}
     return asyncio.run(run())
 
 

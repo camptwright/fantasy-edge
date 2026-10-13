@@ -146,8 +146,10 @@ async def load(db, *, persist=False):
         async for archive in rows.scalars():
             if digest(archive.payload)!=archive.digest:
                 raise ValueError('Forecast evidence integrity mismatch')
-            note_modes(archive.payload)
-            initial=cohort_from_payloads([archive.payload],include_shadows=True,state=initial)
+            from src.services.forecast_evidence import expand_capture
+            payload=await expand_capture(db,archive.payload)
+            note_modes(payload)
+            initial=cohort_from_payloads([payload],include_shadows=True,state=initial)
       return initial
     state=await consume(pending,state)
     if pending and previous and any(len(values)>1 for values in modes.values()):

@@ -68,7 +68,7 @@ async def plan(db,*,now=None,days=90,max_files=500,max_bytes=256*1024*1024):
 # identity records: their first-observation-wins check reads the exact
 # `.json` path, so compressing one would allow a hindsight re-capture.
 # Every reader of these directories goes through src.utils.archive_io.
-COMPRESSIBLE=('result-observations','roster-evidence','grading','forecasts','mlb_availability',
+COMPRESSIBLE=('result-observations','roster-evidence','grading','grading/deltas','forecasts','mlb_availability',
     'espn_injuries','aggregate-props','fantasy-scoring-source','college-player-lab',
     'fantasy-prospective/reports')
 
@@ -81,7 +81,8 @@ def compress_daily(*,now=None,min_age=timedelta(days=1),max_bytes=2*1024**3,root
         directory=base/name
         if directory.is_symlink() or not directory.is_dir():continue
         for path in directory.glob('*.json'):
-            if path.is_symlink() or not path.is_file():continue
+            # `_latest.json` is a mutable pointer, not history: never compress it.
+            if path.is_symlink() or not path.is_file() or path.name.startswith('_'):continue
             info=path.stat()
             if info.st_mtime<(now-min_age).timestamp():candidates.append((info.st_mtime,info.st_size,path,directory))
     candidates.sort()

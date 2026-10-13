@@ -8,7 +8,68 @@ from sqlalchemy.dialects.postgresql import insert
 from src.models.governance import ForecastArchive
 from src.utils import archive_io
 
-KINDS=('forecasts','grading','shadow_entries','shadow_closes','missing_results','archive_index','capture_status')
+KINDS=('forecasts','forecast_record','grading','grading_delta','shadow_entries','shadow_closes','missing_results','archive_index','capture_status')
+GRADING_LATEST='forecast_grading:latest'
+# Capture records are stored once by content (the record without its
+# per-capture `prediction.last_seen_at`); a capture lists references in order.
+RECORD_ENCODING='content_addressed_records_v1'
+
+
+def split_record(record):
+    """(body, last_seen_at or a missing marker) - the only field that changes on every capture."""
+    prediction=record.get('prediction')
+    if not isinstance(prediction,dict) or 'last_seen_at' not in prediction:
+        return record,None
+    body={**record,'prediction':{k:v for k,v in prediction.items() if k!='last_seen_at'}}
+    return body,prediction['last_seen_at']
+
+
+def compact_capture(payload):
+    """(compact capture, {body digest: body}) - same order, same capture metadata."""
+    bodies={};refs=[]
+    for record in payload['records']:
+        body,seen=split_record(record)
+        key=digest(body);bodies[key]=body
+        refs.append({'$body':key,**({'last_seen_at':seen} if seen is not None else {})})
+    return {**payload,'records':refs,'record_encoding':RECORD_ENCODING},bodies
+
+
+def expand_records(payload,bodies):
+    """Rebuild a compact capture's full records; each body must match its digest."""
+    if payload.get('record_encoding')!=RECORD_ENCODING:return payload
+    records=[]
+    for ref in payload['records']:
+        body=bodies.get(ref['$body'])
+        if body is None or digest(body)!=ref['$body']:raise ValueError('Forecast record body missing or altered')
+        record=body
+        if 'last_seen_at' in ref:
+            record={**body,'prediction':{**body['prediction'],'last_seen_at':ref['last_seen_at']}}
+        records.append(record)
+    out={k:v for k,v in payload.items() if k!='record_encoding'}
+    return {**out,'records':records}
+
+
+async def record_bodies(db,keys):
+    keys=sorted(set(keys));out={}
+    for start in range(0,len(keys),500):
+        rows=(await db.scalars(select(ForecastArchive).where(ForecastArchive.kind=='forecast_record',
+            ForecastArchive.digest.in_(keys[start:start+500])))).all()
+        out.update({r.digest:r.payload for r in rows})
+    return out
+
+
+async def expand_capture(db,payload):
+    if payload.get('record_encoding')!=RECORD_ENCODING:return payload
+    return expand_records(payload,await record_bodies(db,[r['$body'] for r in payload['records']]))
+
+
+async def save_capture(db,payload):
+    """Store bodies (deduplicated by digest) and the compact capture; returns the compact form."""
+    compact,bodies=compact_capture(payload)
+    for key,body in bodies.items():
+        await db.execute(insert(ForecastArchive).values(digest=key,kind='forecast_record',payload=body).on_conflict_do_nothing())
+    await save(db,'forecasts',compact)
+    return compact,bodies
 
 
 def digest(payload):
@@ -117,7 +178,7 @@ async def payloads(db,kind='forecasts'):
     async for row in rows.scalars():
         if digest(row.payload)!=row.digest:
             raise ValueError('Forecast evidence integrity mismatch')
-        yield row.payload
+        yield await expand_capture(db,row.payload) if kind=='forecasts' else row.payload
 
 
 async def restore(db,directory,*,kind='forecasts'):
@@ -137,7 +198,34 @@ async def restore(db,directory,*,kind='forecasts'):
     return {'restored':count,'kind':kind,'directory':str(target),'integrity_verified':True}
 
 
+async def save_grading(db,payload):
+    """History as a delta against the previous report; the full latest report in one mutable row."""
+    from src.models.governance import DerivedCheckpoint
+    from src.services import evidence_delta
+    row=await db.get(DerivedCheckpoint,GRADING_LATEST)
+    previous=row.payload if row is not None and digest(row.payload)==row.digest else await _legacy_latest(db)
+    change=evidence_delta.delta(previous,payload,('reports','shadow_reports'))
+    await save(db,'grading_delta',change)
+    await save_index(db,GRADING_LATEST,payload)
+    return change
+
+
+async def _legacy_latest(db):
+    row=await db.scalar(select(ForecastArchive).where(ForecastArchive.kind=='grading')
+        .order_by(ForecastArchive.payload['graded_at'].astext.desc(),ForecastArchive.digest.desc()).limit(1))
+    return row.payload if row is not None and digest(row.payload)==row.digest else None
+
+
 async def latest_grade(db):
+    from src.models.governance import DerivedCheckpoint
+    latest=await db.get(DerivedCheckpoint,GRADING_LATEST)
+    if latest is not None:
+        if digest(latest.payload)!=latest.digest:return {'status':'unavailable','reports':[],'reason':'evidence_integrity_mismatch'}
+        try:
+            at=datetime.fromisoformat(latest.payload['graded_at'])
+            stale=(datetime.now(timezone.utc)-at).total_seconds()>7200
+        except (KeyError,ValueError,TypeError):return {'status':'unavailable','reports':[]}
+        return {**latest.payload,'stale':stale,'evidence_store':'postgresql'}
     row=await db.scalar(select(ForecastArchive).where(ForecastArchive.kind=='grading')
         .order_by(ForecastArchive.payload['graded_at'].astext.desc(),ForecastArchive.digest.desc()).limit(1))
     if row is None:return {'status':'awaiting_grading','reports':[]}

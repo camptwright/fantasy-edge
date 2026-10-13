@@ -139,6 +139,28 @@ async def collect(db):
     }
 
 
+def drop_unchanged_payloads(payload, previous):
+    """Keep a team's raw provider payload only when its roster membership changed.
+
+    Readers use athlete ids, status and timestamps, never the raw payload;
+    keeping ~360 KB per team every six hours was 45-90 MB a capture. The
+    payload hash still proves each observation.
+    """
+    before = {r["team_id"]: sorted(r.get("athlete_ids") or []) for r in (previous or {}).get("teams", [])
+              if r.get("status") == "verified_roster"}
+    kept = 0
+    for row in payload["teams"]:
+        if row.get("status") != "verified_roster" or "payload" not in row:
+            continue
+        if before.get(row["team_id"]) == sorted(row.get("athlete_ids") or []):
+            del row["payload"]
+            row["payload_retained"] = "unchanged_membership"
+        else:
+            row["payload_retained"] = "membership_changed_or_new"
+            kept += 1
+    return kept
+
+
 def load(directory, now):
     try:
         path = archive_io.files(directory)[-1]

@@ -6,6 +6,7 @@ feed as a neutral injury, lineup, weather, or settlement outcome.
 from __future__ import annotations
 
 from collections import Counter
+import json
 from pathlib import Path
 from datetime import datetime, timezone
 from src.services.injury_evidence import archive_rows, game_snapshots, age
@@ -25,7 +26,20 @@ def _latest_payload(archive_dir: Path) -> object | None:
 
 def _latest_capture(archive_dir: Path) -> dict | None:
     payload = _latest_payload(archive_dir)
-    return payload if isinstance(payload, dict) and isinstance(payload.get("records"), list) else None
+    if not (isinstance(payload, dict) and isinstance(payload.get("records"), list)):
+        return None
+    from src.services.forecast_evidence import RECORD_ENCODING, expand_records
+    if payload.get("record_encoding") == RECORD_ENCODING:
+        bodies = {}
+        for ref in payload["records"]:
+            path = archive_dir / "records" / f"{ref['$body']}.json"
+            if path.exists():
+                bodies[ref["$body"]] = json.loads(path.read_text())
+        try:
+            return expand_records(payload, bodies)
+        except ValueError:
+            return None
+    return payload
 
 
 def readiness(raw_archive_dir: Path, rss_configured: bool) -> dict:
