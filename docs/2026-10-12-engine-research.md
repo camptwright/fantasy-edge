@@ -172,3 +172,21 @@ Not yet adopted: FantasyPros' post-game recap and "Rate My Team".
 **Data fixes found on the way:** bye/out starters blocked pregame
 win-probability capture; ESPN sync never refreshed games left unfinished
 outside its rolling window (now re-polled).
+
+## Update 2026-10-13 (signed-in FantasyPros review, 2016 Warriors)
+
+Reviewed My Playbook: Dashboard (standings, avg points, playoff odds,
+position radar, weekly points vs median, start/sit accuracy, team insights),
+Matchup (slot-by-slot, current vs optimal), Waiver Central (position ranks),
+Trade Finder, League Analyzer (team/positional/starter ranks), Post-Game.
+
+Adopted: trade finder (win-win one-for-one trades), position ladder on
+Waivers, slot-by-slot matchup board with hindsight-optimal lineup and
+start/sit accuracy (our week 4: 81.7%; FantasyPros: 82%), season tiles and a
+League tool with standings and simulated playoff odds (2016 Warriors 99.9%;
+FantasyPros: 99%), bye-week plan-ahead review items. Remaining schedules are
+now stored for both platforms.
+
+Not yet adopted: post-game recap, "Are they playing?" inactive alerts,
+strength-of-schedule stars on waiver targets, weekly points vs league-median
+chart, starter-slot and bench ranks.

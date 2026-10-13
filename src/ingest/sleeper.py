@@ -11,7 +11,7 @@ used.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from sqlalchemy import select
@@ -179,7 +179,37 @@ async def _sync_sport(db: AsyncSession, client: httpx.AsyncClient, user: dict, s
                         await _snapshot(db, league_id, planning_week, 'projections', projections)
             except (httpx.HTTPError,ValueError,TypeError) as exc:
                 logger.warning('Sleeper planning unavailable league=%s error=%s',league_id,type(exc).__name__)
+        if sport == 'nfl':
+            await _sync_schedule(db, client, league, week)
     return {"leagues": len(leagues), "season": int(season), "week": week}
+
+
+async def _sync_schedule(db: AsyncSession, client: httpx.AsyncClient, league: dict, week: int) -> None:
+    """Remaining regular-season pairings (Sleeper pre-generates them), refreshed at most daily.
+
+    Stored as kind 'schedule': [{roster_id, matchup_id}] per week, for
+    standings and playoff-odds simulation. Pairings only; no projections.
+    """
+    league_id = league["league_id"]
+    last = int((league.get("settings") or {}).get("playoff_week_start") or 15) - 1
+    if week >= last:
+        return
+    existing = await db.get(SleeperLeagueSnapshot, (league_id, week + 1, "schedule"))
+    if existing is not None and datetime.now(timezone.utc) - existing.synced_at < timedelta(hours=24):
+        return
+    for future in range(week + 1, last + 1):
+        try:
+            response = await client.get(f"/league/{league_id}/matchups/{future}")
+            if response.status_code == 429:
+                break
+            rows = response.json() if response.is_success else None
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning('Sleeper schedule unavailable league=%s error=%s', league_id, type(exc).__name__)
+            break
+        pairs = [{"roster_id": r.get("roster_id"), "matchup_id": r.get("matchup_id")} for r in rows or []
+                 if isinstance(r, dict) and r.get("matchup_id") is not None]
+        if pairs:
+            await _snapshot(db, league_id, future, "schedule", pairs)
 
 
 async def _upsert_league(db: AsyncSession, league: dict, sport: str) -> None:

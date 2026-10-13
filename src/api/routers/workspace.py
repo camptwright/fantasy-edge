@@ -1079,3 +1079,85 @@ async def trade_ideas(league_id: str, response: Response, db: AsyncSession = Dep
             for r in raw['rows']]
     return TradeIdeas(status='research', generated_at=data['read_model']['generated_at'],
                       mutual_trades=raw['mutual_trades'], rows=rows, market_status=market.get('status', 'unavailable'))
+
+
+class StandingRow(BaseModel):
+    roster_id: str
+    name: str | None = None
+    is_mine: bool = False
+    wins: int
+    losses: int
+    ties: int
+    points_for: float
+    points_against: float
+    playoff_odds: float | None = None
+    first_seed_odds: float | None = None
+    projected_wins: float | None = None
+
+
+class StandingsView(BaseModel):
+    status: str
+    week: int | None = None
+    playoff_teams: int | None = None
+    remaining_games: int = 0
+    simulations: int = 0
+    rows: list[StandingRow] = Field(default_factory=list)
+    note: str = ('Standings from completed weeks. Odds simulate the remaining schedule 10,000 times: each team scores '
+                 'around its points per game, scaled each week by its projected starting lineup (byes dip); seeds by '
+                 'wins then points for. No divisions or league-specific tiebreakers. Research.')
+
+
+@router.get('/leagues/{league_id}/standings', response_model=StandingsView)
+async def league_standings(league_id: str, response: Response, db: AsyncSession = Depends(get_db)):
+    from src.models.sleeper import SleeperLeagueSnapshot
+    from src.services import season_sim
+    from src.services.fantasy_decision_models import FLEX, RESERVE
+    from src.services.waiver_guidance import OFFENSE, lineup_total
+    response.headers['Cache-Control'] = 'no-store'
+    league = await db.get(SleeperLeague, league_id)
+    if league is None:
+        raise HTTPException(404, 'League not found')
+    data = await read(db, league_id)
+    if data is None or not data.get('week'):
+        return StandingsView(status='updating')
+    week = int(data['week'])
+    snaps = (await db.scalars(select(SleeperLeagueSnapshot).where(
+        SleeperLeagueSnapshot.league_id == league_id, SleeperLeagueSnapshot.kind.in_(('matchups', 'schedule')),
+        SleeperLeagueSnapshot.week >= 1))).all()
+    results, remaining = [], {}
+    for snap in snaps:
+        rows = snap.payload if isinstance(snap.payload, list) else []
+        if snap.kind == 'matchups' and snap.week < week:
+            results += [{'week': snap.week, 'roster_id': r['roster_id'], 'matchup_id': r['matchup_id'],
+                         'points': float(r.get('points') or 0.0)} for r in rows if r.get('matchup_id') is not None]
+        elif (snap.kind == 'matchups' and snap.week == week) or (snap.kind == 'schedule' and snap.week > week):
+            for r in rows:
+                if r.get('matchup_id') is not None:
+                    remaining.setdefault((snap.week, r['matchup_id']), set()).add(r['roster_id'])
+    games = sorted((w, *sorted(teams)) for (w, _), teams in remaining.items() if len(teams) == 2)
+    table = season_sim.standings(results)
+    if not table:
+        return StandingsView(status='no_completed_weeks', week=week)
+    playoff_teams = int((league.settings or {}).get('playoff_teams') or
+                        ((league.raw or {}).get('settings', {}).get('scheduleSettings', {}) or {}).get('playoffTeamCount') or 6)
+    by_id = {str(p['player_id']): p for p in data.get('players', [])}
+    slots = [s for s in data.get('roster_positions', []) if s not in RESERVE and FLEX.get(s, {s}) <= OFFENSE]
+    weeks = sorted({g[0] for g in games})
+    lineups = {}
+    for r in data.get('rosters', []):
+        members = [by_id[pid] for pid in map(str, r.get('player_ids', [])) if pid in by_id and by_id[pid].get('position') in OFFENSE]
+        for w in weeks:
+            total = lineup_total(members, slots, w) if slots else None
+            lineups[(r['roster_id'], w)] = total or None
+    strength = season_sim.weekly_strength(table, weeks, lineups)
+    scores = [r['points'] for r in results]
+    sd = max(season_sim.MIN_SD, float(__import__('numpy').std(scores))) if len(scores) > 4 else 25.0
+    odds = season_sim.simulate(table, games, strength, playoff_teams, sd=sd) if games else {}
+    names = {r['roster_id']: r.get('name') for r in data.get('rosters', [])}
+    mine = {r['roster_id'] for r in data.get('rosters', []) if r.get('is_mine') is True}
+    rows = [StandingRow(roster_id=str(t), name=names.get(t), is_mine=t in mine, wins=v['wins'], losses=v['losses'],
+                        ties=v['ties'], points_for=round(v['pf'], 2), points_against=round(v['pa'], 2),
+                        **(odds.get(t) or {})) for t, v in table.items()]
+    rows.sort(key=lambda r: (-(r.wins + 0.5 * r.ties), -r.points_for))
+    return StandingsView(status='research', week=week, playoff_teams=playoff_teams, remaining_games=len(games),
+                         simulations=season_sim.SIMS if games else 0, rows=rows)

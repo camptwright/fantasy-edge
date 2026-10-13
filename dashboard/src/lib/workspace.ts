@@ -28,7 +28,7 @@ export const FANTASY_TOOLS = [
   {id: 'overview', label: 'Overview'}, {id: 'team', label: 'My team'},
   {id: 'startsit', label: 'Start/Sit'},
   {id: 'waivers', label: 'Waivers'}, {id: 'players', label: 'Players'},
-  {id: 'trade', label: 'Trade analyzer'},
+  {id: 'trade', label: 'Trade analyzer'}, {id: 'league', label: 'League'},
 ] as const;
 /** `player` is a detail screen reached from rows, not a tab. */
 export type FantasyTool = typeof FANTASY_TOOLS[number]['id'] | 'player';
@@ -77,6 +77,12 @@ export function dailyReview(overview: Overview): {title: string; detail: string;
   if (unknown) rows.push({title: `${unknown} unpriced roster player${unknown === 1 ? '' : 's'}`, detail: 'Unknown points are not zero. Review identity, scoring and history coverage.', tool: 'team', attention: true});
   const changes = overview.lineup_changes;
   rows.push({title: changes.status === 'available' && changes.start.length ? `${changes.start.length} candidate lineup change${changes.start.length === 1 ? '' : 's'}` : 'Review your lineup', detail: changes.reason, tool: 'team', attention: false});
+  // Plan ahead (FantasyPros "Team Insights"): starters with no game next week but games after it.
+  const next = (overview.week ?? 0) + 1;
+  const starters = new Set((overview.matchup?.mine?.starters ?? []).flatMap(p => p.player_id ? [p.player_id] : []));
+  const byes = overview.roster_players.filter(p => starters.has(p.player_id) && (p.engine_weeks ?? []).length > 0
+    && !p.engine_weeks.some(w => w.week === next) && p.engine_weeks.some(w => w.week > next));
+  if (overview.week && byes.length) rows.push({title: `${byes.length} starter${byes.length === 1 ? "" : "s"} on bye in week ${next}`, detail: `${byes.map(p => p.name).join(", ")} ${byes.length === 1 ? "has" : "have"} no game next week. Plan a replacement now; the position ladder on Waivers shows who is available.`, tool: 'waivers', attention: true});
   const engineAdds = (overview.engine_waivers?.rows ?? []).filter(r => r.ros_gain != null && r.ros_gain > 0);
   if (engineAdds.length) rows.push({title: `${engineAdds.length} waiver add${engineAdds.length === 1 ? '' : 's'} would improve your starting lineup`, detail: `Waiver guidance (engine research), led by ${engineAdds[0].add.name} for ${engineAdds[0].compare?.name ?? 'a bench player'}: +${engineAdds[0].ros_gain!.toFixed(1)} lineup points over the remaining weeks. Not validated; nothing is claimed for you.`, tool: 'waivers', attention: false});
   rows.push({title: overview.waivers.moves.length ? `${overview.waivers.moves.length} waiver alternative${overview.waivers.moves.length === 1 ? '' : 's'} to compare` : 'Explore waiver coverage', detail: 'Each add/drop is an alternative, not a combined plan. Check platform availability and waiver rules.', tool: 'waivers', attention: false});

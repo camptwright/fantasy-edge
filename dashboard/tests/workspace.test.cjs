@@ -52,6 +52,17 @@ test('daily review prioritizes evidence without treating zero as missing or inve
   assert.equal(exportsObject.dailyReview({...overview,status:'updating'}).length,0);
   assert.equal(exportsObject.dailyReview({...overview,roster_players:[]})[0].title,'Roster evidence unavailable');
 });
+test('daily review flags starters on bye next week, not players with no engine weeks', () => {
+  const wk=(...weeks)=>weeks.map(week=>({week,points:10,environment:'market_line'}));
+  const overview = {status:'snapshot_available', week:6, matchup:{mine:{starters:[{player_id:'a'},{player_id:'b'},{player_id:'c'}]}},
+    roster_players:[{player_id:'a',name:'T.J. Hockenson',points:10,engine_weeks:wk(6,8,9)},{player_id:'b',name:'Has Game',points:10,engine_weeks:wk(6,7,8)},
+      {player_id:'c',name:'Kicker',points:8,engine_weeks:[]},{player_id:'d',name:'Bench Bye',points:5,engine_weeks:wk(6,8)}],
+    lineup_changes:{status:'withheld',start:[],reason:'r'}, waivers:{moves:[]}};
+  const bye = exportsObject.dailyReview(overview).find(r => /bye/.test(r.title));
+  assert.equal(bye.title,'1 starter on bye in week 7');
+  assert.match(bye.detail,/T\.J\. Hockenson has no game next week/);
+  assert.equal(bye.attention,true);
+});
 test('client research props exclude unrelated overview and roster fields', () => {
   const players=[];
   const result=exportsObject.researchContext({league_id:'league',generated_at:'timestamp',comparison_players:players,

@@ -133,6 +133,8 @@ async def _sync_league(
     await _snapshot(db, league_id, week, "player_metadata", metadata)
     await _snapshot(db, league_id, week, "projections", projections)
     await _snapshot(db, league_id, week, "matchups", _parse_matchups(payload, week, team_starters))
+    for future, pairs in _schedule(payload, week).items():
+        await _snapshot(db, league_id, future, "schedule", pairs)
     from src.services.fantasy_score_history import collect_espn
     try:
         await collect_espn(db,league_id,season,scoring_settings,payload,client=client,raw_league_id=raw_league_id)
@@ -301,6 +303,20 @@ def _translate_player_stats(player: dict, position: str | None, week: int) -> di
     from src.services.roster_stat_model import finite
     total=projected.get('appliedTotal')
     return {ESPN_APPLIED_TOTAL_KEY:float(total)} if finite(total) else {}
+
+
+def _schedule(payload: dict, week: int) -> dict[int, list[dict]]:
+    """Remaining regular-season pairings from the league payload's full schedule (same shape as Sleeper's)."""
+    regular = int((payload.get("settings", {}).get("scheduleSettings", {}) or {}).get("matchupPeriodCount") or 0)
+    out: dict[int, list[dict]] = {}
+    for m in payload.get("schedule", []):
+        period = m.get("matchupPeriodId")
+        home, away = (m.get("home") or {}).get("teamId"), (m.get("away") or {}).get("teamId")
+        if not isinstance(period, int) or period <= week or (regular and period > regular) or home is None or away is None:
+            continue
+        key = m.get("id") if m.get("id") is not None else f"{period}:{home}:{away}"
+        out.setdefault(period, []).extend([{"roster_id": home, "matchup_id": key}, {"roster_id": away, "matchup_id": key}])
+    return out
 
 
 def _parse_matchups(payload: dict, week: int, team_starters: dict[int, list[str]]) -> list[dict]:

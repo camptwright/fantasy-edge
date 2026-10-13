@@ -271,6 +271,30 @@ export type SpecialistResearch = {
   serving_promoted: false;
 };
 
+export type StandingRow = {
+  roster_id: string;
+  name: string | null;
+  is_mine: boolean;
+  wins: number;
+  losses: number;
+  ties: number;
+  points_for: number;
+  points_against: number;
+  playoff_odds: number | null;
+  first_seed_odds: number | null;
+  projected_wins: number | null;
+};
+
+export type StandingsView = {
+  status: string;
+  week: number | null;
+  playoff_teams: number | null;
+  remaining_games: number;
+  simulations: number;
+  rows: Array<StandingRow>;
+  note: string;
+};
+
 export type Starter = {
   slot: string;
   player_id: string | null;

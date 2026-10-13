@@ -16,7 +16,8 @@ import { WorkspaceMarkets } from "@/components/WorkspaceMarkets";
 import { WorkspaceAllLeagues } from "@/components/WorkspaceAllLeagues";
 import { WorkspaceTradeIdeas } from "@/components/WorkspaceTradeIdeas";
 import { WorkspacePositionLadder } from "@/components/WorkspacePositionLadder";
-import type { TradeIdeas } from "@/lib/workspace-api.generated";
+import { SeasonTiles, WorkspaceStandings } from "@/components/WorkspaceStandings";
+import type { StandingsView, TradeIdeas } from "@/lib/workspace-api.generated";
 import { WorkspaceResearch } from "@/components/WorkspaceResearch";
 import { WorkspaceSettings } from "@/components/WorkspaceSettings";
 import { fantasyApi } from "@/lib/fantasy-api";
@@ -68,6 +69,8 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
   const selected = all ? undefined : requested ? leagues.find(league => league.league_id === requested) : leagues[0];
   const overview = selected ? await fantasyApi<Overview>(`/api/v2/fantasy/leagues/${encodeURIComponent(selected.league_id)}/overview`, 3000) : null;
   const league = selected?.league_id ?? query.league;
+  const wantsStandings = (view === "today" || (view === "fantasy" && (tool === "overview" || tool === "league"))) && !!selected && overview?.status === "snapshot_available";
+  const standings = wantsStandings ? await fantasyApi<StandingsView>(`/api/v2/fantasy/leagues/${encodeURIComponent(selected!.league_id)}/standings`, 4000) : null;
   const ideas = view === "fantasy" && tool === "trade" && selected && overview?.status === "snapshot_available"
     ? await fantasyApi<TradeIdeas>(`/api/v2/fantasy/leagues/${encodeURIComponent(selected.league_id)}/trade-ideas`, 4000) : null;
   const ready = overview?.status === "snapshot_available";
@@ -100,7 +103,8 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
         </section> : <div className="mt-6">
           <SnapshotWindow expiresAt={overview.expires_at}>
             {view === 'fantasy' && (tool === 'waivers' || tool === 'players') && <WorkspaceResearchStatus research={overview.research} />}
-            {(view === 'today' || tool === 'overview') && <><WorkspaceMatchup overview={overview} /><QuickActions overview={overview} /><WorkspaceDailyBrief overview={overview} /><PositionStrength overview={overview} /><WorkspaceOutlook overview={overview} /></>}
+            {(view === 'today' || tool === 'overview') && <><SeasonTiles standings={standings} /><WorkspaceMatchup overview={overview} /><QuickActions overview={overview} /><WorkspaceDailyBrief overview={overview} /><PositionStrength overview={overview} /><WorkspaceOutlook overview={overview} /></>}
+            {view === 'fantasy' && tool === 'league' && <div className="space-y-8"><WorkspaceStandings standings={standings} /><PositionStrength overview={overview} /></div>}
             {view === 'fantasy' && tool === 'startsit' && <WorkspaceStartSit key={`${league}:${overview.generated_at}`} overview={overview} />}
             {view === 'fantasy' && tool === 'team' && <WorkspaceRoster overview={overview} section="team" />}
             {view === 'fantasy' && tool === 'team' && <WorkspaceLineupReview overview={overview} />}

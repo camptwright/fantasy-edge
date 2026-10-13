@@ -334,3 +334,15 @@ test('matchup board pairs slots, colours results against projection and reports 
   assert.match(html,/Jacoby Brissett.*31\.3/); assert.match(html,/text-emerald-300">19\.2/); assert.match(html,/text-rose-300">10\.4/);
   assert.match(html,/Drake Maye/); assert.match(html,/85%/); assert.match(html,/Season average.*93%/); assert.match(html,/20\.0/);
 });
+
+test('season tiles and standings show record, odds and the playoff line',()=>{
+  const lib=loadComponent('src/lib/workspace.ts');
+  const {SeasonTiles,WorkspaceStandings}=loadComponent('src/components/WorkspaceStandings.tsx',{'@/lib/workspace':lib});
+  const row=(id,name,w,l,pf,odds,mine=false)=>({roster_id:id,name,is_mine:mine,wins:w,losses:l,ties:0,points_for:pf,points_against:500,playoff_odds:odds,first_seed_odds:odds/3,projected_wins:w+4});
+  const standings={status:'research',week:6,playoff_teams:2,remaining_games:40,simulations:10000,note:'Research.',rows:[row('2','Transfer Portal',5,0,800,.99),row('1','Tel Aviv Ted',4,1,780,.97,true),row('3','Bite Club',1,4,500,.05)]};
+  const tiles=renderToStaticMarkup(React.createElement(SeasonTiles,{standings}));
+  assert.match(tiles,/2nd/); assert.match(tiles,/4–1/); assert.match(tiles,/156\.0/); assert.match(tiles,/97%/); assert.match(tiles,/Top 2/);
+  const table=renderToStaticMarkup(React.createElement(WorkspaceStandings,{standings}));
+  assert.match(table,/Tel Aviv Ted.*You/); assert.match(table,/10,000 simulated seasons/);
+  assert.equal(renderToStaticMarkup(React.createElement(SeasonTiles,{standings:{...standings,status:'updating'}})),'');
+});
