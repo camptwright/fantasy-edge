@@ -11,7 +11,7 @@ import pytest
 
 from src.services import depth_archive
 from src.services.fantasy_decision_models import engine_research
-from src.services.projection_depth import LONG_TERM, DepthStatus, adjust
+from src.services.projection_depth import LONG_TERM, REFILL, DepthStatus, adjust
 from src.services.projection_engine import Projection
 from src.services.projection_engine_serving import fallback_environment
 
@@ -37,7 +37,7 @@ def test_injured_moved_and_off_chart_players_are_removed_unknown_kept():
     projections = {p.player_id: p for p in (out_wr, moved, deep, charted, unknown)}
     status = {out_wr.player_id: depth(injury="Out"), moved.player_id: depth(team=OTHER),
               deep.player_id: depth(None), charted.player_id: depth(1)}
-    adjusted, removed = adjust(projections, status, targets_per_attempt=0.9)
+    adjusted, removed = adjust(projections, status)
     assert removed == {out_wr.player_id: "unavailable", moved.player_id: "moved_team",
                        deep.player_id: "off_depth_chart"}
     assert set(adjusted) == {charted.player_id, unknown.player_id}
@@ -46,37 +46,86 @@ def test_injured_moved_and_off_chart_players_are_removed_unknown_kept():
 def test_a_missing_chart_never_empties_a_position():
     a, b = proj("TE", 4), proj("TE", 3)
     adjusted, removed = adjust({a.player_id: a, b.player_id: b},
-                               {a.player_id: depth(None, pos=None)}, 0.9)
+                               {a.player_id: depth(None, pos=None)})
     assert not removed and set(adjusted) == {a.player_id, b.player_id}
 
 
-def test_only_the_depth_one_qb_passes_and_a_backup_inherits_when_the_starter_is_out():
+def test_qbs_are_untouched_unless_the_projected_starter_is_gone():
     starter, backup = proj("QB", attempts=34), proj("QB", attempts=4, carries=1)
     both = {starter.player_id: starter, backup.player_id: backup}
-    healthy, _ = adjust(both, {starter.player_id: depth(1, pos="QB"), backup.player_id: depth(2, pos="QB")}, 0.9)
+    healthy, _ = adjust(both, {starter.player_id: depth(1, pos="QB"), backup.player_id: depth(2, pos="QB")})
     assert healthy[starter.player_id].stats["passing_attempts"] == pytest.approx(34)
-    assert healthy[backup.player_id].stats["passing_attempts"] == 0
-    out, _ = adjust(both, {starter.player_id: depth(1, pos="QB", injury="IR"), backup.player_id: depth(2, pos="QB")}, 0.9)
+    assert healthy[backup.player_id].stats["passing_attempts"] == pytest.approx(4)  # not zeroed (2026-10-14)
+    out, _ = adjust(both, {starter.player_id: depth(1, pos="QB", injury="IR"), backup.player_id: depth(2, pos="QB")})
     assert out[backup.player_id].stats["passing_attempts"] == pytest.approx(34)
     assert out[backup.player_id].stats["passing_yards"] == pytest.approx(34 * 7)
+    doubtful, _ = adjust(both, {starter.player_id: depth(1, pos="QB", injury="Doubtful"), backup.player_id: depth(2, pos="QB")})
+    assert doubtful[starter.player_id].stats["passing_attempts"] == pytest.approx(34)  # conditional on playing
+    assert doubtful[backup.player_id].stats["passing_attempts"] == pytest.approx(34)
 
 
-def test_team_targets_are_capped_and_vacated_volume_refilled_within_the_boost_cap():
-    # 40 projected targets against a 35 * 0.9 = 31.5 team total: scaled down.
-    a, b = proj("WR", 25), proj("WR", 15)
-    adjusted, _ = adjust({a.player_id: a, b.player_id: b}, {}, 0.9)
-    assert sum(p.stats["targets"] for p in adjusted.values()) == pytest.approx(31.5)
-    assert adjusted[a.player_id].stats["receiving_yards"] == pytest.approx(adjusted[a.player_id].stats["targets"] * 8)
-    # The removed starter's targets go to the remaining receiver, at most +50%.
-    adjusted, _ = adjust({a.player_id: a, b.player_id: b}, {a.player_id: depth(injury="Out")}, 0.9)
-    assert adjusted[b.player_id].stats["targets"] == pytest.approx(15 * 1.5)
+def test_backups_pass_nothing_only_when_the_chart_and_last_start_agree():
+    starter, backup = proj("QB", attempts=34), proj("QB", attempts=30, carries=1)
+    both = {starter.player_id: starter, backup.player_id: backup}
+    chart = {starter.player_id: depth(1, pos="QB"), backup.player_id: depth(2, pos="QB")}
+    agreed, _ = adjust(both, chart, starters={TEAM: starter.player_id})
+    assert agreed[starter.player_id].stats["passing_attempts"] == pytest.approx(34)
+    assert agreed[backup.player_id].stats["passing_attempts"] == 0
+    assert agreed[backup.player_id].stats["rushing_attempts"] == pytest.approx(1)
+    # The backup started last week (e.g. the starter just returned): starter uncertain, both kept.
+    disputed, _ = adjust(both, chart, starters={TEAM: backup.player_id})
+    assert disputed[backup.player_id].stats["passing_attempts"] == pytest.approx(30)
+    assert adjust(both, chart)[0][backup.player_id].stats["passing_attempts"] == pytest.approx(30)
+    # Last week's starter is ruled out: the depth-two QB inherits and the third QB passes nothing.
+    third = proj("QB", attempts=25)
+    three = {**both, third.player_id: third}
+    chart3 = {**chart, starter.player_id: depth(1, pos="QB", injury="Out"), third.player_id: depth(3, pos="QB")}
+    heir, _ = adjust(three, chart3, starters={TEAM: starter.player_id})
+    assert heir[backup.player_id].stats["passing_attempts"] == pytest.approx(34)
+    assert heir[third.player_id].stats["passing_attempts"] == 0
+
+
+def test_last_starters_is_the_most_attempts_in_each_team_latest_game():
+    from src.services.projection_depth import last_starters
+    a, b = uuid.uuid4(), uuid.uuid4()
+    g1, g2 = uuid.uuid4(), uuid.uuid4()
+    teams = {(g1, TEAM): SimpleNamespace(game_id=g1, team_id=TEAM, kickoff=NOW - timedelta(days=14)),
+             (g2, TEAM): SimpleNamespace(game_id=g2, team_id=TEAM, kickoff=NOW - timedelta(days=7))}
+    players = {(a, g1): SimpleNamespace(player_id=a, game_id=g1, team_id=TEAM, stats={"passing_attempts": 35}),
+               (a, g2): SimpleNamespace(player_id=a, game_id=g2, team_id=TEAM, stats={"passing_attempts": 6}),
+               (b, g2): SimpleNamespace(player_id=b, game_id=g2, team_id=TEAM, stats={"passing_attempts": 28})}
+    history = SimpleNamespace(teams=teams, players=players, positions={a: "QB", b: "QB"})
+    assert last_starters(history, NOW) == {TEAM: b}
+    assert last_starters(history, NOW - timedelta(days=10)) == {TEAM: a}
+
+
+def test_vacated_volume_is_shared_in_proportion_without_a_team_cap():
+    # No cap: 40 projected targets against a 31.5 team total stay 40 (the cap scaled starters down).
+    a, b, c = proj("WR", 25), proj("WR", 15), proj("TE", 5)
+    adjusted, _ = adjust({a.player_id: a, b.player_id: b}, {})
+    assert sum(p.stats["targets"] for p in adjusted.values()) == pytest.approx(40)
+    # The ruled-out starter's targets go to the others in proportion to their own, times REFILL.
+    adjusted, removed = adjust({p.player_id: p for p in (a, b, c)}, {a.player_id: depth(injury="Out")})
+    assert removed == {a.player_id: "unavailable"}
+    assert adjusted[b.player_id].stats["targets"] == pytest.approx(15 * (1 + REFILL * 25 / 20))
+    assert adjusted[c.player_id].stats["receiving_yards"] == pytest.approx(adjusted[c.player_id].stats["targets"] * 8)
+    # A Doubtful player keeps his own projection (conditional on playing) and also vacates his volume.
+    adjusted, removed = adjust({p.player_id: p for p in (a, b)}, {a.player_id: depth(injury="Doubtful")})
+    assert not removed and adjusted[a.player_id].stats["targets"] == pytest.approx(25)
+    assert adjusted[b.player_id].stats["targets"] == pytest.approx(15 * (1 + REFILL * 25 / 15))
+    # A long-term status removes the player without passing his volume on (teammates already absorb it).
+    adjusted, _ = adjust({p.player_id: p for p in (a, b)}, {a.player_id: depth(injury="IR")})
+    assert adjusted[b.player_id].stats["targets"] == pytest.approx(15)
+    # Later weeks: nothing vacates.
+    adjusted, _ = adjust({p.player_id: p for p in (a, b)}, {a.player_id: depth(injury="Doubtful")}, LONG_TERM, set())
+    assert adjusted[b.player_id].stats["targets"] == pytest.approx(15)
 
 
 def test_later_weeks_ignore_a_one_game_out_designation():
     a = proj("RB", carries=15)
     status = {a.player_id: depth(1, pos="RB", injury="Out")}
-    assert adjust({a.player_id: a}, status, 0.9)[1]
-    assert not adjust({a.player_id: a}, status, 0.9, LONG_TERM)[1]
+    assert adjust({a.player_id: a}, status)[1]
+    assert not adjust({a.player_id: a}, status, LONG_TERM)[1]
 
 
 def test_unlined_games_use_the_team_recent_implied_mean():

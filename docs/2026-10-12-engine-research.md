@@ -324,3 +324,56 @@ cost. The Odds API (FanDuel) bills per market, so FanDuel TD props are not added
 Next: after week 6 is graded, re-run the market-implied projection research with
 TD probabilities (Yes price divided by the book's hold, possibly scaled so a
 game's expected TDs match its implied total) replacing the projection's TD term.
+
+## Update 2026-10-14 (evening): error decomposition and the depth variant
+
+Week 6 had not been played (first game Thursday Oct 16), so this used
+2025 weeks 4-18 and 2026 weeks 1-5 walk-forward. Every comparison below is
+on the promotion gate's pool (top-N by Sleeper's projection or by actual,
+per position-week), one league's scoring, week-block bootstrap CIs.
+
+**Where engine v1 stands** (`scripts/diagnose_projection_engine.py`,
+`scripts/research_fixed_pool.py`): pool MAE 5.83 vs Sleeper 6.04 in 2025
+(paired CI -0.29 to -0.13) and 5.93 vs 6.18 in 2026 (-0.40 to -0.07; 2026 is
+in-sample for the engine's tuning). Ahead at every position, least at QB.
+
+**Tried and rejected:**
+- Off-role share leak (QBs pulled toward a 3% target share, WRs/TEs toward a
+  ball-carrier's carry share: +0.46 points a game for QBs): removing it
+  improves all-player MAE (5.06 -> 5.00) but worsens the pool (2026 +0.02 to
+  +0.05): the leak was offsetting under-projection of starters.
+- Role-anchored share priors (shrink toward the player's own 8/16-game role
+  instead of a position prior): all-player MAE 5.06 -> 4.77, pool worse in
+  every setting (CI vs default all above 0). The heavy shrinkage is right for
+  the players who matter for lineups.
+- Engine/Sleeper blend: weights chosen on 2025 (0.6-1.0 engine) give 2026
+  5.933 vs engine 5.939 (CI -0.04 to +0.04). Nothing to add.
+- Tuning harness flaw found: `tune_projection_engine.evaluate` picks each
+  variant's pool by that variant's own projections, so variants are graded on
+  different players. The fixed-pool scorer is `research_fixed_pool.py`;
+  DEFAULT params were chosen on the old pool and have not been re-searched.
+
+**Adopted: depth/status variant rules rewritten** (`projection_depth.adjust`,
+behind the workspace's engine research column and the depth capture track).
+It had been captured prospectively only (26 forecasts, none graded) on the
+belief no historical depth charts exist. nflverse publishes daily depth-chart
+snapshots, weekly roster status and final injury reports, so
+`scripts/research_depth_backtest.py` now reproduces its inputs walk-forward:
+- Old rules: worse than plain v1 by 0.17 (2025, CI 0.10-0.23) and 0.21 (2026,
+  CI 0.11-0.34). The team-volume cap scaled starters down whenever stale
+  players stayed on a team; only the depth-one QB passed.
+- Removals (IR, moved team, off chart) alone: no change for players who played.
+- Passing an Out/Doubtful player's targets and carries to teammates in
+  proportion: share 0.75 chosen on 2025; 2026 -0.03 (CI -0.06 to -0.01).
+- QB: backups pass nothing only when the depth chart's top available QB also
+  started the last game (or that starter is ruled out); a ruled-out starter's
+  volume goes to the top remaining QB. Costs ~0.1 on graded QBs (relief
+  appearances) but stops backups showing a starter's line (week 6 before:
+  several backups at 11-17 points).
+- Net: level with plain v1 (+0.01, CI -0.05 to +0.03; -0.03, CI -0.07 to
+  +0.02), 0.18-0.24 better than the old rules. Week 6 research projections
+  changed for every player; starters the cap held down rose (Malik Nabers
+  10.2 -> 15.6, Sleeper 14.0), backups fell to ~2-3, Chicago's Keenum/Bagent
+  split stays open because the chart and the last start disagree.
+Engine v1's version (and its prospective record) is unchanged; the depth
+variant's version changes.

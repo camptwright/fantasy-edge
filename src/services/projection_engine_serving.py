@@ -60,11 +60,10 @@ async def build(db, *, now: datetime | None = None, catalog: dict | None = None)
     season = min(g.season for g in games)
     games = [g for g in games if g.season == season and g.home_team_id and g.away_team_id]
     history = await load_history(db, [season - 1, season], now)
+    starters = projection_depth.last_starters(history, now)
     past = [t for t in history.teams.values() if t.kickoff < now]
     implied_all = [t.implied_points for t in past if t.implied_points is not None]
     league_mean = float(np.mean(implied_all)) if implied_all else 22.0
-    attempts = sum(t.pass_attempts for t in past)
-    tpa = sum(t.targets for t in past) / attempts if attempts else 1.0
     env = await environments(db, [g.id for g in games], as_of=now)
     depth = await projection_depth.depth_inputs(db, catalog) if catalog else {}
     teams = await team_model_serving.state(db, now)
@@ -100,8 +99,9 @@ async def build(db, *, now: datetime | None = None, catalog: dict | None = None)
         # Designation scope per team: this game is the team's nearest one or not.
         near = {pid: p for pid, p in base.items() if nearest.get(p.team_id) == week}
         later = {pid: p for pid, p in base.items() if nearest.get(p.team_id) != week}
-        for subset, unavailable in ((near, projection_depth.UNAVAILABLE), (later, projection_depth.LONG_TERM)):
-            adjusted, removed = projection_depth.adjust(subset, depth, tpa, unavailable)
+        for subset, unavailable, vacating in ((near, projection_depth.UNAVAILABLE, projection_depth.VACATING),
+                                              (later, projection_depth.LONG_TERM, set())):
+            adjusted, removed = projection_depth.adjust(subset, depth, unavailable, vacating, starters)
             for reason in removed.values():
                 removed_counts[reason] += 1
             for pid, p in adjusted.items():

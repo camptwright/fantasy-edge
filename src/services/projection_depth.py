@@ -8,20 +8,38 @@ inputs: `status`, `injury_status`, `team`, `depth_chart_position`,
 `depth_chart_order`. This module post-adjusts v1 output with them:
 
 1. Unavailable: a non-Active status or a definitive designation (Out, IR,
-   PUP, suspended, NFI) removes the player. Questionable/Doubtful stay in:
-   participation probability is E3 proper, not this rule.
+   PUP, suspended, NFI) removes the player. Questionable/Doubtful stay in
+   (conditional on playing; availability_rates gives the play probability).
 2. Moved: a player whose catalog team is no longer the projected team is
    removed from that team.
 3. Off the depth chart: removed, but only where the team has depth-charted
    players at that position, so a missing chart never empties a team.
-4. QB: only the highest active depth-chart QB keeps pass volume. When the
-   starter is removed, the next active QB inherits the starter's attempts.
-5. Team volume: remaining players' targets and carries are scaled together
-   so the team sums to min(original sum, projected team volume), with the
-   boost from vacated volume capped at MAX_BOOST.
+4. QB: when the projected starter (most projected attempts) is gone, the
+   top remaining QB by depth order inherits his passing volume. Backups pass
+   nothing only when the depth chart's top available QB also started the
+   team's last game, or last game's starter is ruled out; if the chart and
+   the last start disagree, every QB keeps his projection. This
+   costs ~0.1 points on graded QBs (relief appearances after an in-game
+   injury score but were projected 0) and keeps backups from showing a
+   starter's projection.
+5. Vacated volume: the targets and carries of players designated Out or
+   Doubtful for this game go to the remaining RB/WR/TE in proportion to
+   their own projections, times REFILL. There is no team-volume cap.
 
-No historical depth charts exist, so this variant cannot be backtested; it
-is captured prospectively beside v1 under its own version and graded by the
+Backtest (scripts/research_depth_backtest.py, 2026-10-14): nflverse's daily
+depth charts, weekly roster status and final injury reports reproduce these
+inputs walk-forward. The earlier rules 4-5 (only the depth-one QB passes;
+team targets/carries capped at projected team volume and refilled up to
++50%) were worse than plain v1 on the promotion pool by 0.17 points (2025,
+CI 0.10-0.23) and 0.21 (2026, CI 0.11-0.34): the cap scaled starters down
+whenever stale players stayed on a team, and only the depth-one QB passed.
+The current rules are level with plain v1: +0.01 (2025, CI -0.05 to +0.03)
+and -0.03 (2026, CI -0.07 to +0.02); without the backup-QB rule -0.01 and
+-0.04. Removals (1-3) alone change nothing for players who played. REFILL
+was chosen on 2025 only. What the variant adds is presentation: ruled-out,
+moved and off-chart players and backup QBs no longer show a starter's line.
+
+Captured prospectively beside v1 under its own version and graded by the
 same harness. Never promoted automatically.
 """
 
@@ -44,7 +62,11 @@ RECIPE = "projection_engine_v1_depth"
 UNAVAILABLE = {"Out", "IR", "PUP", "Sus", "NFI", "NA", "DNR", "COV"}
 # Designations that span more than one game, for projecting later weeks.
 LONG_TERM = UNAVAILABLE - {"Out"}
-MAX_BOOST = 1.5
+# This-game designations whose holder's targets and carries pass to teammates, and the share
+# passed on (scripts/research_depth_backtest.py, chosen on 2025: 0.75). Long-term statuses
+# (IR, PUP, ...) are not included: teammates' recent shares already absorb a long absence.
+VACATING = {"Out", "Doubtful"}
+REFILL = 0.75
 RECEIVING = ("targets", "receptions", "receiving_yards", "receiving_touchdowns", "receiving_2pt_conversions")
 RUSHING = ("rushing_attempts", "rushing_yards", "rushing_touchdowns", "rushing_2pt_conversions")
 PASSING = ("passing_attempts", "passing_completions", "passing_yards", "passing_touchdowns",
@@ -72,14 +94,33 @@ def _touches(stats: dict[str, float]) -> float:
     return stats.get("targets", 0.0) + stats.get("rushing_attempts", 0.0) + 0.1 * stats.get("passing_attempts", 0.0)
 
 
+def last_starters(history, cutoff: datetime) -> dict[uuid.UUID, uuid.UUID]:
+    """Team id -> the QB with the most pass attempts in the team's latest game before cutoff."""
+    latest: dict[uuid.UUID, object] = {}
+    for t in history.teams.values():
+        if t.kickoff < cutoff and (t.team_id not in latest or t.kickoff > latest[t.team_id].kickoff):
+            latest[t.team_id] = t
+    wanted = {(t.game_id, t.team_id) for t in latest.values()}
+    best: dict[uuid.UUID, tuple[float, uuid.UUID]] = {}
+    for p in history.players.values():
+        if (p.game_id, p.team_id) in wanted and history.positions.get(p.player_id) == "QB":
+            attempts = p.stats.get("passing_attempts", 0.0)
+            if p.team_id not in best or attempts > best[p.team_id][0]:
+                best[p.team_id] = (attempts, p.player_id)
+    return {team: pid for team, (_, pid) in best.items()}
+
+
 def adjust(projections: dict[uuid.UUID, Projection], depth: dict[uuid.UUID, DepthStatus],
-           targets_per_attempt: float, unavailable: set[str] = UNAVAILABLE,
+           unavailable: set[str] = UNAVAILABLE, vacating: set[str] = VACATING,
+           starters: dict[uuid.UUID, uuid.UUID] | None = None,
            ) -> tuple[dict[uuid.UUID, Projection], dict[uuid.UUID, str]]:
     """Pure core. Returns (adjusted projections, {removed player: reason}).
 
     Players with no catalog entry are kept unchanged: unknown is not inactive.
     `unavailable` is the set of designations that remove a player; later
-    weeks use LONG_TERM, since an Out designation covers one game.
+    weeks use LONG_TERM, since an Out designation covers one game. `vacating`
+    designations pass a player's targets and carries to teammates (empty for
+    later weeks). `starters`: team id -> last game's starting QB (last_starters).
     """
     removed: dict[uuid.UUID, str] = {}
     by_team: dict[tuple, list[Projection]] = defaultdict(list)
@@ -102,29 +143,47 @@ def adjust(projections: dict[uuid.UUID, Projection], depth: dict[uuid.UUID, Dept
                 removed[p.player_id] = "off_depth_chart"
             else:
                 keep.append(p)
-        # QB: one passer. Rank active QBs by depth order (unknown last), then
-        # by projected attempts; the starter takes the team's QB attempts.
-        qbs = sorted((p for p in members if p.position == "QB"),
-                     key=lambda p: -p.stats.get("passing_attempts", 0.0))
-        team_attempts = qbs[0].stats.get("passing_attempts", 0.0) if qbs else 0.0
-        active_qbs = sorted((p for p in keep if p.position == "QB"), key=lambda p: (
-            (depth[p.player_id].depth_order if p.player_id in depth and depth[p.player_id].depth_order is not None else 99),
-            -p.stats.get("passing_attempts", 0.0)))
         stats = {p.player_id: dict(p.stats) for p in keep}
-        for i, qb in enumerate(active_qbs):
-            own = stats[qb.player_id].get("passing_attempts", 0.0)
-            factor = (team_attempts / own if own > 0 else 0.0) if i == 0 else 0.0
-            stats[qb.player_id] = _scale(stats[qb.player_id], PASSING, factor)
-        # Team volume: cap at the projected team total, refill vacated volume.
-        cap = {"targets": members[0].team_pass_attempts * targets_per_attempt,
-               "rushing_attempts": members[0].team_carries}
+        gone = {pid for pid, d in depth.items() if d.injury_status in vacating} | set(removed)
+        # QB: only when the projected starter (most projected attempts) is gone does the top
+        # remaining QB by depth order inherit his passing volume; otherwise QBs are untouched.
+        qbs = [p for p in members if p.position == "QB"]
+        if qbs:
+            starter = max(qbs, key=lambda p: p.stats.get("passing_attempts", 0.0))
+            heirs = [p for p in keep if p.position == "QB" and p.player_id not in gone]
+            if starter.player_id in gone and heirs:
+                heir = min(heirs, key=lambda p: (
+                    depth[p.player_id].depth_order if p.player_id in depth and depth[p.player_id].depth_order is not None else 99,
+                    -p.stats.get("passing_attempts", 0.0)))
+                own = heir.stats.get("passing_attempts", 0.0)
+                if own > 0:
+                    stats[heir.player_id] = _scale(stats[heir.player_id], PASSING,
+                                                   starter.stats.get("passing_attempts", 0.0) / own)
+            # Backups: when the depth chart's top available QB also started the team's last game
+            # (or last game's starter is ruled out), the other QBs pass nothing. When the two disagree (benched starter, a return from
+            # injury) the starter is uncertain and every QB keeps his conditional projection.
+            available = [p for p in keep if p.position == "QB" and p.player_id not in gone]
+            charted_qbs = [p for p in available if p.player_id in depth and depth[p.player_id].depth_order is not None]
+            if charted_qbs and starters is not None:
+                top = min(charted_qbs, key=lambda p: (depth[p.player_id].depth_order,
+                                                       -p.stats.get("passing_attempts", 0.0)))
+                last = starters.get(team_id)
+                # Last game's starter is the top available QB, or he is the one ruled out (the heir is clear).
+                if last == top.player_id or last in gone:
+                    for p in available:
+                        if p.player_id != top.player_id:
+                            stats[p.player_id] = _scale(stats[p.player_id], PASSING, 0.0)
+        # Vacated volume: targets and carries of players ruled out for this game go to the
+        # remaining RB/WR/TE in proportion to their own, times REFILL. No team-volume cap.
+        receivers = [p.player_id for p in keep if p.position in ("RB", "WR", "TE") and p.player_id not in gone]
         for stat, keys in (("targets", RECEIVING), ("rushing_attempts", RUSHING)):
-            original = sum(p.stats.get(stat, 0.0) for p in members)
-            current = sum(s.get(stat, 0.0) for s in stats.values())
-            if current <= 0:
+            vacated = sum(p.stats.get(stat, 0.0) for p in members
+                          if p.position != "QB" and p.player_id in gone and depth[p.player_id].injury_status in vacating)
+            total = sum(stats[pid].get(stat, 0.0) for pid in receivers)
+            if vacated <= 0 or total <= 0:
                 continue
-            factor = min(min(original, cap[stat]) / current, MAX_BOOST)
-            for pid in stats:
+            factor = 1 + REFILL * vacated / total
+            for pid in receivers:
                 stats[pid] = _scale(stats[pid], keys, factor)
         for p in keep:
             before, after = _touches(p.stats), _touches(stats[p.player_id])
@@ -164,7 +223,4 @@ async def project(db: AsyncSession, target_games: list[Game], cutoff: datetime,
     targets = [(g, env[g.id].home_points, env[g.id].away_points, env[g.id].home_spread)
                for g in target_games if g.id in env]
     base = compute(history, targets, cutoff, params)
-    teams = [t for t in history.teams.values() if t.kickoff < cutoff]
-    attempts = sum(t.pass_attempts for t in teams)
-    tpa = sum(t.targets for t in teams) / attempts if attempts else 1.0
-    return adjust(base, depth, tpa)
+    return adjust(base, depth, starters=last_starters(history, cutoff))
