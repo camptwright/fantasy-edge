@@ -6,13 +6,24 @@ const OUT = new Set(["OUT", "IR", "PUP", "SUS", "SUSPENDED", "NFI", "NA", "COV",
 const TONE = { bad: "bg-rose-500/15 text-rose-200", warn: "bg-amber-500/15 text-amber-200", ok: "bg-emerald-500/15 text-emerald-200", done: "bg-slate-700 text-slate-300" };
 const when = (iso?: string | null) => iso ? new Date(iso).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" }) : "kickoff unknown";
 
+const PRACTICE: Record<string, string> = { dnp: "did not practice", limited: "limited practice", full: "full practice" };
+
+/** "Plays 78% of the time" for a designated regular, from 2016-2025 injury reports; empty when not modelled. */
+export function playOdds(p: PlayerDetail): string {
+  if (p.play_probability == null) return "";
+  const practice = p.practice_status ? `${PRACTICE[p.practice_status]} · ` : "";
+  const status = (p.injury_status ?? "").trim().toUpperCase().startsWith("D") ? "Doubtful" : "Questionable";
+  return `${practice}regulars listed ${status} on the final report played ${Math.round(p.play_probability * 100)}%`;
+}
+
 /** One verdict per starter: platform designation, bye, game-linked report, game state. Evidence, not clearance. */
 export function verdict(p: PlayerDetail): Verdict {
   const status = (p.injury_status ?? "").trim().toUpperCase();
   if (p.week_game_status === "no_game_this_week") return { label: "Bye", tone: "bad", detail: "No game this week — start someone else." };
   if (OUT.has(status)) return { label: status === "IR" ? "IR" : "Out", tone: "bad", detail: `Platform designation ${p.injury_status}.` };
-  if (status === "DOUBTFUL" || status === "D") return { label: "Doubtful", tone: "bad", detail: "Unlikely to play; have a replacement ready." };
-  if (status === "QUESTIONABLE" || status === "Q") return { label: "Questionable", tone: "warn", detail: `Check news before ${when(p.week_kickoff)}.` };
+  const odds = playOdds(p);
+  if (status === "DOUBTFUL" || status === "D") return { label: "Doubtful", tone: "bad", detail: `Unlikely to play${odds ? ` (${odds})` : ""}; have a replacement ready.` };
+  if (status === "QUESTIONABLE" || status === "Q") return { label: odds ? `Q · ${Math.round((p.play_probability ?? 0) * 100)}%` : "Questionable", tone: "warn", detail: `${odds ? `${odds[0].toUpperCase()}${odds.slice(1)}. ` : ""}Check news before ${when(p.week_kickoff)}.` };
   if (p.game_availability_hold) return { label: "Review", tone: "warn", detail: "A game-linked injury report needs review." };
   if (p.week_game_status === "final") return { label: "Final", tone: "done", detail: "Game finished." };
   if (p.week_game_status === "in_progress" || p.locked) return { label: "Locked", tone: "done", detail: "Game started; lineup locked." };

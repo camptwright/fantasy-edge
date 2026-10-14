@@ -94,14 +94,15 @@ def projection_engine_research():
     silently stopped every later step (ESPN freezes, win-probability capture) for
     a day. Each step now records its own error and the task fails at the end."""
     async def run():
-        from src.services import espn_projections, outcome_prospective, schedule_strength, sleeper_pool, sleeper_trending
+        from src.services import (availability_rates, espn_projections, outcome_prospective, schedule_strength,
+                                  sleeper_pool, sleeper_trending)
         from src.services.projection_engine_prospective import capture, report
         from src.services.projection_engine_serving import refresh
         out,errors={},{}
         async with get_worker_db() as db:
             steps=(('capture',capture),('graded',report),('depth',lambda db:report(db,'depth')),('research',refresh),
                    ('espn',espn_projections.capture),('pool_capture',sleeper_pool.capture),('pool',sleeper_pool.report),
-                   ('trending',sleeper_trending.refresh),('schedule_strength',schedule_strength.refresh),
+                   ('trending',sleeper_trending.refresh),('injury_reports',availability_rates.refresh),('schedule_strength',schedule_strength.refresh),
                    ('win',outcome_prospective.capture),('win_report',outcome_prospective.report))
             for name,step in steps:
                 try:

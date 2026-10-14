@@ -513,6 +513,12 @@ class PlayerDetail(BaseModel):
     # Strength of schedule for the player's position: 1-5 stars, 5 = easiest.
     sos_ros_stars: int | None = None
     sos_next4_stars: int | None = None
+    # Questionable/Doubtful: how often regulars with this designation and practice
+    # participation played (2016-2025 nflverse reports; src/services/availability_rates).
+    play_probability: float | None = None
+    play_basis: str | None = None
+    play_sample: int | None = None
+    practice_status: Literal['dnp', 'limited', 'full'] | None = None
     # This week's NFL game (for "Are they playing?"): opponent, status, kickoff.
     opponent: str | None = None
     week_game_status: str | None = None
@@ -690,6 +696,8 @@ def player_detail(player: dict) -> PlayerDetail:
         **consensus_detail(player),
         sos_ros_stars=(player.get('_sos') or {}).get('ros_stars'), sos_next4_stars=(player.get('_sos') or {}).get('next4_stars'),
         reserve_slot=player.get('_reserve_slot'),
+        play_probability=(player.get('_play') or {}).get('probability'), play_basis=(player.get('_play') or {}).get('basis'),
+        play_sample=(player.get('_play') or {}).get('n'), practice_status=(player.get('_play') or {}).get('practice'),
         opponent=player.get('opponent'), week_game_status=player.get('week_game_status'),
         week_kickoff=player.get('week_kickoff'),
         game_log=[GameLogWeek(week=r['week'], points=r['points'])
@@ -1030,6 +1038,8 @@ async def league_overview(league_id: str, response: Response, db: AsyncSession =
     data = await read(db, league_id)
     await attach_espn(db, league, data)
     await attach_protected(db, league_id, data)
+    from src.services import availability_rates
+    await availability_rates.attach(db, getattr(league, 'platform', 'sleeper'), data)
     if data:
         from src.services import schedule_strength
         sos = (await schedule_strength.latest(db) or {}).get('teams', {})

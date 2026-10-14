@@ -1,0 +1,343 @@
+{
+ "recipe": "availability_rates_v1",
+ "chosen": "status_practice_position",
+ "fitted_on": "2016-2025 REG",
+ "generated_at": "2026-10-14T14:39:53.091001+00:00",
+ "shrink": 40,
+ "played_definition": "logged an offensive snap (PFR snap counts)",
+ "population": "regulars: >= 40% offensive snaps over the previous 3 games",
+ "tables": {
+  "status": {
+   "Doubtful": {
+    "played": 3,
+    "n": 246
+   },
+   "Out": {
+    "played": 1,
+    "n": 1410
+   },
+   "Questionable": {
+    "played": 1610,
+    "n": 2218
+   }
+  },
+  "status_practice": {
+   "Doubtful|dnp": {
+    "played": 2,
+    "n": 185
+   },
+   "Doubtful|full": {
+    "played": 0,
+    "n": 11
+   },
+   "Doubtful|limited": {
+    "played": 1,
+    "n": 49
+   },
+   "Doubtful|unknown": {
+    "played": 0,
+    "n": 1
+   },
+   "Out|dnp": {
+    "played": 0,
+    "n": 1296
+   },
+   "Out|full": {
+    "played": 0,
+    "n": 8
+   },
+   "Out|limited": {
+    "played": 0,
+    "n": 100
+   },
+   "Out|unknown": {
+    "played": 1,
+    "n": 6
+   },
+   "Questionable|dnp": {
+    "played": 170,
+    "n": 352
+   },
+   "Questionable|full": {
+    "played": 338,
+    "n": 375
+   },
+   "Questionable|limited": {
+    "played": 1085,
+    "n": 1465
+   },
+   "Questionable|unknown": {
+    "played": 17,
+    "n": 26
+   }
+  },
+  "status_practice_position": {
+   "Doubtful|dnp|QB": {
+    "played": 0,
+    "n": 26
+   },
+   "Doubtful|dnp|RB": {
+    "played": 0,
+    "n": 35
+   },
+   "Doubtful|dnp|TE": {
+    "played": 1,
+    "n": 30
+   },
+   "Doubtful|dnp|WR": {
+    "played": 1,
+    "n": 94
+   },
+   "Doubtful|full|QB": {
+    "played": 0,
+    "n": 3
+   },
+   "Doubtful|full|RB": {
+    "played": 0,
+    "n": 3
+   },
+   "Doubtful|full|TE": {
+    "played": 0,
+    "n": 2
+   },
+   "Doubtful|full|WR": {
+    "played": 0,
+    "n": 3
+   },
+   "Doubtful|limited|QB": {
+    "played": 0,
+    "n": 17
+   },
+   "Doubtful|limited|RB": {
+    "played": 0,
+    "n": 16
+   },
+   "Doubtful|limited|TE": {
+    "played": 0,
+    "n": 10
+   },
+   "Doubtful|limited|WR": {
+    "played": 1,
+    "n": 6
+   },
+   "Doubtful|unknown|TE": {
+    "played": 0,
+    "n": 1
+   },
+   "Out|dnp|QB": {
+    "played": 0,
+    "n": 142
+   },
+   "Out|dnp|RB": {
+    "played": 0,
+    "n": 240
+   },
+   "Out|dnp|TE": {
+    "played": 0,
+    "n": 274
+   },
+   "Out|dnp|WR": {
+    "played": 0,
+    "n": 640
+   },
+   "Out|full|QB": {
+    "played": 0,
+    "n": 4
+   },
+   "Out|full|RB": {
+    "played": 0,
+    "n": 1
+   },
+   "Out|full|WR": {
+    "played": 0,
+    "n": 3
+   },
+   "Out|limited|QB": {
+    "played": 0,
+    "n": 30
+   },
+   "Out|limited|RB": {
+    "played": 0,
+    "n": 16
+   },
+   "Out|limited|TE": {
+    "played": 0,
+    "n": 21
+   },
+   "Out|limited|WR": {
+    "played": 0,
+    "n": 33
+   },
+   "Out|unknown|RB": {
+    "played": 0,
+    "n": 1
+   },
+   "Out|unknown|TE": {
+    "played": 1,
+    "n": 3
+   },
+   "Out|unknown|WR": {
+    "played": 0,
+    "n": 2
+   },
+   "Questionable|dnp|QB": {
+    "played": 5,
+    "n": 19
+   },
+   "Questionable|dnp|RB": {
+    "played": 32,
+    "n": 75
+   },
+   "Questionable|dnp|TE": {
+    "played": 27,
+    "n": 57
+   },
+   "Questionable|dnp|WR": {
+    "played": 106,
+    "n": 201
+   },
+   "Questionable|full|QB": {
+    "played": 34,
+    "n": 41
+   },
+   "Questionable|full|RB": {
+    "played": 48,
+    "n": 55
+   },
+   "Questionable|full|TE": {
+    "played": 89,
+    "n": 103
+   },
+   "Questionable|full|WR": {
+    "played": 167,
+    "n": 176
+   },
+   "Questionable|limited|QB": {
+    "played": 73,
+    "n": 151
+   },
+   "Questionable|limited|RB": {
+    "played": 213,
+    "n": 288
+   },
+   "Questionable|limited|TE": {
+    "played": 211,
+    "n": 272
+   },
+   "Questionable|limited|WR": {
+    "played": 588,
+    "n": 754
+   },
+   "Questionable|unknown|QB": {
+    "played": 0,
+    "n": 2
+   },
+   "Questionable|unknown|RB": {
+    "played": 5,
+    "n": 6
+   },
+   "Questionable|unknown|TE": {
+    "played": 5,
+    "n": 8
+   },
+   "Questionable|unknown|WR": {
+    "played": 7,
+    "n": 10
+   }
+  }
+ },
+ "evidence": {
+  "fit_seasons": [
+   2016,
+   2023
+  ],
+  "test_seasons": [
+   2024,
+   2025
+  ],
+  "fit_rows": 3143,
+  "test_rows": 731,
+  "models": {
+   "serving_rule": {
+    "brier": 0.1642,
+    "by_status": {
+     "Doubtful": {
+      "n": 54,
+      "predicted": 0.0,
+      "played": 0.0
+     },
+     "Out": {
+      "n": 304,
+      "predicted": 0.0,
+      "played": 0.0
+     },
+     "Questionable": {
+      "n": 373,
+      "predicted": 1.0,
+      "played": 0.678
+     }
+    }
+   },
+   "status": {
+    "brier": 0.113,
+    "by_status": {
+     "Doubtful": {
+      "n": 54,
+      "predicted": 0.016,
+      "played": 0.0
+     },
+     "Out": {
+      "n": 304,
+      "predicted": 0.001,
+      "played": 0.0
+     },
+     "Questionable": {
+      "n": 373,
+      "predicted": 0.736,
+      "played": 0.678
+     }
+    }
+   },
+   "status_practice": {
+    "brier": 0.1082,
+    "by_status": {
+     "Doubtful": {
+      "n": 54,
+      "predicted": 0.015,
+      "played": 0.0
+     },
+     "Out": {
+      "n": 304,
+      "predicted": 0.002,
+      "played": 0.0
+     },
+     "Questionable": {
+      "n": 373,
+      "predicted": 0.735,
+      "played": 0.678
+     }
+    }
+   },
+   "status_practice_position": {
+    "brier": 0.1039,
+    "by_status": {
+     "Doubtful": {
+      "n": 54,
+      "predicted": 0.014,
+      "played": 0.0
+     },
+     "Out": {
+      "n": 304,
+      "predicted": 0.002,
+      "played": 0.0
+     },
+     "Questionable": {
+      "n": 373,
+      "predicted": 0.738,
+      "played": 0.678
+     }
+    }
+   }
+  }
+ }
+}

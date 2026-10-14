@@ -201,6 +201,10 @@ export type PlayerDetail = {
   specialist_ros_research: SpecialistResearch | null;
   sos_ros_stars: number | null;
   sos_next4_stars: number | null;
+  play_probability: number | null;
+  play_basis: string | null;
+  play_sample: number | null;
+  practice_status: "dnp" | "limited" | "full" | null;
   opponent: string | null;
   week_game_status: string | null;
   week_kickoff: string | null;

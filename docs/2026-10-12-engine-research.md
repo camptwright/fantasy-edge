@@ -274,3 +274,26 @@ QB/RB/WR/TE in the 3 hours before kickoff, and engine v1, ESPN and the
 consensus are graded against them on box-score results with each league's
 rules, using the same promotion check. Shown as "Full pool" tracks on
 Research; first captures at week 6's Thursday game.
+
+**Injury designations → play probability** (plan Phase 3;
+`scripts/research_availability.py`, `config/availability_rates.json`).
+nflverse weekly injury reports (final game status and practice participation)
+joined to PFR snap counts, regulars only (≥ 40% of offensive snaps over the
+previous three games; without that filter, healthy backups who never take a
+snap read as "did not play" — most Questionable QBs). Fit 2016–2023, test
+2024–2025 (731 designated regular player-weeks):
+
+| Model | Brier |
+|---|---|
+| Rule lineups use (Questionable plays, Doubtful/Out do not) | 0.164 |
+| P(play \| status) | 0.113 |
+| P(play \| status, practice) | 0.108 |
+| P(play \| status, practice, position), shrunk | 0.104 |
+
+Regular Questionable players played 68% of the time in 2024–2025 (full
+Friday practice ~90%, limited ~75%, no practice ~50%; Questionable QBs with a
+limited week 48%); Doubtful ~1%. **Adopted for display:** "Are they playing?"
+shows "Q · 78%" with the practice note, Start/Sit shows a risk-adjusted
+projection, from the platform designation plus this week's practice status
+in nflverse's current-season report (refreshed every 3 hours). Lineup and
+waiver decisions and the versioned prediction are unchanged.

@@ -134,7 +134,7 @@ test('roster outlook shows byes and unmodeled players as missing, never zero',()
 test('player profile never substitutes a missing player and labels engine research',()=>{
   const lib=loadComponent('src/lib/workspace.ts');
   const charts=loadComponent('src/components/OutcomeCharts.tsx',{'@/lib/workspace':lib});
-  const startsit=loadComponent('src/components/WorkspaceStartSit.tsx',{'@/lib/workspace':lib,'./OutcomeCharts':charts});
+  const startsit=loadComponent('src/components/WorkspaceStartSit.tsx',{'@/lib/workspace':lib,'./OutcomeCharts':charts,'./WorkspaceAreTheyPlaying':loadComponent('src/components/WorkspaceAreTheyPlaying.tsx',{'@/lib/workspace':lib})});
   const {WorkspacePlayerProfile}=loadComponent('src/components/WorkspacePlayerProfile.tsx',{'@/lib/workspace':lib,'./OutcomeCharts':charts,'./WorkspaceStartSit':startsit});
   const overview={league_id:'a',week:6,roster_players:[],comparison_players:[enginePlayer('A',{game_log:[{week:4,points:21.5}]})],
     outcomes:{player_ranges:{A:{density:Array(27).fill(1/27),mean:10,p10:3,p50:9,p90:19,boom_probability:.1,bust_probability:.3,basis:'provider'}}}};
@@ -169,7 +169,7 @@ test('waiver guidance fails closed and shows tiers, lineup gains and waiver prio
 test('start/sit withholds win probability with a reason and draws curves only from simulated ranges',()=>{
   const lib=loadComponent('src/lib/workspace.ts');
   const charts=loadComponent('src/components/OutcomeCharts.tsx',{'@/lib/workspace':lib});
-  const {WorkspaceStartSit}=loadComponent('src/components/WorkspaceStartSit.tsx',{'@/lib/workspace':lib,'./OutcomeCharts':charts});
+  const {WorkspaceStartSit}=loadComponent('src/components/WorkspaceStartSit.tsx',{'@/lib/workspace':lib,'./OutcomeCharts':charts,'./WorkspaceAreTheyPlaying':loadComponent('src/components/WorkspaceAreTheyPlaying.tsx',{'@/lib/workspace':lib})});
   const withheld={league_id:'a',week:6,roster_players:[enginePlayer('A'),enginePlayer('B')],
     outcomes:{status:'withheld',reason:'starter_blockers',blockers:['X: game in progress'],player_ranges:{},best_changes:[]}};
   const html=renderToStaticMarkup(React.createElement(WorkspaceStartSit,{overview:withheld}));
@@ -355,6 +355,10 @@ test('are they playing puts byes and outs first and never calls no designation a
   assert.match(html,/2 starters not expected to play/);
   assert.ok(html.indexOf('Hockenson')<html.indexOf('Healthy') && html.indexOf('Hurt')<html.indexOf('Flowers'));
   assert.match(html,/not a clearance/);
+  // A modelled designation shows the historical play rate and practice participation.
+  const odds=verdict(pl('e','Limited',{injury_status:'Questionable',play_probability:0.78,practice_status:'limited'}));
+  assert.equal(odds.label,'Q · 78%'); assert.match(odds.detail,/^Limited practice · regulars listed Questionable on the final report played 78%\. Check news/);
+  assert.equal(verdict(players[2]).label,'Questionable');  // not modelled: no number invented
 });
 
 test('league analyzer lists team scores and slot ranks',()=>{

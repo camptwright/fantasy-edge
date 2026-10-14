@@ -3,6 +3,7 @@ import { useState } from "react";
 import { pct, playerProfileHref, pts, type Overview } from "@/lib/workspace";
 import type { PlayerDetail } from "@/lib/workspace-api.generated";
 import { DistributionCurve, Meter } from "./OutcomeCharts";
+import { playOdds } from "./WorkspaceAreTheyPlaying";
 
 export const BOOM_BUST: Record<string, [number, number]> = { QB: [25, 12], RB: [20, 6], WR: [20, 6], TE: [15, 4], K: [12, 4], DEF: [12, 2] };
 const COLORS = ["#34d399", "#60a5fa", "#f59e0b", "#e879f9"];
@@ -56,6 +57,7 @@ export function WorkspaceStartSit({ overview }: { overview: Overview }) {
           return <div key={p.player_id} className={left ? "text-right" : ""}>
             <dt className="font-medium" style={{ color: COLORS[i] }}><a href={playerProfileHref(overview.league_id, p.player_id)} className="hover:underline">{p.name}</a></dt>
             <dd className="mt-1 text-xs text-slate-400">Range {pts(r?.p10)}–{pts(r?.p90)} · consensus {pts(p.consensus_week_points)} · engine {pts(p.engine_week_points)} · {r?.basis?.replaceAll("_", " ") ?? "not simulated"}</dd>
+            {p.play_probability != null && <dd className="mt-1 text-xs text-amber-200">{p.injury_status}: {playOdds(p)} · risk-adjusted {pts(((r?.mean ?? p.points) ?? 0) * p.play_probability)}</dd>}
             <dd className={`mt-1 flex items-center gap-2 text-xs text-slate-400 ${left ? "justify-end" : ""}`}>Boom <Meter probability={r?.boom_probability} tone="up" label="Boom" /> Bust <Meter probability={r?.bust_probability} tone="down" label="Bust" /></dd>
           </div>;
         })}</dl>
