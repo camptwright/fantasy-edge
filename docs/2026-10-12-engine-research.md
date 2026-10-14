@@ -297,3 +297,30 @@ shows "Q · 78%" with the practice note, Start/Sit shows a risk-adjusted
 projection, from the platform designation plus this week's practice status
 in nflverse's current-season report (refreshed every 3 hours). Lineup and
 waiver decisions and the versioned prediction are unchanged.
+
+## Update 2026-10-14 (later): anytime-touchdown prices
+
+Question: would collecting anytime-TD props from several books cost more?
+ParlayAPI bills a flat 3 credits per `/props` page regardless of markets,
+bookmakers or rows (parlay-api.com/docs), with `limit` up to 10000. One 3-credit
+probe (through the normal daily reservation) returned the whole of week 6 in a
+single page: 738 rows, `x-result-has-more: false`. So the existing NFL call now
+also requests `player_anytime_td` and passing TDs, with `limit` 5000, at no extra
+cost. The Odds API (FanDuel) bills per market, so FanDuel TD props are not added.
+
+- Anytime TD: DraftKings 310 and Caesars 339 rows, Yes side only; Pinnacle 9
+  rows with both sides; BetMGM none. ParlayAPI says not to derive a missing No
+  price, so these are not offers: `src/services/td_market.py` freezes them
+  create-only under `projection-engine/market-td/quotes` for research, outside
+  `player_prop_lines` and every betting path. 602 of 658 week-6 rows matched a
+  game and player (the rest are unmatched names).
+- Hold on the Yes side, against Pinnacle's no-vig price for the 9 overlapping
+  players: DraftKings' implied probability is a median 1.07x fair (range
+  1.04-1.10), Caesars 1.10x (1.06-1.15). Small, single-week sample.
+- Passing TDs (`player_pass_tds`, `player_passing_touchdowns`,
+  `player_touchdown_passes`) are two-sided at all four books and now flow into
+  the normal priced-offer pipeline as `passing_touchdowns`.
+
+Next: after week 6 is graded, re-run the market-implied projection research with
+TD probabilities (Yes price divided by the book's hold, possibly scaled so a
+game's expected TDs match its implied total) replacing the projection's TD term.

@@ -21,6 +21,7 @@ from src.ingest.prop_events import match_priced_event as _match_game, event_bind
 from src.ingest.theodds_props import select_player
 from src.models.facts import Game, PlayerPropLine, QuoteAvailability
 from src.models.identity import Player
+from src.services import td_market
 
 BOOKS = {'sgo': {'bovada', 'espnbet'},
          'parlay': {'draftkings', 'betmgm', 'caesars', 'pinnacle'}}
@@ -33,7 +34,9 @@ SGO_STATS = {'passing_yards': 'passing_yards', 'rushing_yards': 'rushing_yards',
 PARLAY_STATS = {'player_pass_yds': 'passing_yards', 'player_passing_yards': 'passing_yards',
     'player_rush_yds': 'rushing_yards', 'player_rushing_yards': 'rushing_yards',
     'player_reception_yds': 'receiving_yards', 'player_receiving_yards': 'receiving_yards',
-    'player_receptions': 'receptions', 'player_hits': 'hits', 'batter_hits': 'hits',
+    'player_receptions': 'receptions', 'player_pass_tds': 'passing_touchdowns',
+    'player_passing_touchdowns': 'passing_touchdowns', 'player_touchdown_passes': 'passing_touchdowns',
+    'player_hits': 'hits', 'batter_hits': 'hits',
     'player_total_bases': 'total_bases', 'batter_total_bases': 'total_bases',
     'pitcher_strikeouts': 'strikeouts'}
 FOOTBALL_STATS = {'passing_yards', 'rushing_yards', 'receiving_yards', 'receptions',
@@ -215,9 +218,12 @@ async def fetch(redis, settings, provider, sport, now):
                   'bookmakerID': ','.join(sorted(BOOKS[provider]))}
     else:
         url = f'https://parlay-api.com/v1/sports/{settings.odds_api_sport_keys[sport]}/props'
+        # A page costs three credits whatever its markets or rows (parlay-api.com/docs), and a
+        # whole NFL week is about 750 rows, so anytime-TD research prices ride along for free.
+        markets = [k for k, v in PARLAY_STATS.items() if v in SPORT_STATS[sport]]
         params = {'bookmakers': ','.join(sorted(BOOKS[provider])), 'maxAgeSec': 900,
-                  'markets': ','.join(k for k, v in PARLAY_STATS.items() if v in SPORT_STATS[sport]),
-                  'limit': 1000, 'dfsOdds': 'effective'}
+                  'markets': ','.join(markets + ([td_market.MARKET] if sport == 'nfl' else [])),
+                  'limit': 5000, 'dfsOdds': 'effective'}
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.get(url, headers={'x-api-key': key}, params=params)
@@ -225,7 +231,8 @@ async def fetch(redis, settings, provider, sport, now):
         raise RuntimeError(f'{provider} transport failure') from None
     telemetry = {'checked_at': now.isoformat(), 'http_status': response.status_code,
                  'last_request_cost': response.headers.get('x-requests-last'),
-                 'remaining': response.headers.get('x-requests-remaining')}
+                 'remaining': response.headers.get('x-requests-remaining'),
+                 'has_more': response.headers.get('x-result-has-more')}
     await redis.set(f'aggregate:{provider}:status', json.dumps(telemetry))
     if response.status_code in (401, 402, 403, 429):
         await redis.set(f'aggregate:{provider}:blocked', str(response.status_code), ex=86400)
@@ -295,6 +302,11 @@ async def ingest_then_archive(db, provider, sport, payload):
     from src.scheduler.calibration import archive
     async with db.begin_nested():
         result = await ingest(db, provider, sport, payload, datetime.now(timezone.utc))
+    if provider == 'parlay' and sport == 'nfl':
+        try:
+            result.update(await td_market.capture(db, sport, payload, datetime.now(timezone.utc)))
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            result['td_error'] = f'{type(exc).__name__}: {exc}'[:200]
     try:
         archive('aggregate-props', {'provider': provider, 'sport': sport,
             'received_at': datetime.now(timezone.utc).isoformat(), 'payload': payload})
