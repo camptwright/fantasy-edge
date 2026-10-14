@@ -259,7 +259,6 @@ async def report(db, variant: str = "v1") -> dict:
         # Second source and consensus (FantasyPros method): frozen pregame
         # ESPN projections on the same rows, each graded against Sleeper.
         from src.services import espn_projections
-        from src.services.fantasy_decision_models import offensive_weights
         espn = espn_projections.frozen()
         espn_rows, consensus_rows = [], []
         for row in rows:

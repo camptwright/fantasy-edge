@@ -88,26 +88,38 @@ def refresh_snap_counts():
 
 @celery_app.task(name='fantasy.projection_engine_research',soft_time_limit=840,time_limit=900)
 def projection_engine_research():
-    """Freeze pregame engine projections, then grade them against Sleeper's."""
+    """Freeze pregame engine projections, then grade them against Sleeper's.
+
+    Steps are independent: on 2026-10-14 one step's exception (the engine report)
+    silently stopped every later step (ESPN freezes, win-probability capture) for
+    a day. Each step now records its own error and the task fails at the end."""
     async def run():
+        from src.services import espn_projections, outcome_prospective, schedule_strength, sleeper_pool, sleeper_trending
         from src.services.projection_engine_prospective import capture, report
+        from src.services.projection_engine_serving import refresh
+        out,errors={},{}
         async with get_worker_db() as db:
-            captured=await capture(db)
-            graded=await report(db)
-            depth=await report(db,'depth')
-            from src.services.projection_engine_serving import refresh
-            research=await refresh(db)
-            from src.services import espn_projections, sleeper_trending
-            espn=await espn_projections.capture(db)
-            trending=await sleeper_trending.refresh(db)
-            from src.services import schedule_strength
-            sos=await schedule_strength.refresh(db)
-            from src.services import outcome_prospective
-            win=await outcome_prospective.capture(db)
-            win_report=await outcome_prospective.report(db)
-        return {'capture':captured,'espn':espn,'trending':trending,'schedule_strength':sos,'win_probability':{'captured':win,'statuses':win_report['statuses']},'statuses':graded['statuses'],
-                'promotion_blockers':graded['promotion']['blockers'],
-                'depth_statuses':depth['statuses'],'research':research,'serving_promoted':False}
+            steps=(('capture',capture),('graded',report),('depth',lambda db:report(db,'depth')),('research',refresh),
+                   ('espn',espn_projections.capture),('pool_capture',sleeper_pool.capture),('pool',sleeper_pool.report),
+                   ('trending',sleeper_trending.refresh),('schedule_strength',schedule_strength.refresh),
+                   ('win',outcome_prospective.capture),('win_report',outcome_prospective.report))
+            for name,step in steps:
+                try:
+                    out[name]=await step(db)
+                except Exception as exc:  # noqa: BLE001 - recorded, re-raised below
+                    await db.rollback()
+                    errors[name]=f'{type(exc).__name__}: {exc}'[:300]
+        graded,depth,pool=out.get('graded') or {},out.get('depth') or {},out.get('pool') or {}
+        result={'capture':out.get('capture'),'espn':out.get('espn'),'trending':out.get('trending'),
+                'schedule_strength':out.get('schedule_strength'),
+                'win_probability':{'captured':out.get('win'),'statuses':(out.get('win_report') or {}).get('statuses')},
+                'statuses':graded.get('statuses'),'promotion_blockers':(graded.get('promotion') or {}).get('blockers'),
+                'depth_statuses':depth.get('statuses'),'research':out.get('research'),
+                'pool':{'capture':out.get('pool_capture'),'statuses':pool.get('statuses')},
+                'errors':errors,'serving_promoted':False}
+        if errors:
+            raise RuntimeError(f'projection_engine_research steps failed: {errors}')
+        return result
     return asyncio.run(run())
 
 

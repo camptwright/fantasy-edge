@@ -57,6 +57,37 @@ SGO_SPORT_STATS = {
         'shots_onGoal': 'shots_on_goal', 'blocks': 'blocked_shots', 'goalie_saves': 'saves'},
 }
 PROVIDER_SPORTS = {'sgo': tuple(SPORT_STATS), 'parlay': ('nfl', 'ncaaf', 'mlb')}
+PARLAY_WINDOW = timedelta(hours=2)
+SLOT_GAP = timedelta(minutes=45)   # kickoffs this close share one capture
+SLOT_CALLS = 3                     # calls per NFL slot while later slots still need one
+
+
+def kickoff_slots(times):
+    """Group kickoff times into slots: a capture shortly before a slot covers every game in it."""
+    slots = []
+    for t in sorted(times):
+        if not slots or t - slots[-1][-1] > SLOT_GAP:
+            slots.append([t])
+        else:
+            slots[-1].append(t)
+    return [s[0] for s in slots]
+
+
+def parlay_allowed(sport, now, slots, slot_calls, calls_left):
+    """Spend ParlayAPI's small daily budget on NFL kickoff slots first (2026-10-11: the budget went on
+    MLB and one London game, leaving the Sunday slate uncaptured). Every NFL slot later in the UTC
+    budget day keeps one call in reserve; other sports only use what is left over."""
+    if calls_left < 1:
+        return False
+    current = [s for s in slots if now < s <= now + PARLAY_WINDOW]
+    later = [s for s in slots if s > now + PARLAY_WINDOW and slot_calls.get(s.isoformat(), 0) == 0]
+    if sport == 'nfl':
+        if not current:
+            return False
+        used = slot_calls.get(current[0].isoformat(), 0)
+        return calls_left - 1 >= len(later) and (used < SLOT_CALLS or not later)
+    pending = later + [s for s in current if slot_calls.get(s.isoformat(), 0) == 0]
+    return calls_left - 1 >= len(pending)
 
 
 def stamp(value):
@@ -258,11 +289,35 @@ async def ingest(db, provider, sport, payload, now):
             'parked_reasons': dict(reasons)}
 
 
+async def ingest_then_archive(db, provider, sport, payload):
+    """Ingest first: the call is already paid for, and a raw-archive failure (2026-10-11: disk full)
+    must not discard its prices."""
+    from src.scheduler.calibration import archive
+    async with db.begin_nested():
+        result = await ingest(db, provider, sport, payload, datetime.now(timezone.utc))
+    try:
+        archive('aggregate-props', {'provider': provider, 'sport': sport,
+            'received_at': datetime.now(timezone.utc).isoformat(), 'payload': payload})
+    except OSError as exc:
+        result['archive_error'] = f'{type(exc).__name__}: {exc}'[:200]
+    return result
+
+
+async def parlay_budget(db, redis, settings, now):
+    """NFL kickoff slots left in today's UTC budget day, calls spent per slot, and calls left."""
+    end = datetime(now.year, now.month, now.day, tzinfo=timezone.utc) + timedelta(days=1)
+    times = (await db.scalars(select(Game.game_time).where(Game.sport == 'nfl', Game.status == 'scheduled',
+        Game.game_time.is_not(None), Game.game_time > now, Game.game_time < end))).all()
+    slots = kickoff_slots(times)
+    counts = await redis.mget([f'aggregate:parlay:slot:{s.isoformat()}' for s in slots]) if slots else []
+    spent = int(await redis.get(f'aggregate:parlay:spent:{now:%Y-%m-%d}') or 0)
+    return slots, {s.isoformat(): int(c or 0) for s, c in zip(slots, counts)}, (settings.parlay_daily_credits - spent) // 3
+
+
 async def collect():
     settings = get_settings()
     if not settings.aggregate_props_enabled:
         return {'status': 'disabled'}
-    from src.scheduler.calibration import archive
     output = {}
     async with Redis.from_url(settings.redis_url, decode_responses=True) as redis:
         async with redis.lock('aggregate:collection', timeout=600, blocking_timeout=0):
@@ -277,16 +332,25 @@ async def collect():
                                 hours=2 if provider == 'parlay' else 12)).limit(1))
                         if not upcoming:
                             continue
+                        slot = None
+                        if provider == 'parlay':
+                            slots, slot_calls, calls_left = await parlay_budget(db, redis, settings, now)
+                            if not parlay_allowed(sport, now, slots, slot_calls, calls_left):
+                                async with record_run(db, f'{provider}_{sport}_props') as run:
+                                    run.detail = 'Skipped: budget reserved for NFL kickoff slots'
+                                continue
+                            slot = next((s for s in slots if now < s <= now + PARLAY_WINDOW), None) if sport == 'nfl' else None
                         try:
                             async with record_run(db, f'{provider}_{sport}_props') as run:
                                 payload = await fetch(redis, settings, provider, sport, now)
                                 if payload is None:
                                     run.detail = 'Skipped: key, quota, or pacing guard'
                                     continue
-                                archive('aggregate-props', {'provider': provider, 'sport': sport,
-                                    'received_at': datetime.now(timezone.utc).isoformat(), 'payload': payload})
-                                async with db.begin_nested():
-                                    result = await ingest(db, provider, sport, payload, datetime.now(timezone.utc))
+                                if slot is not None:
+                                    key = f'aggregate:parlay:slot:{slot.isoformat()}'
+                                    await redis.incr(key)
+                                    await redis.expire(key, 172800)
+                                result = await ingest_then_archive(db, provider, sport, payload)
                                 run.rows_written = result['written']
                                 run.detail = json.dumps(result)
                                 output[f'{provider}_{sport}'] = result

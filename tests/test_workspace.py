@@ -475,7 +475,7 @@ def test_game_log_comes_from_league_scored_history_only():
 
 def test_engine_qualification_reads_latest_reports_and_never_promotes(tmp_path):
     import json
-    assert [(t.status, t.required_weeks) for t in workspace.qualification_tracks(tmp_path)] == [('no_report_yet', 6), ('no_report_yet', 5)]
+    assert [(t.status, t.required_weeks) for t in workspace.qualification_tracks(tmp_path)] == [('no_report_yet', 6), ('no_report_yet', 5)] + [('no_report_yet', 6)] * 3
     promo = {'eligible_for_owner_review': False, 'blockers': ['needs_6_graded_weeks_has_2'],
              'pool': {'n': 40, 'weeks': [6, 7], 'engine_mae': 5.1, 'sleeper_mae': 5.3, 'paired_difference': -0.2, 'ci': [-0.5, 0.1]}}
     for sub in ('reports', 'depth/reports'):
@@ -485,11 +485,20 @@ def test_engine_qualification_reads_latest_reports_and_never_promotes(tmp_path):
             'status': 'prospective_research', 'generated_at': '2026-10-12T00:00:00+00:00', 'version': 'v', 'engine_forecasts': 9,
             'statuses': {'graded': 40}, 'promotion': promo, 'candidate_blend': {'promotion': {'blockers': ['needs_6_graded_weeks_has_0']}}}))
     tracks = workspace.qualification_tracks(tmp_path)
-    assert [t.name for t in tracks] == ['Projection engine v1', 'Projection engine v1 · Sleeper blend', 'Engine + depth chart/status']
+    assert [t.name for t in tracks][:3] == ['Projection engine v1', 'Projection engine v1 · Sleeper blend', 'Engine + depth chart/status']
     assert (tracks[0].graded_weeks, tracks[0].required_weeks, tracks[0].pool.ci, tracks[0].serving_promoted) == (2, 6, [-0.5, 0.1], False)
     assert tracks[1].graded_weeks == 0 and tracks[1].blockers == ['needs_6_graded_weeks_has_0']
     (tmp_path / 'depth/reports/20261013T000000.json').write_text('{not json')
-    assert workspace.qualification_tracks(tmp_path)[-1].status == 'report_unreadable'
+    assert workspace.qualification_tracks(tmp_path)[2].status == 'report_unreadable'
+    # Full-pool tracks read the pool report's per-track promotion block.
+    (tmp_path / 'pool/reports').mkdir(parents=True)
+    (tmp_path / 'pool/reports/20261019T000000.json').write_text(json.dumps({
+        'status': 'prospective_research', 'generated_at': '2026-10-19T00:00:00+00:00', 'engine_version': 'v',
+        'statuses': {'played': 600}, 'tracks': {'consensus': {'promotion': promo}}}))
+    pool = {t.name: t for t in workspace.qualification_tracks(tmp_path) if t.name.startswith('Full pool')}
+    consensus = pool['Full pool · Consensus: Sleeper + ESPN + engine']
+    assert (consensus.graded_weeks, consensus.pool.paired_difference, consensus.statuses) == (2, -0.2, {'played': 600})
+    assert pool['Full pool · ESPN projections'].status == 'awaiting_results'
 
 
 def test_win_probability_check_reads_the_latest_report(tmp_path):

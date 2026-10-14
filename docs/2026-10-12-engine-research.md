@@ -224,3 +224,53 @@ fair odds only.
 
 Also: games now carry ESPN's neutral-site flag, so the team models drop home
 field for bowls, the College Football Playoff and international NFL games.
+
+## Update 2026-10-14
+
+**Market-implied projections** (BettingPros/WalterPicks "Vegas" projections;
+`scripts/research_market_projection.py`). Each prop's no-vig consensus at the
+main line was turned into a stat mean (bisection on P(over); Poisson for
+counts, normal with a 2025-fitted CV for yards) and moved into each source's
+stat line, weights fitted leave-one-week-out. 2026 weeks 2–5, 767 pool rows,
+341 with a 2+ book market:
+
+| | Pool MAE | Rows with a market |
+|---|---|---|
+| Sleeper | 5.955 | 6.277 |
+| Sleeper + market | 5.942 | 6.248 |
+| Consensus (Sleeper, ESPN, engine) | 5.804 | 6.082 |
+| Consensus + market | 5.816 | 6.110 |
+
+At the stat level the market mean beats Sleeper on rushing yards (16.1 vs
+17.7 MAE) and ties elsewhere, but the paired fantasy-point gain for Sleeper is
+−0.03 (95% CI −0.11 to +0.05) and the consensus gets worse. Sleeper (RotoWire)
+and ESPN already price in the lines, and touchdowns, which drive most of the
+scoring variance, have no multi-book anytime-TD market here. **Not adopted.**
+The prop engine's empirical ratio distribution overstates a starter's
+rushing mean by ~11 yards when inverted (it was fitted across all players);
+it is still correct for the use it was fitted for (P(over) from the engine's
+mean).
+
+**Harness repairs found on the way:**
+- The prospective engine report raised `UnboundLocalError` on its first graded
+  row (a function-local import shadowed `offensive_weights`), so from the
+  moment week 5 became gradeable every later step of the task — ESPN freezes,
+  trending, strength of schedule, win-probability capture — stopped. Fixed;
+  steps now run independently and report their own errors, and
+  `tests/test_lint_guard.py` fails the suite on any pyflakes F821/F823.
+- Week 5 props: on 2026-10-11 the disk was full; each paid ParlayAPI call
+  succeeded and then failed writing its raw archive *before* ingesting, so the
+  day's 24 credits bought nothing. Ingest now runs first and the archive is
+  best-effort. The 8 daily calls also went to MLB (4–8 a day) and one London
+  game; they are now reserved for NFL kickoff slots (one per later slot, at
+  most three per slot while later slots wait), and other sports use only what
+  is left.
+
+**Full-pool grading** (`src/services/sleeper_pool.py`). The rostered-player
+harness grades ~25–40 rows a week. FantasyPros grades projected top-N ∪ actual
+top-N per position, which includes unrostered players. Sleeper's full weekly
+stat projections (already stored by the sync) are now frozen for every
+QB/RB/WR/TE in the 3 hours before kickoff, and engine v1, ESPN and the
+consensus are graded against them on box-score results with each league's
+rules, using the same promotion check. Shown as "Full pool" tracks on
+Research; first captures at week 6's Thursday game.

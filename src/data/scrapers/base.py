@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import hashlib
+import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -91,7 +92,11 @@ class BaseScraper:
         return response.json()
 
     async def _archive(self, url: str, content: bytes) -> None:
-        await asyncio.to_thread(self._archive_sync, url, content)
+        # The archive is diagnostic; a full disk (2026-10-11) must not also lose the response.
+        try:
+            await asyncio.to_thread(self._archive_sync, url, content)
+        except OSError as exc:
+            logging.getLogger(__name__).warning("%s: raw archive write failed: %s", self.source, exc)
 
     def _archive_sync(self, url: str, content: bytes) -> None:
         now = datetime.now(timezone.utc)

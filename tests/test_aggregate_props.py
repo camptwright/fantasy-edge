@@ -109,3 +109,44 @@ async def test_provider_snapshot_time_not_poll_time(db, monkeypatch):
     repeated = await module.ingest(db, 'parlay', 'nfl', [row], now+timedelta(minutes=1))
     assert repeated['written'] == 0
     assert seen.seen_at == updated
+
+
+def test_parlay_budget_reserves_calls_for_later_nfl_slots():
+    from datetime import datetime, timezone
+    from src.ingest.aggregate_props import kickoff_slots, parlay_allowed
+
+    def t(h, m=0):
+        return datetime(2026, 10, 11, h, m, tzinfo=timezone.utc)
+    # 2026-10-11: London 13:30, main slate 17:00, late games 20:05 and 20:25 (one slot).
+    slots = kickoff_slots([t(13, 30), t(17), t(17), t(20, 5), t(20, 25)])
+    assert slots == [t(13, 30), t(17), t(20, 5)]
+    # London window: at most three calls while later slots still need one each.
+    assert parlay_allowed('nfl', t(11, 35), slots, {}, 8)
+    assert not parlay_allowed('nfl', t(13, 0), slots, {t(13, 30).isoformat(): 3}, 5)
+    # Main slate: may spend down to the late slot's reserved call, not past it.
+    assert parlay_allowed('nfl', t(16, 30), slots, {t(13, 30).isoformat(): 3}, 2)
+    assert not parlay_allowed('nfl', t(16, 30), slots, {t(13, 30).isoformat(): 3}, 1)
+    assert parlay_allowed('nfl', t(19, 30), slots, {}, 1)  # the last slot may use the last call
+    assert not parlay_allowed('nfl', t(14, 30), slots, {}, 8)  # nothing kicking off within 2 hours
+    # Other sports only use calls that no NFL slot is waiting for.
+    assert not parlay_allowed('mlb', t(11), slots, {}, 3)
+    assert parlay_allowed('mlb', t(11), slots, {}, 4)
+    assert parlay_allowed('mlb', t(22), [], {}, 1) and not parlay_allowed('mlb', t(22), [], {}, 0)
+
+
+async def test_paid_payload_is_ingested_even_when_the_raw_archive_fails(db, monkeypatch):
+    import src.ingest.aggregate_props as ap
+    import src.scheduler.calibration as calibration
+    calls = []
+
+    async def fake_ingest(db, provider, sport, payload, now):
+        calls.append(sport)
+        return {'parsed': 1, 'written': 1, 'parked': 0, 'parked_reasons': {}}
+
+    def full_disk(kind, payload):
+        raise OSError(28, 'No space left on device')
+
+    monkeypatch.setattr(ap, 'ingest', fake_ingest)
+    monkeypatch.setattr(calibration, 'archive', full_disk)
+    result = await ap.ingest_then_archive(db, 'parlay', 'nfl', [])
+    assert calls == ['nfl'] and result['written'] == 1 and result['archive_error'].startswith('OSError')

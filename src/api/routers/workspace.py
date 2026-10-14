@@ -1130,6 +1130,25 @@ def qualification_tracks(root) -> list[QualificationTrack]:
                 engine_forecasts=report.get('engine_forecasts') if meta else None, graded_weeks=len(pool.weeks),
                 required_weeks=block.get('required_weeks', MIN_WEEKS), eligible_for_owner_review=bool(block.get('eligible_for_owner_review')),
                 blockers=block.get('blockers', []), pool=pool, statuses=report.get('statuses', {}) if meta else {}))
+    # Full pool (every projected player, box-score results): the FantasyPros pool, not only rostered players.
+    files = sorted((root / 'pool' / 'reports').glob('*.json'))
+    try:
+        report = json.loads(files[-1].read_text()) if files else None
+    except (OSError, ValueError):
+        report = None
+    for key, label in (('engine_v1', 'Projection engine v1'), ('espn', 'ESPN projections'),
+                       ('consensus', 'Consensus: Sleeper + ESPN + engine')):
+        name = f'Full pool · {label}'
+        block = ((report or {}).get('tracks') or {}).get(key, {}).get('promotion')
+        if not block:
+            tracks.append(QualificationTrack(name=name, status='no_report_yet' if report is None else 'awaiting_results',
+                                             required_weeks=VARIANT_MIN_WEEKS['v1']))
+            continue
+        pool = summary(block.get('pool'))
+        tracks.append(QualificationTrack(name=name, status=report.get('status', 'unknown'), generated_at=report.get('generated_at'),
+            version=report.get('engine_version'), graded_weeks=len(pool.weeks), required_weeks=block.get('required_weeks', 6),
+            eligible_for_owner_review=bool(block.get('eligible_for_owner_review')), blockers=block.get('blockers', []),
+            pool=pool, statuses=report.get('statuses', {})))
     return tracks
 
 
