@@ -507,9 +507,8 @@ Findings:
   and Sleeper's projection. The confidence intervals are narrow (about
   ±0.02 points per player), so this is a tight null, not an underpowered one.
 - They do not close the engine's gap to Sleeper. The gap (~0.08-0.14) is not
-  missing usage detail; the likeliest source is what RotoWire knows before
-  kickoff that no box score shows: injuries and practice reports, inactives,
-  depth-chart and coaching changes, news.
+  missing usage detail. (An earlier version of this note guessed injury news;
+  the gap anatomy below rules that out.)
 - Single-stat signal agrees: no feature's Spearman correlation with Sleeper's
   miss exceeds 0.10 at any position. The largest are TE last-game route share
   and snap trend (~0.10): Sleeper reacts slowly to TE role changes. The
@@ -519,8 +518,32 @@ Findings:
   only for QB (Spearman 0.14 vs 0.12). For RB (0.21 vs 0.25) and WR (0.19 vs
   0.20) trailing actual points is slightly better, and for TE they tie.
 
-Decision: do not add these stats to the engine or the decision models. The
-next engine work, if any, should target pre-kickoff information (injury
-designations, practice participation, inactives) rather than more usage
-detail. It would be tested on the sealed 2022 season under a newly
-registered protocol.
+Decision: do not add these stats to the engine or the decision models as a
+correction layer. Next steps: `docs/2026-10-15-engine-v2-plan.md`.
+
+### Gap anatomy (2026-10-15, same rows, symmetric pool)
+
+Paired engine minus Sleeper error, points per player (positive: Sleeper better):
+
+| Slice | n | Diff (95% CI) | Engine bias | Sleeper bias |
+|---|---|---|---|---|
+| Both rank the player a starter | 3,552 | -0.012 (-0.071, +0.049) | -1.25 | -0.10 |
+| Only the engine does | 660 | +0.430 (+0.189, +0.663) | +1.22 | -0.58 |
+| Only Sleeper does | 660 | +0.195 (-0.040, +0.424) | -2.72 | -0.01 |
+| Weeks 1-4 | 1,107 | +0.166 (+0.084, +0.246) | | |
+| Weeks 5-18 | 3,765 | +0.049 (-0.017, +0.116) | | |
+| Player listed questionable | 276 | +0.077 (-0.188, +0.345) | | |
+| A 15%+ share teammate absent | 1,280 | +0.064 (-0.081, +0.202) | | |
+
+- Where the two agree, the engine is at parity. The whole gap is in
+  disagreements: the engine keeps fading roles too high and is slow to raise
+  rising ones (the 2.7-point underestimate of Sleeper-only starters).
+- Half the gap is in weeks 1-4, a quarter of the rows: offseason changes the
+  engine's history cannot see.
+- Injury designations and teammate absences carry the same gap as everything
+  else, so pre-kickoff injury news is not where Sleeper's edge comes from.
+- Coverage: the engine projects 99% of Sleeper's weekly starters (96.6% in
+  weeks 1-4), so excluded players do not explain the result.
+- Serving denominators: team totals are summed from snap-linked players.
+  2025 has 13 whole games with no snap rows (dropped, not distorted) and 4
+  partial; 2026 has 5 partial games at under 1% of volume. Real but small.
