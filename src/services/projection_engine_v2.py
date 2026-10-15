@@ -337,6 +337,29 @@ class Frame:
         return self.team[:, list(SHARES).index(stat)]
 
 
+def row_names() -> list[str]:
+    """Every column a model stage can read, for building a Frame without keeping row dicts."""
+    names = set(FEATURE_GROUP) | set(TEAM_FEATURES) | {"t_tpa", "r_fumble", "e_ryoe", "e_yacoe", "e_cpoe"}
+    names |= {"r_" + n for n in RATES} | {"r_" + n for n in X_RATES} | {"lg_" + n for n in RATES}
+    for _, parts, _ in STACKS.values():
+        names |= {n[:-5] if n.endswith("@team") else n for n, _ in parts}
+    return sorted(names)
+
+
+def frame_from_iter(rows, names: list[str]) -> Frame:
+    """Frame.from_rows for a one-pass iterable of row dicts (constant memory per row)."""
+    X, actual, team, position = [], [], [], []
+    for r in rows:
+        X.append(np.array([_num(r.get(n)) for n in names], float))
+        st = r.get("stats") or {}
+        actual.append(np.array([_num(st.get(s)) for s in STATS], float))
+        team.append(np.array([_num(r.get("team_" + SHARES[s])) for s in SHARES], float))
+        position.append(r.get("position"))
+    n = len(X)
+    return Frame(names, np.vstack(X) if n else np.zeros((0, len(names))), np.array(position, dtype=object),
+                 np.vstack(actual) if n else np.zeros((0, len(STATS))), np.vstack(team) if n else np.zeros((0, len(SHARES))))
+
+
 def _num(v) -> float:
     return float(v) if isinstance(v, (int, float)) else math.nan
 

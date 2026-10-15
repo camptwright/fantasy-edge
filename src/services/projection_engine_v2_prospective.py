@@ -89,14 +89,21 @@ async def capture(db, *, now: datetime | None = None, loaded: tuple | None = Non
                                 "total": e.home_points + e.away_points})
     if not targets:
         return {"status": "no_candidates", "captured": 0, "unmatched": unmatched}
-    team_rows, rows = D.features(data, extra)
+    team_rows, pairs = D.iter_features(data, extra)
     team_rows = [t for t in team_rows if t["kickoff"] < now]
-    rows = [(r, m) for r, m in rows if m["kickoff"] < now]
     tf = v2.Frame.from_rows(team_rows, list(v2.TEAM_FEATURES) + ["t_tpa"])
     team_y = {k: np.array([t[k] for t in team_rows], float) for k in ("pass_att", "carries")}
     _, target_rows = D.target_rows(data, extra, targets)
-    frame = v2.Frame.from_rows([r for r, _ in rows] + target_rows)
-    train = np.arange(len(frame.X)) < len(rows)
+    trained = [0]
+
+    def rows():
+        for r, m in pairs:
+            if m["kickoff"] < now:
+                trained[0] += 1
+                yield r
+        yield from target_rows
+    frame = v2.frame_from_iter(rows(), v2.row_names())
+    train = np.arange(len(frame.X)) < trained[0]
     model = v2.fit(tf, team_y, np.ones(len(team_rows), bool), frame, train, D.LEAN)
     stats = v2.predict(model, frame, ~train)
     ids = dict((await db.execute(select(Player.gsis_id, Player.id).where(
@@ -120,4 +127,4 @@ async def capture(db, *, now: datetime | None = None, loaded: tuple | None = Non
         written += bool(publish(root / f"{record['id']}.json", record))
     return {"status": "captured", "version": v, "games": len(games), "candidates": len(targets),
             "captured": written, "no_player_identity": missing, "unmatched": unmatched,
-            "training_rows": len(rows), "serving_promoted": False}
+            "training_rows": trained[0], "serving_promoted": False}

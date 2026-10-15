@@ -14,7 +14,6 @@ archive leakage").
 from __future__ import annotations
 
 import csv
-import io
 import json
 import math
 from collections import defaultdict
@@ -73,10 +72,18 @@ def sleeper_key(v) -> str | None:
 
 # ---------------------------------------------------------------- assemble
 
-def assemble(schedules, player_stats, snaps, rosters, playerids, sleeper: dict) -> dict:
+# Defensive and special-teams rows without offensive volume carry no share; they are
+# kept only as participants (who played a team's game), not as full records.
+NON_OFFENSE = {"DL", "DE", "DT", "NT", "LB", "ILB", "OLB", "MLB", "DB", "CB", "S", "SS", "FS", "SAF", "K", "P", "LS"}
+
+
+def assemble(schedules, player_stats, snaps, rosters, playerids, sleeper, slim_sleeper: bool = False) -> dict:
     """Per-game records: games, team-games, player-games, rookies, rosters, Sleeper by gsis.
 
-    sleeper: {(season, week): {sleeper_id: projection dict}}.
+    Every source may be a one-pass iterable. sleeper: {(season, week): {sleeper_id:
+    projection}} or an iterable of those pairs. slim_sleeper keeps only the volume
+    fields and `gp` (all the features read); the lab keeps everything to score
+    Sleeper's projections.
     """
     games = {}
     for g in schedules:
@@ -89,14 +96,19 @@ def assemble(schedules, player_stats, snaps, rosters, playerids, sleeper: dict) 
         games[g["game_id"]] = {"season": season, "week": week, "kickoff": kickoff(g["gameday"], text(g["gametime"])),
                                "home": g["home_team"], "away": g["away_team"], "home_points": hp, "away_points": ap,
                                "home_spread": home_spread, "total": total, "final": num(g["home_score"]) is not None}
-    players, team_tot = {}, defaultdict(lambda: defaultdict(float))
+    players, team_tot, participants = {}, defaultdict(lambda: defaultdict(float)), defaultdict(set)
     for r in player_stats:
         g = games.get(r["game_id"])
+        if not text(r["player_id"]):
+            continue
         if g is None or not g["final"] or r["team"] not in (g["home"], g["away"]) or r.get("season_type", "REG") != "REG":
             continue
         stats = {stat: num(r[col]) or 0.0 for col, stat in STAT_COLUMNS.items()}
         stats["fumbles_lost"] = float(sum(num(r[c]) or 0.0 for c in FUMBLES))
         air = num(r.get("receiving_air_yards")) or 0.0
+        participants[(r["game_id"], r["team"])].add(r["player_id"])
+        if r["position"] in NON_OFFENSE and not (stats["targets"] or stats["rushing_attempts"] or stats["passing_attempts"]):
+            continue
         players[(r["game_id"], r["player_id"])] = {
             "gsis": r["player_id"], "game_id": r["game_id"], "season": g["season"], "week": g["week"],
             "kickoff": g["kickoff"], "team": r["team"], "position": r["position"], "stats": stats, "air_yards": air}
@@ -137,10 +149,34 @@ def assemble(schedules, player_stats, snaps, rosters, playerids, sleeper: dict) 
     teams = {}
     for (game_id, team), tt in team_tot.items():
         teams[(game_id, team)] = team_game(games[game_id], game_id, team, tt)
-    by_gsis = {key: {sleeper_to_gsis[k]: v for k, v in week.items() if k in sleeper_to_gsis and isinstance(v, dict) and v}
-               for key, week in sleeper.items()}
+    pairs = sleeper.items() if isinstance(sleeper, dict) else sleeper
+    by_gsis = {key: sleeper_by_gsis(week, sleeper_to_gsis, slim_sleeper) for key, week in pairs}
     return {"games": games, "teams": teams, "players": players, "rookie": rookie, "on_team": dict(on_team),
-            "roster_status": roster_status, "sleeper": by_gsis, "sleeper_to_gsis": sleeper_to_gsis}
+            "roster_status": roster_status, "sleeper": by_gsis, "sleeper_to_gsis": sleeper_to_gsis,
+            "participants": dict(participants)}
+
+
+LISTED = {"listed": 1}  # one shared marker: listed by Sleeper, nothing projected
+
+
+def sleeper_by_gsis(week: dict, sleeper_to_gsis: dict, slim: bool = False) -> dict:
+    """One week's projections by gsis.
+
+    Several Sleeper ids can map to one gsis; a projection that carries `gp`
+    (projected to play) wins over one that does not, whatever the order.
+    slim keeps only the volume fields and `gp`; an entry with none of them
+    still marks "listed, nothing projected".
+    """
+    out = {}
+    for k, v in week.items():
+        gsis = sleeper_to_gsis.get(k)
+        if gsis is None or not isinstance(v, dict) or not v:
+            continue
+        if slim:
+            v = {c: v[c] for c in (*SLEEPER_VOLUME.values(), "gp") if v.get(c) is not None} or LISTED
+        if gsis not in out or (v.get("gp") and not out[gsis].get("gp")):
+            out[gsis] = v
+    return out
 
 
 def team_game(g: dict, game_id: str, team: str, tt: dict | None) -> dict:
@@ -242,7 +278,7 @@ def team_availability(data: dict, extra: dict, upcoming: list[tuple] = ()) -> di
         recent = gs[max(0, key[1] - 4):key[1]] if key[1] is not None else [g for g in gs if g[0] < key[4]][-4:]
         if not recent:
             continue
-        last_ids = {p["gsis"] for p in played[(recent[-1][1], team)]}
+        last_ids = data["participants"].get((recent[-1][1], team)) or {p["gsis"] for p in played[(recent[-1][1], team)]}
         seen = defaultdict(list)
         for _, gid, _, _ in recent:
             for p in played[(gid, team)]:
@@ -314,6 +350,12 @@ def player_row(data, extra, vacated, avail, rates, prior: list[dict], target: di
 
 def features(data: dict, extra: dict, sleeper_weights: dict | None = None) -> tuple[list[dict], list]:
     """Team rows and (player row, meta) pairs for every played player-game from TRAIN_FROM."""
+    team_rows, rows = iter_features(data, extra, sleeper_weights)
+    return team_rows, list(rows)
+
+
+def iter_features(data: dict, extra: dict, sleeper_weights: dict | None = None):
+    """features() with the player rows as a generator (serving builds its matrix row by row)."""
     by_team = _team_index(data)
     team_rows, team_feat = [], {}
     for team, seq in by_team.items():
@@ -330,7 +372,10 @@ def features(data: dict, extra: dict, sleeper_weights: dict | None = None) -> tu
     seasons = sorted({p["season"] for p in data["players"].values()})
     rates = league_rates_by_season(data, seasons)
     vacated, avail = vacated_volume(data), team_availability(data, extra)
-    rows = []
+    return team_rows, _player_rows(data, extra, by_player, team_feat, rates, vacated, avail, sleeper_weights)
+
+
+def _player_rows(data, extra, by_player, team_feat, rates, vacated, avail, sleeper_weights):
     for gsis, seq in by_player.items():
         for i, p in enumerate(seq):
             if p["position"] not in v2.POSITIONS or p["season"] < TRAIN_FROM:
@@ -346,8 +391,7 @@ def features(data: dict, extra: dict, sleeper_weights: dict | None = None) -> tu
                     "kickoff": p["kickoff"], "team": p["team"],
                     "sleeper": sum((num(sl.get(k)) or 0.0) * w for k, w in sleeper_weights.items())
                     if sl and sleeper_weights else None}
-            rows.append((row, meta))
-    return team_rows, rows
+            yield row, meta
 
 
 def target_rows(data: dict, extra: dict, targets: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -390,54 +434,84 @@ SOURCES = {
 SLEEPER = "https://api.sleeper.app/v1/projections/nfl/regular/{season}/{week}"
 
 
-def _fetch(url: str, path: Path, max_age: timedelta | None) -> bytes:
-    """Cached GET; max_age None keeps a cached copy forever (completed seasons)."""
+def _fetch(url: str, path: Path, max_age: timedelta | None) -> Path:
+    """Cached GET to disk; max_age None keeps a cached copy forever (completed seasons)."""
     import httpx
     if path.exists():
         age = datetime.now(timezone.utc) - datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
         if max_age is None or age <= max_age:
-            return path.read_bytes()
-    response = httpx.get(url, follow_redirects=True, timeout=120)
-    response.raise_for_status()
+            return path
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".part")
-    tmp.write_bytes(response.content)
+    with httpx.stream("GET", url, follow_redirects=True, timeout=120) as response:
+        response.raise_for_status()
+        with tmp.open("wb") as f:
+            for chunk in response.iter_bytes():
+                f.write(chunk)
     tmp.replace(path)
-    return response.content
+    return path
 
 
-def csv_rows(name: str, cache: Path, season: int | None, current: int) -> list[dict]:
+# Columns each source needs, and the rows worth keeping: the worker has 1.5 GiB,
+# and full rows (150 player-stat columns, 550k-row depth snapshots) do not fit.
+KEEP = {
+    "player_stats": ("player_id", "position", "season", "week", "season_type", "game_id", "team",
+                     "receiving_air_yards", *STAT_COLUMNS, *FUMBLES),
+    "snap_counts": ("game_id", "game_type", "pfr_player_id", "offense_pct"),
+    "rosters": ("season", "week", "team", "position", "status", "gsis_id", "pfr_id", "sleeper_id", "game_type",
+                "rookie_year", "draft_number"),
+    "injuries": ("season", "week", "team", "gsis_id", "game_type", "report_status"),
+    "depth_charts": ("season", "club_code", "week", "game_type", "depth_team", "formation", "gsis_id", "position",
+                     "dt", "team", "pos_abb", "pos_rank"),
+    "schedules": ("game_id", "season", "game_type", "week", "gameday", "gametime", "away_team", "away_score",
+                  "home_team", "home_score", "spread_line", "total_line"),
+    "playerids": ("sleeper_id", "gsis_id"),
+}
+# Every player-stat row is kept: who played a team's last game decides the
+# returning-teammate features, so no row may be dropped (only columns are).
+WHERE = {
+    "injuries": lambda r: r["report_status"] in ("Out", "Doubtful"),
+    "depth_charts": lambda r: (r.get("formation") == "Offense" and r.get("position") in v2.POSITIONS)
+    or (r.get("pos_abb") in v2.POSITIONS and bool(r.get("gsis_id"))),
+    "playerids": lambda r: bool(r["sleeper_id"] and r["gsis_id"]),
+}
+
+
+def csv_rows(name: str, cache: Path, season: int | None, current: int):
+    """Stream one release CSV from the disk cache, projected to KEEP and filtered by WHERE."""
     url = SOURCES[name].format(season=season)
     fresh = None if season is not None and season < current else timedelta(hours=6)
-    body = _fetch(url, cache / f"{name}_{season or 'all'}.csv", fresh)
-    return list(csv.DictReader(io.StringIO(body.decode("utf-8"))))
+    path = _fetch(url, cache / f"{name}_{season or 'all'}.csv", fresh)
+    keep, where = KEEP[name], WHERE.get(name)
+    with path.open(newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            if where is None or where(r):
+                yield {k: r.get(k) for k in keep}
 
 
-def sleeper_weeks(cache: Path, keys: list[tuple[int, int]], current: int) -> dict:
-    out = {}
+def sleeper_weeks(cache: Path, keys: list[tuple[int, int]], current: int):
+    """((season, week), raw projections) one week at a time, so only one raw week is in memory."""
     for season, week in keys:
-        body = _fetch(SLEEPER.format(season=season, week=week), cache / "sleeper" / f"{season}_{week}.json",
+        path = _fetch(SLEEPER.format(season=season, week=week), cache / "sleeper" / f"{season}_{week}.json",
                       None if season < current else timedelta(hours=6))
-        out[(season, week)] = json.loads(body)
-    return out
+        yield (season, week), json.loads(path.read_text())
 
 
 def load_release(cache: Path, current: int) -> tuple[dict, dict]:
     """data and availability from nflverse release CSVs and Sleeper's archive, FIRST_SEASON..current."""
+    from itertools import chain
     seasons = list(range(FIRST_SEASON, current + 1))
-    schedules = csv_rows("schedules", cache, None, current)
-    stats, snaps, rosters, injuries, weekly, snapshots = [], [], [], [], [], []
-    for s in seasons:
-        stats += csv_rows("player_stats", cache, s, current)
-        snaps += csv_rows("snap_counts", cache, s, current)
-        rosters += csv_rows("rosters", cache, s, current)
-        injuries += csv_rows("injuries", cache, s, current)
-        (weekly if s <= 2024 else snapshots).extend(csv_rows("depth_charts", cache, s, current))
+    schedules = list(csv_rows("schedules", cache, None, current))
+
+    def each(name, which=seasons):
+        return chain.from_iterable(csv_rows(name, cache, s, current) for s in which)
     played = sorted({(whole(g["season"]), whole(g["week"])) for g in schedules
                      if g["game_type"] == "REG" and num(g["home_score"]) is not None
                      and (whole(g["season"]) or 0) >= TRAIN_FROM})
     keys = sorted(set(played) | {(s, 1) for s in seasons})
-    sleeper = sleeper_weeks(cache, keys, current)
-    data = assemble(schedules, stats, snaps, rosters, csv_rows("playerids", cache, None, current), sleeper)
-    extra = availability(data["games"], injuries, rosters, weekly, snapshots)
+    data = assemble(schedules, each("player_stats"), each("snap_counts"), each("rosters"),
+                    csv_rows("playerids", cache, None, current), sleeper_weeks(cache, keys, current), slim_sleeper=True)
+    extra = availability(data["games"], each("injuries"), each("rosters"),
+                         each("depth_charts", [s for s in seasons if s <= 2024]),
+                         each("depth_charts", [s for s in seasons if s > 2024]))
     return data, extra
