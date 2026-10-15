@@ -28,8 +28,14 @@ def test_role_missing_measurements_do_not_become_zero_or_trend():
 
 
 def test_starter_pool_does_not_select_with_hindsight():
-    rows = [{'league_id': 'L', 'season': 2026, 'week': 1, 'position': 'QB', 'sleeper': 100-i, 'actual': 1000 if i == 12 else 0} for i in range(13)]
+    rows = [{'league_id': 'L', 'season': 2026, 'week': 1, 'position': 'QB', 'sleeper': 100-i, 'engine': 100-i, 'actual': 1000 if i == 12 else 0} for i in range(13)]
     assert rows[12] not in starter_pool(rows)
+
+
+def test_starter_pool_lets_both_sources_choose():
+    rows = [{'league_id': 'L', 'season': 2026, 'week': 1, 'position': 'QB', 'sleeper': 100-i, 'engine': 1000 if i == 12 else 0, 'actual': 0} for i in range(14)]
+    pool = starter_pool(rows)
+    assert rows[12] in pool and rows[13] not in pool
 
 
 def test_same_week_across_seasons_is_independent_evidence():

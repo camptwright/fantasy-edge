@@ -169,6 +169,14 @@ POOL = {"QB": 12, "RB": 24, "WR": 30, "TE": 12}
 
 
 def starter_pool(rows: list[dict]) -> list[dict]:
+    """Top-N by Sleeper's projection or by the challenger's, per league-week-position.
+
+    Never by the outcome: the 2023-2024 holdout (docs/2026-10-12-engine-research.md)
+    showed adding actual top-N turns a 0.10-point engine deficit into a
+    0.16-point lead, because it rewards whichever source projected boom weeks.
+    Ranking by one source alone favours the other (its high projections
+    regress), so both sources choose.
+    """
     groups: dict[tuple, list[dict]] = {}
     for r in rows:
         groups.setdefault((r["league_id"], r.get("season"), r["week"], r["position"]), []).append(r)
@@ -176,6 +184,7 @@ def starter_pool(rows: list[dict]) -> list[dict]:
     for (_, _, _, position), members in groups.items():
         n = POOL.get(position, 0)
         keep = {id(r) for r in sorted(members, key=lambda r: -r["sleeper"])[:n]}
+        keep |= {id(r) for r in sorted(members, key=lambda r: -r["engine"])[:n]}
         selected.extend(r for r in members if id(r) in keep)
     return selected
 
@@ -291,7 +300,7 @@ async def report(db, variant: str = "v1") -> dict:
            "all_paired": summarize(rows), "promotion": promotion_check(rows, VARIANT_MIN_WEEKS[variant]),
            **evidence_breakdown(rows),
            "evidence_type": "immutable_pregame_forecasts_current_version",
-           "starter_pool_selection": "frozen_provider_projection_rank",
+           "starter_pool_selection": "top_n_by_sleeper_or_challenger_projection",
            "status": "prospective_research", "serving_promoted": False}
     publish(root / reports_dir / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}.json", out)
     return out

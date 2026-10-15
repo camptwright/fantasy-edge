@@ -2,11 +2,12 @@
 
 The rostered-player harness (projection_engine_prospective.report) pairs the
 challengers with Sleeper only where a league roster holds the player and the
-platform reports his points: about 40 graded rows a week, so the consensus
-(about 0.15 points better than Sleeper in the 2026 retrospective) would need
-most of the season to qualify. FantasyPros grades on the pool of projected
-top-N plus actual top-N at each position, which by construction includes
-players on nobody's roster. This module grades that pool:
+platform reports his points: about 40 graded rows a week, so any challenger
+would need most of the season to qualify. FantasyPros grades on the pool of
+projected top-N plus actual top-N at each position, which includes players on
+nobody's roster. Captures cover that whole pool; the promotion check grades
+top-N by either source's projection, never by the outcome (see
+projection_engine_prospective.starter_pool). This module grades that pool:
 
 - capture: freezes Sleeper's own weekly stat projections (the full payload the
   Sleeper sync already stores) for every QB/RB/WR/TE whose game kicks off in

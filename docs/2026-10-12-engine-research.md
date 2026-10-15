@@ -420,3 +420,54 @@ seen. Any later engine change is a new model that needs a new holdout.
   cause is fixed; the fix and its reason are documented here.
 - **Status:** retrospective evidence, labelled as such. It does not count
   toward the prospective gate and does not change `serving_promoted`.
+
+### Holdout results (2026-10-15, `scripts/research_holdout.py`)
+
+Fidelity check passed: the nflverse loader on 2025 W4-18 gives engine 5.807 /
+Sleeper 6.035 (DB-based: 5.83 / 6.04), 2,859 rows.
+
+**Registered verdict: PASS.** FantasyPros pool, 2023+2024, 6,797 rows, 36 weeks:
+engine 5.779 vs Sleeper 5.937, difference -0.158 (CI -0.209 to -0.107);
+2023 -0.161, 2024 -0.155; QB -0.22, RB +0.02 (CI -0.08 to +0.13), WR -0.22,
+TE -0.31. No position significantly worse.
+
+**But the pass does not mean what it appears to.** The registered pool adds
+the top-N by *actual* points, which rewards whichever source projected the
+boom weeks. Two pools that never look at the outcome:
+
+| Pool (2023+2024) | Engine | Sleeper | Engine - Sleeper (95% CI) |
+| --- | ---: | ---: | --- |
+| Registered: Sleeper top-N ∪ actual top-N (25/50/60/20) | 5.779 | 5.937 | -0.158 (-0.209, -0.107) |
+| Gate (secondary): Sleeper top 12/24/30/12 | 6.586 | 6.523 | +0.063 (-0.012, +0.134) |
+| Exploratory: Sleeper top-N ∪ engine top-N (12/24/30/12) | 6.534 | 6.437 | **+0.097 (+0.027, +0.164)** |
+
+On the outcome-free symmetric pool the engine is significantly *worse*: RB
++0.21 (CI +0.07 to +0.36) and WR +0.14 (+0.02 to +0.25); QB -0.11 and TE
+-0.02 are not significant. 2025 W4-18 agrees (+0.092, CI -0.03 to +0.21). On
+that pool the engine is biased: QB +2.2 points, RB -1.6, WR -0.8, TE -1.7;
+Sleeper is within 0.9 at every position.
+
+So every earlier "engine beats Sleeper" figure in this document, which used
+the actual-inclusive pool, overstated the engine. Among the players a lineup
+decision is about, Sleeper is the better projection.
+
+Repairs tried, development seasons only (2023-2025; 2022 kept sealed):
+
+- Parameter grid (half-life 2/4/8, share prior games 0.5/1.5, share quantile
+  0.5/0.75, rate scale 1/2/4; 36 settings): best +0.066, none at parity.
+- Per-position affine recalibration, leave-one-season-out: worse
+  (+0.10 to +0.17); MAE rewards the median and the fit corrects the mean.
+- Per-position engine/Sleeper blend, leave-one-season-out: -0.022, +0.001,
+  -0.018, every CI spanning zero. The engine adds at most ~0.02 points per
+  player as a second opinion.
+
+Changes made as a result:
+
+- The prospective promotion check now grades top-N by Sleeper's *or* the
+  challenger's projection (`projection_engine_prospective.starter_pool`),
+  never the outcome. This is stricter for the engine and was chosen after
+  seeing these results, which is why it can only make promotion harder.
+- No engine change; v1's version and its prospective record are untouched.
+  Decisions keep using Sleeper's projections, which this test supports.
+- 2022 (Sleeper and nflverse both available, 2021 as history) stays sealed for
+  the next engine with a structural change, under a protocol registered first.
