@@ -144,6 +144,15 @@ async def _sync_sport(db: AsyncSession, client: httpx.AsyncClient, user: dict, s
         await _snapshot(db, league_id, week, "matchups", matchups)
         await _snapshot(db, league_id, week, "transactions", transactions)
         await _snapshot(db, league_id, week, "account", user)
+        # Rookie-pick ownership for dynasty trade planning (src/services/draft_picks.py).
+        if (league.get("settings") or {}).get("type") == 2:
+            try:
+                traded = await client.get(f"/league/{league_id}/traded_picks")
+                traded.raise_for_status()
+                if isinstance(traded.json(), list):
+                    await _snapshot(db, league_id, 0, "traded_picks", traded.json())
+            except (httpx.HTTPError, ValueError) as exc:
+                logger.warning("sleeper traded_picks unavailable league=%s error=%s", league_id, type(exc).__name__)
         # season_type is a PATH segment here, not a query param - verified
         # live 2026-09-09: /projections/{sport}/{season}/{week}?season_type=X
         # returns 200 with every value an empty {} (confirmed for both the

@@ -31,6 +31,7 @@ class DraftPickInput(BaseModel):
     value: float | None = Field(default=None,ge=0,allow_inf_nan=False)
     source: str | None = Field(default=None,max_length=200)
     original_roster_id: str | None = Field(default=None,max_length=100)
+    pick_id: str | None = Field(default=None,max_length=40)
 
 
 class DynastyPackage(BaseModel):
@@ -44,6 +45,9 @@ class DynastyPackage(BaseModel):
 
 class DraftPickView(DraftPickInput):
     valuation_type: str = 'unpriced'
+    ownership_verified: bool = False
+    market_id: str | None = None
+    basis: str | None = None
 
 
 class DynastyPlan(BaseModel):
@@ -53,7 +57,7 @@ class DynastyPlan(BaseModel):
     side_a_market_index_change: float | None = None
     market_captured_at: str | None = None
     goal_guidance: str | None = None
-    pick_ownership_verified: Literal[False] = False
+    pick_ownership_verified: bool = False
     note: str | None = None
 
 
@@ -230,12 +234,57 @@ async def trade_preview(league_id: str, request: TradeRequest, response: Respons
     async def load_with_league():
         data = await load()
         league_ref['league'] = await db.get(SleeperLeague, league_id)
+        league_ref['inventory'] = await draft_inventory(db, league_ref['league']) if request.picks else None
         return data
     return await admitted_trade(load_with_league, lambda data: with_market(
-        trade_context(data, request), data, league_ref.get('league'), request))
+        trade_context(data, request), data, league_ref.get('league'), request, league_ref.get('inventory')))
 
 
-def with_market(result: TradeResult, data: dict, league, request: TradeRequest) -> TradeResult:
+class DraftPickOffer(BaseModel):
+    id: str
+    season: int
+    round: int
+    original_roster_id: int
+    owner_roster_id: int
+    value: float | None = None
+    market_id: str | None = None
+    basis: str
+
+
+class DraftPickInventory(BaseModel):
+    status: str
+    picks: list[DraftPickOffer] = Field(default_factory=list)
+    ownership_source: str | None = None
+    market_captured_at: str | None = None
+    attribution: str | None = None
+    note: str | None = None
+
+
+@router.get('/leagues/{league_id}/draft-picks', response_model=DraftPickInventory)
+async def draft_picks(league_id: str, response: Response, db: AsyncSession = Depends(get_db)):
+    """Read-only: synced ownership plus the archived daily market snapshot; no provider call."""
+    response.headers['Cache-Control'] = 'no-store'
+    league = await db.get(SleeperLeague, league_id)
+    if league is None:
+        raise HTTPException(404, 'League not found')
+    return DraftPickInventory(**(await draft_inventory(db, league) or {'status': 'not_a_dynasty_league'}))
+
+
+async def draft_inventory(db: AsyncSession, league) -> dict | None:
+    """Verified rookie-pick ownership and FantasyCalc prices; None outside Sleeper dynasty leagues."""
+    from src.models.sleeper import SleeperLeagueSnapshot, SleeperRoster
+    from src.services.draft_picks import inventory
+    from src.services.fantasy_market import cohort, snapshot
+    if league is None or league.platform != 'sleeper' or (league.settings or {}).get('type') != 2:
+        return None
+    rosters = (await db.scalars(select(SleeperRoster).where(SleeperRoster.league_id == league.league_id))).all()
+    traded = await db.scalar(select(SleeperLeagueSnapshot.payload).where(
+        SleeperLeagueSnapshot.league_id == league.league_id, SleeperLeagueSnapshot.kind == 'traded_picks'))
+    return inventory(league, list(rosters), traded if isinstance(traded, list) else None,
+                     snapshot(cohort(league, len(rosters))))
+
+
+def with_market(result: TradeResult, data: dict, league, request: TradeRequest, inventory: dict | None = None) -> TradeResult:
     """Attach FantasyCalc values for the traded players (daily archive; stale or unmatched is a status)."""
     from src.services.fantasy_market import cohort, selected
     if result.outlook is None or league is None:
@@ -249,7 +298,8 @@ def with_market(result: TradeResult, data: dict, league, request: TradeRequest) 
     from src.services.dynasty_trade_planning import plan
     from src.services.fantasy_market_trends import trends
     result.dynasty=DynastyPlan(**plan(data,request.side_a,request.side_b,goal=request.goal,
-        picks=[p.model_dump(exclude_none=True) for p in request.picks],market=raw))
+        picks=[p.model_dump(exclude_none=True) for p in request.picks],market=raw,
+        inventory=inventory))
     result.market_trends=MarketTrends(**trends(cohort(league,len(data.get('rosters',[]))),league.platform,ids))
     return result
 
@@ -697,8 +747,35 @@ class TrendingAdd(BaseModel):
     adds: int
 
 
+class FaabBid(BaseModel):
+    add_id: str
+    drop_id: str
+    lineup_gain: float
+    share_of_remaining: float
+    bid_low: int
+    bid_high: int
+
+
+class FaabHistory(BaseModel):
+    claims: int = 0
+    median_share: float | None = None
+
+
+class FaabPlan(BaseModel):
+    status: str = 'not_a_faab_league'
+    rows: list[FaabBid] = Field(default_factory=list)
+    remaining_budget: int | None = None
+    budget: int | None = None
+    weeks_left: int | None = None
+    rival_max_remaining: int | None = None
+    league_history: FaabHistory | None = None
+    note: str | None = None
+
+
 class EngineWaivers(BaseModel):
     status: str = 'unavailable'
+    # Bid ranges, only in leagues that bid; absent (not_a_faab_league) elsewhere.
+    faab: FaabPlan | None = None
     scope: str = 'engine_research_selected_horizon'
     rows: list[EngineWaiverRow] = Field(default_factory=list)
     # Sleeper's most-added players (24 h) still unrostered in this league; crowd context only.
@@ -973,6 +1050,13 @@ def engine_waiver_context(data: dict, by_id: dict) -> EngineWaivers:
         return EngineWaivers(status='owner_roster_unresolved')
     view = _engine_waivers(data, by_id, mine)
     view.protected = [player_detail(by_id[pid]) for pid in sorted(data.get('_protected') or {}) if pid in by_id]
+    faab = data.get('_faab')
+    if faab:
+        from src.services.faab import bids
+        shown = {(r.add.player_id, r.compare.player_id) for r in view.rows if r.add and r.compare}
+        stored = [r for r in (data.get('waiver_guidance') or {}).get('rows', []) if (r.get('add_id'), r.get('drop_id')) in shown]
+        view.faab = FaabPlan(**bids(stored, faab['money'], mine[0]['roster_id'], data.get('week'),
+                                    playoff_start=faab.get('playoff_start'), history=faab.get('history')))
     trending = data.get('_trending') or {}
     owned_now = {str(pid) for r in data.get('rosters', []) for pid in r.get('player_ids', [])}
     for row in view.rows:
@@ -1170,6 +1254,23 @@ async def season_accuracy(db, league_id: str, data: dict) -> list[AccuracyWeek]:
     return out
 
 
+async def attach_faab(db: AsyncSession, league, data: dict | None) -> None:
+    """data['_faab'] for leagues that bid: budgets from the latest roster sync, this league's past winning bids."""
+    from src.services.faab import budgets, history_share
+    if not data or league is None or league.platform != 'sleeper':
+        return
+    from src.models.sleeper import SleeperLeagueSnapshot, SleeperRoster
+    rosters = (await db.scalars(select(SleeperRoster).where(SleeperRoster.league_id == league.league_id))).all()
+    money = budgets(league.settings or {}, [{'roster_id': r.roster_id, 'settings': r.settings} for r in rosters])
+    if money is None:
+        return
+    transactions = [t for payload in (await db.scalars(select(SleeperLeagueSnapshot.payload).where(
+        SleeperLeagueSnapshot.league_id == league.league_id, SleeperLeagueSnapshot.kind == 'transactions'))).all()
+        if isinstance(payload, list) for t in payload]
+    data['_faab'] = {'money': money, 'history': history_share(transactions, money['budget']),
+                     'playoff_start': (league.settings or {}).get('playoff_week_start')}
+
+
 async def attach_protected(db: AsyncSession, league_id: str, data: dict | None) -> None:
     """data['_protected'] = {player_id: 'IR' | 'Taxi'} for your roster, from the latest platform sync."""
     if not data:
@@ -1200,6 +1301,7 @@ async def league_overview(league_id: str, response: Response, db: AsyncSession =
     data = await read(db, league_id)
     await attach_espn(db, league, data)
     await attach_protected(db, league_id, data)
+    await attach_faab(db, league, data)
     from src.services import availability_rates
     await availability_rates.attach(db, getattr(league, 'platform', 'sleeper'), data)
     if data:
@@ -1242,6 +1344,7 @@ async def league_view(league_id:str,response:Response,
         data=await read(db,league_id)
         if data:
             await attach_protected(db,league_id,data)
+            await attach_faab(db,await db.get(SleeperLeague,league_id),data)
             data['waiver_guidance']=data.get('waiver_guidance_by_horizon',{}).get(str(horizon),{})
             result.engine_waivers=engine_waiver_context(data,{str(p['player_id']):p for p in data.get('players',[])})
     if tool=='player' and selected and result.status=='snapshot_available':

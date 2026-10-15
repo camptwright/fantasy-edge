@@ -19,6 +19,11 @@ type RowPlanningFields = {
   target_game_kickoff?: string | null;
 };
 
+/** "$12–$36" for a FAAB pacing range; one figure when the range collapses. */
+export function faabRange(bid: { bid_low: number; bid_high: number }): string {
+  return bid.bid_low === bid.bid_high ? `$${bid.bid_low}` : `$${bid.bid_low}–$${bid.bid_high}`;
+}
+
 /** Waiver guidance: marginal starting-lineup points over a selected horizon. */
 export function WorkspaceEngineWaivers({ overview }: { overview: Overview }) {
   const view = overview.engine_waivers as Overview["engine_waivers"] & PlanningFields;
@@ -48,10 +53,12 @@ export function WorkspaceEngineWaivers({ overview }: { overview: Overview }) {
         return <li key={i}>{b.week == null ? "Roster" : `Week ${b.week}`}: {names || `${b.missing_player_ids.length} missing player forecasts`}</li>;
       })}</ul>
     </div>}
+    {view.faab?.status === "pacing_estimate" && <p className="mb-3 text-xs text-slate-400">FAAB: ${view.faab.remaining_budget} of ${view.faab.budget} left · {view.faab.weeks_left} regular-season weeks · largest rival budget ${view.faab.rival_max_remaining ?? "unknown"}{view.faab.league_history?.median_share != null ? ` · league median winning bid ${Math.round(view.faab.league_history.median_share * 100)}% of budget (${view.faab.league_history.claims} claims)` : ""}. {view.faab.note}</p>}
     {!view.rows.length ? <p role="status" className="rounded-xl border border-slate-800 p-4 text-sm text-slate-400">No waiver guidance for this snapshot ({view.status.replaceAll("_", " ")}). Missing is not a zero-value result.</p> :
     <ol className="space-y-2">{view.rows.map((value, i) => {
       const row = value as typeof value & RowPlanningFields;
       const [label, tone] = TIER[row.tier];
+      const bid = view.faab?.status === "pacing_estimate" ? view.faab.rows.find(b => b.add_id === row.add.player_id && b.drop_id === row.compare?.player_id) : undefined;
       return <li key={`${row.add.player_id}:${i}`} className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
         <div className="flex flex-wrap items-center gap-3">
           <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${tone}`}>{label}</span>
@@ -62,6 +69,7 @@ export function WorkspaceEngineWaivers({ overview }: { overview: Overview }) {
           <dl className="ml-auto flex gap-4 text-right text-xs">
             {row.ros_gain != null && <div><dt className="text-slate-500">{weeks}-week lineup gain</dt><dd className="text-base font-semibold tabular-nums text-emerald-300">{signed(row.ros_gain)}</dd></div>}
             <div><dt className="text-slate-500">{row.week != null ? `Week ${row.week}` : "This week"}</dt><dd className="text-base font-semibold tabular-nums">{signed(row.week_gain)}</dd></div>
+            {bid && <div><dt className="text-slate-500">FAAB bid</dt><dd className="text-base font-semibold tabular-nums text-sky-300">{faabRange(bid)}</dd></div>}
           </dl>
         </div>
         {row.add.position !== "K" && row.add.position !== "DEF" && <p className="mt-2 flex flex-wrap gap-3"><SosStars stars={row.add.sos_ros_stars} label="Schedule ROS" /><SosStars stars={row.add.sos_next4_stars} label="Next 4" /></p>}

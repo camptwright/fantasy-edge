@@ -100,3 +100,15 @@ def selected(params,platform,ids,*,now=None,archive_root=None):
         return {**base,'status':'observed','players':matches,'captured_at':row['captured_at'],
                 'provider_updated_at':row.get('provider_updated_at'),'source_sha256':row['sha256']}
     except (OSError,ValueError,KeyError,TypeError,AttributeError):return {**base,'status':'invalid_archive'}
+
+
+def snapshot(params,*,now=None,archive_root=None):
+    """The newest snapshot for this format when at most two days old, else None."""
+    if params is None:return None
+    paths=sorted((Path(archive_root or root())/key(params)/'snapshots').glob('*.json'),reverse=True)
+    if not paths:return None
+    try:
+        row=json.loads(paths[0].read_text())
+        age=((now or datetime.now(timezone.utc))-datetime.fromisoformat(row['captured_at'])).total_seconds()
+        return row if 0<=age<=172800 and row['format']==params else None
+    except (OSError,ValueError,KeyError,TypeError):return None

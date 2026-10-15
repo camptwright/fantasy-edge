@@ -25,6 +25,8 @@ export function WorkspaceTrade({ overview }: { overview: ResearchContext }) {
   const players = overview.comparison_players;
   const ownerA = tradePackageOwner(players, a), ownerB = tradePackageOwner(players, b);
   useEffect(() => { setResult(null); setError(null); setBusy(false); }, [overview.generated_at]);
+  // Inventory picks belong to a roster; a different package owner invalidates them.
+  useEffect(() => { setDynasty(d => ({...d, picks: d.picks.filter(p => !p.pick_id)})); }, [ownerA, ownerB]);
   async function evaluate() {
     const requestedGeneration = overview.generated_at;
     setBusy(true); setResult(null); setError(null);
@@ -47,7 +49,8 @@ export function WorkspaceTrade({ overview }: { overview: ResearchContext }) {
     <p className="mt-2 text-xs text-slate-400">Refresh clears the previous result. Selections stay while this panel remains open; review ownership and locks again before evaluating. An expired or unavailable checkpoint hides this panel and may clear the draft.</p>
     <p className="my-3 text-sm text-slate-300">Choose what each team gives. Each package must belong to one of two distinct rosters. Up to six players per side. For uneven trades, explicitly balance each roster with add/drop plans below. Unrostered players are not guaranteed claimable; no waiver timing or platform eligibility is inferred.</p>
     <div className="grid gap-4 md:grid-cols-2">{[{label:'A', ids:a, other:b, set:setA}, {label:'B', ids:b, other:a, set:setB}].map(side => <WorkspaceTradePicker key={side.label} label={side.label} ids={side.ids} other={side.other} players={players} busy={busy || refreshing} onChange={ids=>{side.set(ids);setPlans(emptyPlans);setResult(null);setError(null);}} />)}</div>
-    <WorkspaceDynastyControls value={dynasty} onChange={value=>{setDynasty(value);setResult(null);setError(null);}} disabled={busy} season={new Date(overview.generated_at ?? Date.now()).getFullYear()}/>
+    <WorkspaceDynastyControls value={dynasty} onChange={value=>{setDynasty(value);setResult(null);setError(null);}} disabled={busy} season={new Date(overview.generated_at ?? Date.now()).getFullYear()}
+      leagueId={overview.league_id} owners={{a:ownerA,b:ownerB}} rosterNames={Object.fromEntries(players.filter(p=>p.roster_id&&p.roster_names[0]).map(p=>[p.roster_id as string,p.roster_names[0]]))}/>
     <details onToggle={e=>setAdjustmentsOpen(e.currentTarget.open)} className="mt-4"><summary className="min-h-11 cursor-pointer text-emerald-200">Uneven-trade add/drop plans</summary>
       <p className="mb-3 text-xs text-slate-400">Changing either trade package clears both plans. Only unlocked adjustment players with known ownership are listed. Empty options may mean no eligible players in this checkpoint.</p>
       {adjustmentsOpen && <div className="grid gap-4 md:grid-cols-2">{(['a','b'] as const).map(side => {
@@ -67,7 +70,7 @@ export function WorkspaceTrade({ overview }: { overview: ResearchContext }) {
     {error && <p role="alert" className="mt-3 text-amber-200">{error}</p>}
     {result && <SnapshotWindow expiresAt={result.expires_at}><div role="status" className="mt-6 space-y-2 text-sm">
       {result.outlook && <WorkspaceTradeOutlook outlook={result.outlook} a={a} b={b} players={players} />}
-      {result.dynasty && <section className="rounded-xl border border-slate-800 p-4"><h4 className="font-semibold">Dynasty package scenario</h4><p className="mt-2">{result.dynasty.goal_guidance}</p><p className="mt-2">A gives {result.dynasty.packages.a?.scenario_package_index?.toLocaleString() ?? 'Unpriced'} · B gives {result.dynasty.packages.b?.scenario_package_index?.toLocaleString() ?? 'Unpriced'} in market-index units.</p><p className="mt-2 text-xs text-slate-400">{result.dynasty.note}</p></section>}
+      {result.dynasty && <section className="rounded-xl border border-slate-800 p-4"><h4 className="font-semibold">Dynasty package scenario</h4><p className="mt-2">{result.dynasty.goal_guidance}</p><p className="mt-2">A gives {result.dynasty.packages.a?.scenario_package_index?.toLocaleString() ?? 'Unpriced'} · B gives {result.dynasty.packages.b?.scenario_package_index?.toLocaleString() ?? 'Unpriced'} in market-index units.</p>{result.dynasty.status!=='scenario' && <p className="mt-2 text-amber-200">Picks not evaluated: {result.dynasty.status.replaceAll('_',' ')}.</p>}{result.dynasty.status==='scenario' && <p className="mt-2 text-xs">{result.dynasty.pick_ownership_verified?'Pick ownership verified with Sleeper.':'Includes typed or unverified picks.'}</p>}<p className="mt-2 text-xs text-slate-400">{result.dynasty.note}</p></section>}
       {result.market_trends && <details className="rounded-xl border border-slate-800 p-4"><summary>Market value changes · {result.market_trends.status.replaceAll('_',' ')}</summary><ul className="mt-2">{result.market_trends.players.map(p=><li key={p.player_id}>{players.find(row=>row.player_id===p.player_id)?.name ?? p.player_id}: {p.change == null ? 'Prior observation unavailable' : `${p.change>0?'+':''}${p.change.toFixed(0)} index points`}</li>)}</ul></details>}
       <h4 className="pt-4 font-semibold">History-based check <span className="text-xs font-normal text-slate-500">· {result.status.replaceAll('_',' ')}</span></h4>
       {result.blockers.map(reason => <p key={reason} className="text-amber-200">{tradeBlockerText(reason)}</p>)}
