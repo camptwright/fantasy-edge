@@ -377,3 +377,46 @@ snapshots, weekly roster status and final injury reports, so
   split stays open because the chart and the last start disagree.
 Engine v1's version (and its prospective record) is unchanged; the depth
 variant's version changes.
+
+## Pre-registered holdout test of engine v1 (registered 2026-10-15, before any run)
+
+Why: the promotion gate needs six graded prospective weeks, and that takes
+until late November. Retrospective evidence can never satisfy the gate, but a
+test on seasons the engine never saw can say now whether v1 is likely to pass.
+This section is committed before the holdout script exists or runs; the git
+timestamp is the proof of order. Nothing below may change after results are
+seen. Any later engine change is a new model that needs a new holdout.
+
+- **Model under test:** `projection_engine.compute` with `DEFAULT` params, the
+  blobs `src/services/projection_engine.py` 7b2fbe3 and
+  `src/services/game_environment.py` 93c65ba (commit f5cb628). No refitting.
+- **Holdout:** 2023 and 2024 regular seasons, weeks 1-18. Neither season was
+  used in development: tuning and every diagnosis used 2025 W4-18 and 2026
+  W1-5, and the DB holds no 2023/2024 stats.
+- **Inputs, all pregame from public data:** nflverse weekly player stats
+  (2022-2024; walk-forward, each week sees only earlier games) and nflverse
+  schedules (spread_line, total_line). Those are closing lines, which the live
+  engine never sees; this is a small information advantage for the engine and
+  is reported as a caveat.
+- **Comparator:** Sleeper's weekly projections for the same weeks from the
+  public API (`/projections/nfl/regular/{season}/{week}`), as served today.
+  Whether they equal Sleeper's kickoff snapshot cannot be verified; a caveat.
+- **Scoring:** the 2016 Warriors league (1398509004950376448) rules, for both
+  sources and the actuals.
+- **Graded rows:** players who played (an nflverse stat row) with both an
+  engine and a Sleeper projection for that game. Availability is not graded.
+- **Primary metric:** paired MAE difference (engine - Sleeper) on the
+  FantasyPros pool (top 25 QB / 50 RB / 60 WR / 20 TE per week by Sleeper
+  projection, union top-N by actual), the pool used for every earlier figure.
+  95% CI by week-block bootstrap (4,000 draws, seed 0).
+- **Secondary:** the promotion gate's pool (top 12/24/30/12 by Sleeper
+  projection only), per position, per season.
+- **Pass bar, fixed now:** pooled 2023+2024 CI upper bound below 0; the point
+  estimate below 0 in each season separately; no position with a CI lower
+  bound above 0 (significantly worse). Anything else is reported as a fail.
+- **Fidelity check, run first:** the same nflverse loader on 2025 W4-18 must
+  reproduce the DB-based result (engine 5.83, Sleeper 6.04) within 0.10 MAE.
+  If it does not, the loader is wrong and the holdout is not run until the
+  cause is fixed; the fix and its reason are documented here.
+- **Status:** retrospective evidence, labelled as such. It does not count
+  toward the prospective gate and does not change `serving_promoted`.
