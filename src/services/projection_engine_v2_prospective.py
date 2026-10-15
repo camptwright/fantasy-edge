@@ -1,9 +1,11 @@
 """Prospective capture of projection engine v2 (lean), beside v1 and the depth variant.
 
 v2 failed its registered 2022 test (docs/2026-10-15-engine-v2-plan.md), so
-it is research only: frozen before kickoff, graded against Sleeper frozen
-before kickoff by projection_engine_prospective.report(db, "v2"), never
-served. Inputs come from nflverse release CSVs and Sleeper's archive
+it is frozen before kickoff and graded against Sleeper frozen before kickoff by
+projection_engine_prospective.report(db, "v2"). Since 2026-10-15 the owner
+also serves it in decisions as half of a v2 + Sleeper blend
+(projection_engine_v2_serving); these frozen records stay the track that
+measures it. Inputs come from nflverse release CSVs and Sleeper's archive
 (projection_engine_v2_data.load_release) so the lab and this capture run the
 same feature code; lines come from this app's own market snapshots, as for v1.
 
@@ -35,6 +37,8 @@ RECIPE = "projection_engine_v2_lean"
 SOURCES = ("projection_engine_v2.py", "projection_engine_v2_data.py", "projection_engine_v2_prospective.py",
            "game_environment.py")
 WINDOW = timedelta(hours=72)
+# This app's Team.nflverse_abbr -> nflverse release code, where they differ.
+RELEASE_ABBR = {"LAR": "LA"}
 
 
 def version() -> str:
@@ -59,16 +63,17 @@ def candidates(data: dict, season: int, week: int, team: str) -> list[tuple[str,
                    if s == season and wk == w and t == team and status in D.ON_ROSTER and pos in v2.POSITIONS})
 
 
-async def capture(db, *, now: datetime | None = None, loaded: tuple | None = None) -> dict:
-    now = now or datetime.now(timezone.utc)
-    games = (await db.scalars(select(Game).where(
-        Game.sport == "nfl", Game.status == "scheduled", Game.game_time.is_not(None),
-        Game.game_time > now + timedelta(minutes=5), Game.game_time <= now + WINDOW))).all()
-    if not games:
-        return {"status": "no_games_in_window", "captured": 0}
+def target_games(games, now: datetime) -> list:
+    """Scheduled games kicking off more than five minutes from now and within WINDOW."""
+    return [g for g in games if g.game_time and now + timedelta(minutes=5) < g.game_time <= now + WINDOW]
+
+
+async def project(db, games, *, now: datetime, loaded: tuple | None = None) -> dict:
+    """Fit v2 on games before `now` and project every candidate in `games` (conditional on playing)."""
     season = max(g.season for g in games)
     data, extra = loaded or D.load_release(cache_dir(), season)
-    abbr = dict((await db.execute(select(Team.id, Team.nflverse_abbr).where(Team.sport == "nfl"))).all())
+    abbr = {team: RELEASE_ABBR.get(code, code) for team, code in
+            (await db.execute(select(Team.id, Team.nflverse_abbr).where(Team.sport == "nfl"))).all()}
     env = await environments(db, [g.id for g in games], as_of=now)
     nflverse = {(g["season"], g["week"], g["home"], g["away"]): gid for gid, g in data["games"].items()}
     targets, unmatched = [], []
@@ -88,7 +93,7 @@ async def capture(db, *, now: datetime | None = None, loaded: tuple | None = Non
                                 "spread": e.home_spread if is_home else -e.home_spread,
                                 "total": e.home_points + e.away_points})
     if not targets:
-        return {"status": "no_candidates", "captured": 0, "unmatched": unmatched}
+        return {"status": "no_candidates", "rows": [], "unmatched": unmatched}
     team_rows, pairs = D.iter_features(data, extra)
     team_rows = [t for t in team_rows if t["kickoff"] < now]
     tf = v2.Frame.from_rows(team_rows, list(v2.TEAM_FEATURES) + ["t_tpa"])
@@ -109,9 +114,35 @@ async def capture(db, *, now: datetime | None = None, loaded: tuple | None = Non
     ids = dict((await db.execute(select(Player.gsis_id, Player.id).where(
         Player.gsis_id.in_({t["gsis"] for t in targets})))).all())
     tvol = model.team["pass_att"].predict(frame, ~train), model.team["carries"].predict(frame, ~train)
+    out = [{**t, "player": ids.get(t["gsis"]), "stats": {s: round(float(x), 4) for s, x in zip(v2.STATS, stats[i])},
+            "team_pass_attempts": round(float(tvol[0][i]), 3), "team_carries": round(float(tvol[1][i]), 3)}
+           for i, t in enumerate(targets)]
+    return {"status": "projected", "version": version(), "rows": out, "unmatched": unmatched,
+            "training_rows": trained[0]}
+
+
+async def scheduled(db, now: datetime) -> list:
+    return (await db.scalars(select(Game).where(
+        Game.sport == "nfl", Game.status == "scheduled", Game.game_time.is_not(None),
+        Game.game_time > now + timedelta(minutes=5)))).all()
+
+
+async def capture(db, *, now: datetime | None = None, loaded: tuple | None = None,
+                  projected: dict | None = None) -> dict:
+    """Freeze forecasts for games within WINDOW. `projected` (from project(), same `now`) may cover more games."""
+    now = now or datetime.now(timezone.utc)
+    games = target_games(await scheduled(db, now), now)
+    if not games:
+        return {"status": "no_games_in_window", "captured": 0}
+    projected = projected or await project(db, games, now=now, loaded=loaded)
+    window = {g.id for g in games}
+    rows = [r for r in projected["rows"] if r["db_game"].id in window]
+    unmatched = [u for u in projected["unmatched"] if u["game_id"] in {str(i) for i in window}]
+    if not rows:
+        return {"status": "no_candidates", "captured": 0, "unmatched": unmatched}
     v, root, written, missing = version(), archive_root() / "v2" / "forecasts", 0, 0
-    for i, t in enumerate(targets):
-        player = ids.get(t["gsis"])
+    for t in rows:
+        player = t["player"]
         if player is None:
             missing += 1
             continue
@@ -120,11 +151,11 @@ async def capture(db, *, now: datetime | None = None, loaded: tuple | None = Non
                   "recipe": RECIPE, "version": v, "captured_at": now.isoformat(),
                   "game_id": str(g.id), "season": g.season, "week": g.week, "kickoff": g.game_time.isoformat(),
                   "player_id": str(player), "team_id": str(t["db_team"]), "position": t["position"],
-                  "gsis_id": t["gsis"], "stats": {s: round(float(x), 4) for s, x in zip(v2.STATS, stats[i])},
-                  "team_pass_attempts": round(float(tvol[0][i]), 3), "team_carries": round(float(tvol[1][i]), 3),
+                  "gsis_id": t["gsis"], "stats": t["stats"],
+                  "team_pass_attempts": t["team_pass_attempts"], "team_carries": t["team_carries"],
                   "implied_points": round(float(t["implied"]), 3), "groups": list(D.LEAN),
                   "conditional_on_playing": True, "serving_promoted": False}
         written += bool(publish(root / f"{record['id']}.json", record))
-    return {"status": "captured", "version": v, "games": len(games), "candidates": len(targets),
+    return {"status": "captured", "version": v, "games": len(games), "candidates": len(rows),
             "captured": written, "no_player_identity": missing, "unmatched": unmatched,
-            "training_rows": trained[0], "serving_promoted": False}
+            "training_rows": projected["training_rows"], "serving_promoted": False}

@@ -49,14 +49,16 @@ export function WorkspaceRoster({ overview, section = 'team' }: { overview: Over
     {section === 'team' && <section aria-label="Your roster evidence">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
         <h2 className="text-lg font-semibold">Roster</h2>
-        <p className="text-xs text-slate-500">Provider = platform pregame projection · Engine = research, conditional on playing</p>
+        <p className="text-xs text-slate-500">Projection = Sleeper + engine v2 blend · v1 = research, conditional on playing</p>
       </div>
       {!players.length ? <p className="text-sm text-slate-400">No uniquely bound roster is available in this snapshot.</p> : <div className="workspace-scrollbar overflow-x-auto rounded-xl border border-slate-800">
-        <table className="w-full min-w-[46rem] text-sm">
+        <table className="w-full min-w-[54rem] text-sm">
           <thead className="bg-slate-900/70 text-xs text-slate-400"><tr>
             <th scope="col" className="px-3 py-2 text-left font-medium">Player</th>
-            <th scope="col" className="px-2 py-2 text-right font-medium">Provider</th>
-            <th scope="col" className="px-2 py-2 text-right font-medium">Engine</th>
+            <th scope="col" className="px-2 py-2 text-right font-medium">Projection</th>
+            <th scope="col" className="px-2 py-2 text-right font-medium">Sleeper</th>
+            <th scope="col" className="px-2 py-2 text-right font-medium">v2</th>
+            <th scope="col" className="px-2 py-2 text-right font-medium">v1</th>
             {Array.from({length: 4}, (_, i) => <th key={i} scope="col" className="px-0.5 py-2 text-center font-medium">W{first + 1 + i}</th>)}
             <th scope="col" className="px-3 py-2 text-right font-medium">ROS</th>
             <th scope="col" className="px-2 py-2 text-left font-medium">Upside</th>
@@ -68,6 +70,8 @@ export function WorkspaceRoster({ overview, section = 'team' }: { overview: Over
               <span className="text-[11px] text-slate-500">{player.position ?? '?'} · {player.team ?? 'FA'}{player.locked ? ' · locked' : ''}{player.injury_status ? <span className="text-amber-300"> · {player.injury_status}</span> : null}{player.reserve_slot ? <span className="ml-1 rounded bg-slate-700 px-1.5 py-0.5 text-[10px] font-semibold text-slate-200">{player.reserve_slot}</span> : null}</span>
             </th>
             <td className="px-2 text-right tabular-nums">{pts(player.points)}</td>
+            <td className="px-2 text-right tabular-nums text-slate-400">{pts(player.provider_week_points)}</td>
+            <td className="px-2 text-right tabular-nums text-sky-300">{pts(player.engine_v2_week_points)}</td>
             <td className="px-2 text-right tabular-nums text-sky-300">{pts(player.engine_week_points)}</td>
             {player.engine_status.startsWith('research') ? <EngineCells player={player} first={first + 1} count={4} />
               : <td colSpan={4} className="px-2 text-center text-xs text-slate-600">{player.engine_status === 'position_not_modeled' ? 'K/DEF not modeled' : 'No engine research'}</td>}
@@ -77,7 +81,7 @@ export function WorkspaceRoster({ overview, section = 'team' }: { overview: Over
           </tr>)}</tbody>
         </table>
       </div>}
-      <p className="mt-2 text-xs text-slate-500">Full-game estimates, not remaining points. Locked also covers missing kickoff or game binding. Select a player for availability, identity and history evidence.</p>
+      <p className="mt-2 text-xs text-slate-500">Projection = half Sleeper, half engine v2 where v2 projects the player (Sleeper alone otherwise); v1 is research. Full-game estimates, not remaining points. Locked also covers missing kickoff or game binding. Select a player for availability, identity and history evidence.</p>
     </section>}
   </div>;
 }

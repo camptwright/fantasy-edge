@@ -174,11 +174,12 @@ def input_deadline(meta, proj, matchup, rosters, platform, now):
 ENGINE_MAX_AGE=timedelta(hours=3)
 
 
-def engine_research(players,resolved,checkpoint,league,week,now):
-    """Attach engine research projections (projection_engine_serving), never decisions.
+def engine_research(players,resolved,checkpoint,league,week,now,key='engine'):
+    """Attach engine projections under `key`: v1 (projection_engine_serving) or v2 (projection_engine_v2_serving).
 
     Weekly points for the selected week, the next weeks and a remaining-season
-    sum over games not yet started. Conditional on playing; not promoted.
+    sum over games not yet started. Conditional on playing. v1 is research
+    only; v2's week points enter decisions through blend_engine_v2.
     """
     from src.services.engine_research import player_points
     fresh=(checkpoint is not None and checkpoint.get('status')=='research' and
@@ -186,13 +187,13 @@ def engine_research(players,resolved,checkpoint,league,week,now):
     for p in players:
         canonical=resolved.get(p['player_id'])
         if p.get('position') not in ('QB','RB','WR','TE'):
-            p['engine']={'status':'position_not_modeled'};continue
+            p[key]={'status':'position_not_modeled'};continue
         if not fresh:
-            p['engine']={'status':'missing_or_stale_engine_research'};continue
+            p[key]={'status':'missing_or_stale_engine_research'};continue
         weeks=checkpoint['players'].get(str(canonical.id)) if canonical else None
         if not weeks:
-            p['engine']={'status':'not_projected' if canonical else 'unresolved_identity',
-                         'generated_at':checkpoint['generated_at']};continue
+            p[key]={'status':'not_projected' if canonical else 'unresolved_identity',
+                    'generated_at':checkpoint['generated_at']};continue
         scoring,gaps=player_scoring(league,p['position'])
         weights={CORE[k]:w for k,w in offensive_weights(scoring).items() if k in CORE}
         upcoming={g['id'] for g in p.get('next_games',[]) if g.get('kickoff') and datetime.fromisoformat(g['kickoff'])>now}
@@ -202,12 +203,34 @@ def engine_research(players,resolved,checkpoint,league,week,now):
             meta=checkpoint['games'].get(entry['game_id'],{})
             rows.append({'week':int(w),'points':player_points(entry,weights),
                          'environment':meta.get('environment','unknown')})
-        p['engine']={'status':'research_partial_scoring' if gaps else 'research',
+        p[key]={'status':'research_partial_scoring' if gaps else 'research',
             'generated_at':checkpoint['generated_at'],'version':checkpoint.get('engine_version'),
             'week_points':next((r['points'] for r in rows if r['week']==week),None),
             'weeks':rows,'ros_points':round(sum(r['points'] for r in rows),2) if rows else None,
             'ros_games':len(rows),'ros_lined_games':sum(r['environment']=='market_line' for r in rows),
             'conditional_on_playing':True,'serving_promoted':False}
+
+
+V2_WEIGHT=0.5
+
+
+def blend_engine_v2(players):
+    """Owner decision 2026-10-15: projections are 50/50 provider + engine v2 points.
+
+    The fixed half-weight blend was the best measured on frozen 2026 Weeks 2-5
+    (docs/2026-10-15-engine-v2-plan.md), though v2 failed its registered 2022
+    test. Blends only when the provider projects a positive total (a zero is
+    usually out or a bye; v2 is conditional on playing) and v2 scores every
+    category of the player's rules. K, DEF and unprojected players keep the
+    provider value. `provider_points` keeps the provider's own number.
+    """
+    for p in players:
+        provider,engine=p['weekly_points'],p.get('engine_v2') or {}
+        p['provider_points']=provider
+        p['projection_source']='provider'
+        if finite(provider) and provider>0 and engine.get('status')=='research' and finite(engine.get('week_points')):
+            p['weekly_points']=round((1-V2_WEIGHT)*provider+V2_WEIGHT*engine['week_points'],2)
+            p['projection_source']='blend_provider_engine_v2'
 
 
 async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catalog_limit=50,
@@ -334,6 +357,10 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
             'hold_recommendation':False,'official_game_status_verified':False}
     from src.services.engine_research import latest as engine_latest
     engine_research(players,resolved,await engine_latest(db),league,week,now)
+    from src.services.engine_research import V2_NAME
+    v2_checkpoint=await engine_latest(db,V2_NAME)
+    engine_research(players,resolved,v2_checkpoint,league,week,now,key='engine_v2')
+    blend_engine_v2(players)
     from src.services.engine_coverage import attach_coverage
     attach_coverage(players,games,schedule_coverage,week,now)
     by_id={p['player_id']:p for p in players}
@@ -368,7 +395,8 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
         p['is_mine']=p['player_id'] in set(map(str,mine.players))
         p['decision_tier']='estimated' if p['weekly_evidence']['status']=='pregame_provider_projection' else 'ranked_only'
         p['decision_points']=p['weekly_points'] if p['decision_tier']=='estimated' else None
-        p['decision_source']='fresh_provider_projection' if p['decision_points'] is not None else 'unpriced_roster_context'
+        p['decision_source']=('fresh_blend_provider_engine_v2' if p['projection_source']=='blend_provider_engine_v2'
+            else 'fresh_provider_projection') if p['decision_points'] is not None else 'unpriced_roster_context'
         # A missing provider row can fall back to recent complete same-rule
         # history, but stale feeds, unknown games and partial scoring cannot.
         if (p['decision_points'] is None and not stale and proj.week==week and not p['locked']
@@ -441,8 +469,11 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
         'waiver_settings':{'platform':league.platform,'waiver_type':(league.settings or {}).get('waiver_type'),
                            'waiver_clear_days':(league.settings or {}).get('waiver_clear_days')},
         'input_timestamps':{kind:row.synced_at.isoformat() for kind,row in latest.items() if kind in ('player_metadata','projections','matchups')},
-        'model_version':'fantasy_decisions_v4','recipe_version':prospective_version(),
+        'model_version':'fantasy_decisions_v5','recipe_version':prospective_version(),
         'serving_replaced':False,'scoring_settings':league.scoring_settings,
+        'projection_blend':{'engine_v2_weight':V2_WEIGHT,'engine_v2_version':(v2_checkpoint or {}).get('engine_version'),
+            'engine_v2_generated_at':(v2_checkpoint or {}).get('generated_at'),
+            'blended_players':sum(p['projection_source']=='blend_provider_engine_v2' for p in players)},
         'scoring_contract_hash':scoring_hash(league.scoring_settings,official_rules),
         'coverage':{'stale_inputs':stale,'projection_week':proj.week,'weekly_decisions_open':weekly_open,
                     'schedule':schedule_coverage,'scheduled_rows':len(games),'player_pool':len(players),'free_agent_candidates':len(free),
@@ -456,5 +487,6 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
             'games':[{'id':str(g.id),'kickoff':g.game_time.isoformat() if g.game_time else None} for g in week_games]},
         'players':players,'notes':['Read-only candidates; no lineup, waiver claim or trade is submitted.',
           'Weekly projections use provider-supplied scoring components, not ADP; missing projection rows remain unknown.',
+          'QB/RB/WR/TE weekly projections are 50/50 provider + engine v2 where v2 projects the player; provider_points keeps the provider value.',
           'Full ROS requires complete schedule membership and scoring history; otherwise only a labeled subtotal is shown.',
           'ROS assumes constant role and participation. Prospective validation is required; no injury-recovery, opponent or dynasty adjustments.']}

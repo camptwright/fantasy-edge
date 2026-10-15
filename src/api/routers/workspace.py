@@ -696,6 +696,12 @@ class PlayerDetail(BaseModel):
     engine_ros_lined_games: int = 0
     engine_weeks: list[EngineWeek] = Field(default_factory=list)
     engine_generated_at: str | None = None
+    # Decision projection = 50/50 provider + engine v2 when v2 projects the
+    # player (fantasy_decision_models.blend_engine_v2); `points` is that value.
+    provider_week_points: float | None = None
+    engine_v2_status: str = 'unknown'
+    engine_v2_week_points: float | None = None
+    projection_source: str = 'provider'
     game_log: list[GameLogWeek] = Field(default_factory=list)
 
 
@@ -924,6 +930,11 @@ def player_detail(player: dict) -> PlayerDetail:
         known_remaining_games=ros.get('known_remaining_games'), unknown_kickoffs=ros.get('unknown_kickoffs'),
         through_week=ros.get('through_week'), **engine_detail(player.get('engine') or {}),
         **consensus_detail(player),
+        provider_week_points=finite_points(player.get('provider_points', player.get('weekly_points'))),
+        engine_v2_status=(player.get('engine_v2') or {}).get('status', 'unknown'),
+        engine_v2_week_points=finite_points((player.get('engine_v2') or {}).get('week_points'))
+        if (player.get('engine_v2') or {}).get('status') in ('research', 'research_partial_scoring') else None,
+        projection_source=player.get('projection_source', 'provider'),
         sos_ros_stars=(player.get('_sos') or {}).get('ros_stars'), sos_next4_stars=(player.get('_sos') or {}).get('next4_stars'),
         reserve_slot=player.get('_reserve_slot'),
         play_probability=(player.get('_play') or {}).get('probability'), play_basis=(player.get('_play') or {}).get('basis'),
@@ -937,7 +948,7 @@ def player_detail(player: dict) -> PlayerDetail:
 
 def consensus_detail(player: dict) -> dict:
     engine = player.get('engine') or {}
-    members = [finite_points(player.get('weekly_points')), finite_points(player.get('_espn_points')),
+    members = [finite_points(player.get('provider_points', player.get('weekly_points'))), finite_points(player.get('_espn_points')),
                finite_points(engine.get('week_points')) if engine.get('status') in ('research', 'research_partial_scoring') else None]
     known = [v for v in members if v is not None]
     return {'espn_week_points': members[1], 'consensus_sources': len(known),
@@ -1436,7 +1447,7 @@ def qualification_tracks(root) -> list[QualificationTrack]:
 
     tracks = []
     for variant, label in (('v1', 'Projection engine v1'), ('depth', 'Engine + depth chart/status'),
-                           ('v2', 'Projection engine v2 (research)')):
+                           ('v2', 'Projection engine v2 (half of decisions)')):
         MIN_WEEKS = VARIANT_MIN_WEEKS[variant]
         files = sorted((root / VARIANTS[variant][1]).glob('*.json'))
         if not files:

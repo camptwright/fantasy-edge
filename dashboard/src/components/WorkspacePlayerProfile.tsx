@@ -44,11 +44,13 @@ export function WorkspacePlayerProfile({ overview, playerId }: { overview: Overv
       <a href={playerResearchHref(overview.league_id, player.player_id)} className="inline-flex min-h-11 items-center rounded-lg border border-slate-700 px-4 text-sm hover:border-emerald-500">Compare</a>
     </header>
     <dl className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
-      <Stat label={`Week ${overview.week ?? "?"} provider`} value={pts(player.points)} sub={player.source.replaceAll("_", " ")} />
+      <Stat label={`Week ${overview.week ?? "?"} projection`} value={pts(player.points)} sub={player.source.replaceAll("_", " ")} />
+      <Stat label="Sleeper this week" value={pts(player.provider_week_points)} sub="Provider projection" />
+      <Stat label="Engine v2 this week" value={pts(player.engine_v2_week_points)} sub={player.projection_source === "blend_provider_engine_v2" ? "Half of the projection · if playing" : player.engine_v2_status.replaceAll("_", " ")} tone="text-sky-300" />
       <Stat label="ESPN this week" value={pts(player.espn_week_points)} sub={player.espn_week_points == null ? "Not captured for this week" : "Your league's scoring"} />
       <Stat label="Consensus" value={pts(player.consensus_week_points)} sub={player.consensus_week_points == null ? "Needs two sources" : `Mean of ${player.consensus_sources} sources · research`} tone="text-emerald-300" />
-      <Stat label="Engine this week" value={pts(player.engine_week_points)} sub="Research · if playing" tone="text-sky-300" />
-      <Stat label="Engine rest of season" value={pts(player.engine_ros_points)} sub={research ? `${player.engine_ros_games} games · ${player.engine_ros_lined_games} with market lines` : player.engine_status.replaceAll("_", " ")} tone="text-sky-300" />
+      <Stat label="Engine v1 this week" value={pts(player.engine_week_points)} sub="Research · if playing" tone="text-sky-300" />
+      <Stat label="Engine v1 rest of season" value={pts(player.engine_ros_points)} sub={research ? `${player.engine_ros_games} games · ${player.engine_ros_lined_games} with market lines` : player.engine_status.replaceAll("_", " ")} tone="text-sky-300" />
       <Stat label="History-based ROS" value={pts(player.ros_points)} sub={player.ros_status.replaceAll("_", " ")} />
     </dl>
     {(() => {

@@ -68,3 +68,29 @@ def test_sleeper_context_uses_only_past_games():
 def test_candidates_come_from_the_weekly_roster_and_skip_reserve():
     assert candidates(data(), 2025, 3, "AAA") == [("a1", "WR"), ("a2", "WR"), ("r", "WR")]
     assert candidates(data(), 2025, 2, "AAA") == []
+
+
+def test_nearest_week_serves_only_the_earliest_scheduled_week():
+    from types import SimpleNamespace as G
+    from src.services.projection_engine_v2_serving import nearest_week
+    games = [G(season=2026, week=7, id=1), G(season=2026, week=6, id=2), G(season=2026, week=6, id=3)]
+    assert [g.id for g in nearest_week(games)] == [2, 3] and nearest_week([]) == []
+
+
+def test_blend_is_half_provider_half_v2_and_never_revives_a_zero():
+    from src.services.fantasy_decision_models import blend_engine_v2
+    players = [{'weekly_points': 10.0, 'engine_v2': {'status': 'research', 'week_points': 14.0}},
+               {'weekly_points': 0.0, 'engine_v2': {'status': 'research', 'week_points': 9.0}},
+               {'weekly_points': 8.0, 'engine_v2': {'status': 'research_partial_scoring', 'week_points': 9.0}},
+               {'weekly_points': 6.0, 'engine_v2': {'status': 'position_not_modeled'}},
+               {'weekly_points': None, 'engine_v2': {'status': 'research', 'week_points': 9.0}}]
+    blend_engine_v2(players)
+    assert [p['weekly_points'] for p in players] == [12.0, 0.0, 8.0, 6.0, None]
+    assert [p['projection_source'] for p in players] == ['blend_provider_engine_v2'] + ['provider'] * 4
+    assert players[0]['provider_points'] == 10.0
+
+
+def test_rams_map_to_the_release_code():
+    """Regression: the app stores LAR, nflverse releases use LA, so Rams games got no v2 projections."""
+    from src.services.projection_engine_v2_prospective import RELEASE_ABBR
+    assert RELEASE_ABBR == {"LAR": "LA"}

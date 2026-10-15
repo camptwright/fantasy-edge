@@ -36,7 +36,7 @@ celery_app.conf.update(
         "refresh-nfl-stats": {"task":"fantasy.refresh_nfl_stats","schedule":86400.0},
         "refresh-snap-counts": {"task":"fantasy.refresh_snap_counts","schedule":86400.0},
         "projection-engine-research": {"task":"fantasy.projection_engine_research","schedule":1800.0},
-        "projection-engine-v2": {"task":"fantasy.projection_engine_v2","schedule":10800.0},
+        "projection-engine-v2": {"task":"fantasy.projection_engine_v2","schedule":7200.0},
         "raw-retention-report": {"task":"fantasy.raw_retention_report","schedule":86400.0},
         "compress-raw-archive": {"task":"fantasy.compress_raw_archive","schedule":3600.0},
         "archive-rosters": {"task": "fantasy.archive_rosters", "schedule": 21600.0},

@@ -345,3 +345,48 @@ record.
   registered result stands as produced at 20c2da0.
 - The earliest possible owner review is after 6 graded prospective weeks:
   weeks 6-11, so late November.
+
+## Production (owner decision, 2026-10-15)
+
+The owner put both engines into production. This deliberately overrides two
+things: the failed registered test, and the owner's own freeze on decision
+changes before week 11.
+
+- **What decisions use.** For QB/RB/WR/TE, the weekly projection is 50/50
+  the league's provider projection and v2
+  (`fantasy_decision_models.blend_engine_v2`).
+  - Lineups, waivers, the matchup total, the simulation and the outcome
+    ranges all read it.
+  - On frozen 2026 weeks 2-5 this blend measured -0.060 vs Sleeper (CI
+    -0.176, +0.025). It is the best option measured, but not a significant
+    one.
+- **When the provider value is used alone.** A provider projection of zero
+  or less (usually out or a bye; v2 is conditional on playing), any player
+  v2 does not project, partial scoring rules, and K/DEF.
+  - `provider_points` keeps the provider's own number.
+- **v1.** Stays a research column, next to Sleeper and v2. Its 2026 record
+  (+0.165 vs frozen Sleeper) does not justify a decision weight.
+- **ESPN league.** The provider there is ESPN's applied total, not Sleeper.
+  The blend was only measured with Sleeper.
+- **Serving.** `projection_engine_v2_serving.run` is now the
+  `fantasy.projection_engine_v2` task, every 2 hours.
+  - It makes one fit per run.
+  - It writes checkpoint `projection_engine_v2:serving` for the nearest
+    scheduled week, and freezes the 72-hour window's forecasts exactly as
+    before. The union fit equals the window-only fit (max difference 0.0).
+  - Decisions treat a checkpoint older than 3 hours as missing and fall back
+    to the provider.
+- **Fix.** The app stores the Rams as `LAR` and nflverse releases use `LA`.
+  Rams games had no v2 projections, in the research capture too; they do
+  now.
+- **New identities.**
+  - v2's version is `8060f35a…`; the prospective record restarts before any
+    week was graded.
+  - The decision cohort is `8b422d0cdd6d` (prediction `5ede8e046eb6`),
+    replacing `1c14c946116d`.
+  - Output model `fantasy_decisions_v5` carries `projection_blend` (weight,
+    v2 version, blended player count).
+- **First run.** 14 week-6 games and 436 players served. Blended players:
+  169 (2016 Warriors), 209 (Inaugural Crossover), 185 (ESPN league).
+- **How to measure it.** The frozen v2 track still decides whether the
+  blend is earning its place. Review it after 6 graded weeks.
