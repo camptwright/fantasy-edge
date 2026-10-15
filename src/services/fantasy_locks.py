@@ -1,6 +1,7 @@
 """Preserve platform lineup locks; never interpret full-week points as remaining."""
 from src.services.fantasy_decision_models import optimize, FLEX, RESERVE
 from src.services.roster_stat_model import finite
+from src.services.availability_status import confirmed_absent, normalize_status
 
 
 def lineup(players, slots, starters):
@@ -18,7 +19,7 @@ def lineup(players, slots, starters):
         if p.get('locked',True):
             fixed[i]={'slot':slots[i],'player_id':pid,'name':p['name'],'points':None,'locked':True}
     pool=[p for p in players if not p.get('locked',True) and finite(p.get('decision_points'))
-        and str(p.get('injury_status') or '').strip().upper() not in ('OUT','IR','DOUBTFUL','SUSPENDED','PUP')
+        and not confirmed_absent(p.get('injury_status')) and normalize_status(p.get('injury_status')) != 'DOUBTFUL'
         and not p.get('game_availability',{}).get('hold_recommendation')]
     open_indices=[i for i in range(len(slots)) if i not in fixed]
     if not open_indices:
@@ -32,7 +33,7 @@ def lineup(players, slots, starters):
         'reason':'Only unstarted slots optimized; no live remaining-points or full-lineup total inferred.'}
 
 
-def waivers(mine, free, slots, starters):
+def waivers(mine, free, slots, starters, *, min_lineup_gain=1.0):
     before=lineup(mine,slots,starters)
     if before['unlocked_points'] is None:
         return {'status':before['status'],'before':before,'moves':[]}
@@ -45,7 +46,7 @@ def waivers(mine, free, slots, starters):
             after=lineup([p for p in mine if p['player_id']!=drop['player_id']]+[add],slots,starters)
             if after['unlocked_points'] is None:continue
             gain=round(after['unlocked_points']-before['unlocked_points'],2)
-            if gain>0:
+            if gain>=min_lineup_gain:
                 alternatives.append({'add_id':add['player_id'],'add':add['name'],'drop_id':drop['player_id'],
                     'drop':drop['name'],'lineup_gain':gain,'after_total':after['total'],
                     'after_lineup':after['lineup'],'scope':'unstarted_slots_only'})

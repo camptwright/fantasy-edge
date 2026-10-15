@@ -1,22 +1,39 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import type { PlayerDetail } from "@/lib/workspace-api.generated";
-import { availabilityLabel, comparisonMatches, researchSelection } from "@/lib/workspace";
+import { availabilityLabel, comparisonMatches, researchSelection, playerProfileHref } from "@/lib/workspace";
+import { WorkspaceRoleChanges } from './WorkspaceRoleChanges';
 
 const number = (n: number | null) => n == null ? "Unknown / withheld" : n.toFixed(1);
 
-export function WorkspaceComparison({ players, initialPlayer, initialCompare, lineup }: { players: PlayerDetail[]; initialPlayer?:string; initialCompare?:string; lineup?:{available:boolean; current:string[]; candidate:string[]; reason:string} }) {
+export function WorkspaceComparison({ players, initialPlayer, initialCompare, lineup,leagueId,generatedAt }: { players: PlayerDetail[]; initialPlayer?:string; initialCompare?:string; leagueId?:string; generatedAt?:string|null; lineup?:{available:boolean; current:string[]; candidate:string[]; reason:string} }) {
   const initial=researchSelection(players,initialPlayer,initialCompare);
   const [left, setLeft] = useState(initial.left);
   const [right, setRight] = useState(initial.right);
   const [search, setSearch] = useState("");
   const [ownership, setOwnership] = useState("all");
   const [page, setPage] = useState(0);
+  const [details,setDetails]=useState<Record<string,PlayerDetail>>({});
+  const [detailError,setDetailError]=useState<string|null>(null);
   const detailHeading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { if (left) detailHeading.current?.focus(); }, [left, right]);
   const sorted = [...players].sort((a, b) => a.name.localeCompare(b.name));
   const filtered = sorted.filter(p => comparisonMatches(p, search, ownership));
-  const selected = [players.find(p => p.player_id === left), players.find(p => p.player_id === right)];
+  useEffect(()=>{
+    const league=leagueId??new URL(window.location.href).searchParams.get('league');
+    if (!league)return;
+    const controller=new AbortController();setDetailError(null);setDetails({});
+    Promise.all([left,right].filter(Boolean).map(async id=>{
+      const query=new URLSearchParams({league,player:id});if(generatedAt)query.set('generated_at',generatedAt);
+      const response=await fetch(`/api/workspace/player?${query}`,{cache:'no-store',signal:controller.signal});
+      if (!response.ok)throw new Error('Selected player evidence is unavailable; refresh the page.');
+      const player:PlayerDetail=await response.json();
+      if (player.player_id!==id)throw new Error('Player evidence mismatch');return player;
+    })).then(rows=>{if(!controller.signal.aborted)setDetails(Object.fromEntries(rows.map(p=>[p.player_id,p])));})
+      .catch(error=>{if(!controller.signal.aborted)setDetailError(error.message);});
+    return ()=>controller.abort();
+  },[left,right,players,leagueId,generatedAt]);
+  const selected = [details[left]??players.find(p => p.player_id === left), details[right]??players.find(p => p.player_id === right)];
   const visible = filtered.slice(page * 20, (page + 1) * 20);
   const rows: [string, (p: PlayerDetail) => string][] = [
     ["Ownership in snapshot", p => `${p.ownership.replaceAll("_", " ")}${p.roster_names.length ? ` · ${p.roster_names.join(", ")}` : ""}`],
@@ -24,6 +41,9 @@ export function WorkspaceComparison({ players, initialPlayer, initialCompare, li
     ["Canonical identity", p => p.identity_status.replaceAll('_', ' ')],
     ["Canonical team binding", p => p.position === 'DEF' || p.position === 'DST' ? p.canonical_team_id ?? 'Unresolved team — not an individual player' : 'Individual player identity applies'],
     ["Weekly pregame estimate", p => number(p.points)],
+    ["Engine weekly research",p=>number(p.engine_week_points)],
+    ["Consensus weekly research",p=>number(p.consensus_week_points)],
+    ["Engine ROS · conditional on playing",p=>number(p.engine_ros_points)],
     ["Weekly source", p => p.source.replaceAll("_", " ")],
     ["Projection observed", p => p.projection_observed_at ?? 'Unknown'],
     ["Lineup lock", p => p.locked ? "Locked or game binding unknown" : "Unlocked in snapshot"],
@@ -49,6 +69,7 @@ export function WorkspaceComparison({ players, initialPlayer, initialCompare, li
   ];
   return <section aria-label="Player comparison" className="rounded-lg border border-slate-700 p-4">
     <h3 className="text-lg font-semibold">Player research</h3>
+    {detailError && <p role="status" className="mt-3 text-amber-200">{detailError}</p>}
     {initial.unavailable && <p role="status" className="my-3 text-sm text-amber-200">A linked player is missing from this league’s current checkpoint, or the comparison repeats the same player. Choose from the current catalog; no substitute was selected.</p>}
     <p className="my-3 text-sm text-slate-400">Search the saved checkpoint catalog, not the entire NFL. Missing search results do not establish availability. Unrostered means unrostered in this snapshot, not immediately claimable.</p>
     <p className="my-3 text-sm text-slate-300">Same league and snapshot. ROS is a conditional, constant-role research estimate, not trade value or a validated forecast. Partial subtotals are not comparable full-season totals. No injury-recovery or dynasty adjustments.</p>
@@ -61,12 +82,14 @@ export function WorkspaceComparison({ players, initialPlayer, initialCompare, li
     {selected[0] && <section aria-label="Selected player evidence" className="mb-5 rounded-lg border border-emerald-900 bg-slate-950 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3"><h4 ref={detailHeading} tabIndex={-1} className="text-lg font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300">{selected[0].name}{selected[1] ? ` vs ${selected[1].name}` : ''}</h4><button onClick={()=>{setLeft('');setRight('');}} className="min-h-11 rounded border border-slate-600 px-3 text-sm">Clear players</button></div>
       <p className="mt-2 text-sm text-slate-400">Saved evidence only. Weekly estimates are full-game pregame points, not remaining points or a start/sit verdict.</p>
+      {selected.filter(Boolean).map(p=><div key={p!.player_id}><WorkspaceRoleChanges profile={p!.role_changes}/></div>)}
       {lineup && <p className="mt-2 text-sm text-slate-400">Lineup context: {lineup.reason} Slot eligibility and interactions must be reviewed in the full lineup; point differences alone are not swap advice.</p>}
       {selected[1] ? <><button onClick={()=>setRight('')} className="mt-3 min-h-11 rounded border border-slate-600 px-3 text-sm">Remove comparison</button><div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm"><caption className="pb-3 text-left text-slate-400">Evidence comparison — no winner or trade recommendation inferred</caption><thead><tr><th scope="col" className="p-2">Measure</th>{selected.map(p => <th scope="col" key={p!.player_id} className="p-2">{p!.name}</th>)}</tr></thead><tbody>{rows.map(([label, value]) => <tr key={label} className="border-t border-slate-700"><th scope="row" className="p-2 font-normal text-slate-400">{label}</th>{selected.map(p => <td key={p!.player_id} className="p-2">{value(p!)}</td>)}</tr>)}</tbody></table></div></> : <dl className="mt-4 grid gap-4 sm:grid-cols-2">{rows.map(([label,value])=><div key={label}><dt className="text-xs text-slate-400">{label}</dt><dd className="mt-1 break-words text-sm">{value(selected[0]!)}</dd></div>)}</dl>}
     </section>}
     <ul aria-label="Player search results" className="divide-y divide-slate-800 rounded-lg border border-slate-700">{visible.map(p => <li key={p.player_id} className="flex flex-wrap items-center justify-between gap-3 p-3">
       <div className="min-w-0"><p className="font-medium">{p.name}</p><p className="text-xs text-slate-400">{p.position ?? '?'} · {p.team ?? 'Unknown team'} · {p.ownership.replaceAll('_',' ')}</p><p className="mt-1 text-xs text-slate-300">Pregame: {number(p.points)}{p.locked ? ' · Locked / game binding unknown' : ''}{p.injury_status ? ` · ${p.injury_status}` : ''}</p></div>
       <div className="flex gap-2"><button aria-label={`View ${p.name}`} aria-pressed={left === p.player_id} onClick={()=>{setLeft(p.player_id);if(right === p.player_id)setRight('');}} className="min-h-11 rounded border border-emerald-700 px-3 text-sm text-emerald-200">{left === p.player_id ? 'Viewing' : 'View'}</button>
+      {leagueId && <a href={playerProfileHref(leagueId,p.player_id)} className="inline-flex min-h-11 items-center rounded border border-slate-600 px-3 text-sm">Profile</a>}
       <button aria-label={`Compare ${p.name}`} disabled={!left || left === p.player_id} aria-pressed={right === p.player_id} onClick={()=>setRight(p.player_id)} className="min-h-11 rounded border border-slate-600 px-3 text-sm disabled:opacity-40">{right === p.player_id ? 'Comparing' : 'Compare'}</button></div>
     </li>)}</ul>
     {!filtered.length && <p className="mt-3 text-sm">No checkpoint players match these filters. This does not establish that a player is unavailable in the NFL or your league.</p>}

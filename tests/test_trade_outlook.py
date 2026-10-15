@@ -20,13 +20,15 @@ def test_position_deltas_follow_the_starting_players_position():
 def test_a_received_player_on_bye_counts_zero_that_week():
     roster = [p("qb", "QB", {6: 20, 7: 20}, True), p("rb1", "RB", {6: 12, 7: 12}, True),
               p("wr1", "WR", {6: 9, 7: 9}, True), p("wr2", "WR", {6: 6, 7: 6}, True)]
-    out = side_outlook(roster, [roster[3]], [p("wr_in", "WR", {6: 14}, False)], SLOTS)
+    incoming = p('wr_in', 'WR', {6: 14}, False)
+    incoming['engine']['coverage'] = [{'week': 7, 'status': 'verified_bye'}]
+    out = side_outlook(roster, [roster[3]], [incoming], SLOTS)
     assert [w["gain"] for w in out["weekly"]] == [8.0, -6.0]
 
 
 def test_outlook_needs_two_distinct_known_rosters():
     players = [p("a1", "WR", {6: 10}, True), p("b1", "WR", {6: 12}, True), p("qb", "QB", {6: 20}, True)]
-    data = {"players": players, "roster_positions": SLOTS,
+    data = {"players": players, "roster_positions": ['WR', 'BN'],
             "rosters": [{"roster_id": 1, "name": "Mine", "player_ids": ["a1", "qb"]}, {"roster_id": 2, "name": "Them", "player_ids": ["b1"]}]}
     out = outlook(data, ["a1"], ["b1"])
     assert out["status"] == "research" and out["side_a"]["team"] == "Mine"
@@ -84,3 +86,18 @@ def test_trade_finder_needs_an_owner_roster():
     data = finder_data()
     data["rosters"][0]["is_mine"] = False
     assert trade_finder.find(data)["status"] == "owner_roster_unresolved"
+
+
+def test_unknown_incoming_week_withholds_trade_gain():
+    roster = [p('a', 'WR', {6: 10, 7: 10}, True)]
+    out = side_outlook(roster, roster, [p('b', 'WR', {6: 20}, False)], ['WR'])
+    assert out['status'] == 'incomplete_coverage' and out['lineup_gain'] is None
+    assert out['weekly'] == [] and out['unmodeled_player_ids'] == ['b']
+
+
+def test_unknown_bench_projection_blocks_mutual_trade_claim():
+    from src.services import trade_finder
+    data = finder_data()
+    data['players'][1]['engine']['weeks'] = [{'week': 6, 'points': 18}]
+    out = trade_finder.find(data)
+    assert out['status'] == 'incomplete_coverage' and out['rows'] == []

@@ -8,6 +8,8 @@ type Governance = { status: string; review?: { forecast_count?: number; reviewed
 const label = (s: string) => s.replaceAll("_", " ");
 
 function Progress({ track }: { track: QualificationTrack }) {
+  const retrospective = track.evidence_type === 'retrospective_reconstructed_current_weights';
+  const historical = track.evidence_type === 'historical_older_version';
   const pct = Math.min(100, (track.graded_weeks / Math.max(1, track.required_weeks)) * 100);
   const d = track.pool.paired_difference;
   return <li className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
@@ -15,8 +17,9 @@ function Progress({ track }: { track: QualificationTrack }) {
       <h3 className="font-semibold">{track.name}</h3>
       <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${track.eligible_for_owner_review ? "bg-emerald-400 text-slate-950" : "bg-slate-800 text-slate-300"}`}>{track.eligible_for_owner_review ? "Ready for owner review" : "Not promoted"}</span>
     </div>
-    <p className="mt-3 flex justify-between text-xs text-slate-400"><span>Graded weeks</span><span className="tabular-nums">{track.graded_weeks} / {track.required_weeks}</span></p>
-    <span aria-hidden="true" className="mt-1 block h-2 rounded bg-slate-800"><span className="block h-2 rounded bg-sky-400" style={{ width: `${pct}%` }} /></span>
+    <p className="mt-2 text-xs text-slate-400">{retrospective?'Retrospective reconstruction · weights were not frozen with forecasts':historical?'Historical report · earlier model version':track.current_version?'Current model · forecasts frozen before kickoff':'Current-version report unavailable'}</p>
+    <p className="mt-3 flex justify-between text-xs text-slate-400"><span>{retrospective||historical?'Observed graded weeks':'Qualification weeks'}</span><span className="tabular-nums">{track.graded_weeks}{!retrospective&&!historical?` / ${track.required_weeks}`:''}</span></p>
+    {!retrospective&&!historical&&<span aria-hidden="true" className="mt-1 block h-2 rounded bg-slate-800"><span className="block h-2 rounded bg-sky-400" style={{ width: `${pct}%` }} /></span>}
     <dl className="mt-3 grid grid-cols-3 gap-2 text-sm">
       <div><dt className="text-[11px] text-slate-500">Engine MAE</dt><dd className="tabular-nums">{track.pool.engine_mae?.toFixed(2) ?? "—"}</dd></div>
       <div><dt className="text-[11px] text-slate-500">Sleeper MAE</dt><dd className="tabular-nums">{track.pool.sleeper_mae?.toFixed(2) ?? "—"}</dd></div>
@@ -24,6 +27,10 @@ function Progress({ track }: { track: QualificationTrack }) {
     </dl>
     <p className="mt-2 text-[11px] text-slate-500">{track.status === "no_report_yet" ? "No prospective report yet." : `${track.pool.n} paired starter-pool rows${track.pool.ci ? ` · 95% CI ${track.pool.ci.map(v => v.toFixed(2)).join(" to ")}` : ""}${track.engine_forecasts != null ? ` · ${track.engine_forecasts} frozen engine forecasts` : ""}`}</p>
     {!!track.blockers.length && <p className="mt-1 text-[11px] text-amber-200/80">Blockers: {track.blockers.map(label).join(" · ")}</p>}
+    {(Object.keys(track.by_position??{}).length>0||(track.by_week??[]).length>0)&&<details className="mt-3 text-xs"><summary className="cursor-pointer text-slate-300">Position and week evidence</summary>
+      <dl className="mt-2 space-y-1">{Object.entries(track.by_position??{}).map(([position,s])=><div key={position} className="flex justify-between gap-2"><dt>{position}</dt><dd>{s.n} pairs · {s.independent_weeks||s.weeks.length} weeks · MAE {s.engine_mae?.toFixed(2)??'—'} vs {s.sleeper_mae?.toFixed(2)??'—'}</dd></div>)}</dl>
+      <ul className="mt-2 space-y-1">{(track.by_week??[]).map(w=><li key={`${w.season}:${w.week}`}>{w.season??''} week {w.week}: {w.n} pairs{Object.entries(w.positions).filter(([,s])=>s.n>0).map(([p,s])=>` · ${p} ${s.n}`).join('')}</li>)}</ul>
+    </details>}
   </li>;
 }
 

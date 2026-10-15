@@ -1,6 +1,7 @@
 import { environmentLabel, fantasyToolHref, pct, playerResearchHref, pts, type Overview } from "@/lib/workspace";
 import { DistributionCurve, Meter } from "./OutcomeCharts";
 import { BOOM_BUST } from "./WorkspaceStartSit";
+import { WorkspaceRoleChanges } from './WorkspaceRoleChanges';
 
 function heatClass(points: number) {
   return points >= 20 ? "bg-emerald-500/30 text-emerald-100" : points >= 12 ? "bg-emerald-500/15 text-emerald-200"
@@ -89,5 +90,6 @@ export function WorkspacePlayerProfile({ overview, playerId }: { overview: Overv
         <span className="text-[11px] text-slate-500">W{w.week}</span>
       </li>)}</ol>}
     </section>
+    <WorkspaceRoleChanges profile={player.role_changes}/>
   </article>;
 }

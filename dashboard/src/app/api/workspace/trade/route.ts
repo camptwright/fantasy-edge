@@ -6,7 +6,8 @@ export async function POST(request: Request) {
   const base = process.env.FANTASY_WORKSPACE_API_URL;
   if (!token || !base) return NextResponse.json({ detail: "Preview service unavailable" }, { status: 503, headers });
   try {
-    const { league_id, generated_at, side_a, side_b, a = {add:[],drop:[]}, b = {add:[],drop:[]} } = await request.json();
+    const { league_id, generated_at, side_a, side_b, a = {add:[],drop:[]}, b = {add:[],drop:[]},goal='balanced',picks=[] } = await request.json();
+    if (!['balanced','contender','rebuild'].includes(goal)||!Array.isArray(picks)||picks.length>12) return NextResponse.json({detail:'Invalid dynasty scenario'},{status:400,headers});
     if (typeof league_id !== "string" || league_id.length > 100 || typeof generated_at !== "string"
         || ![side_a, side_b].every(ids => Array.isArray(ids) && ids.length > 0 && ids.length <= 6
           && ids.every(id => typeof id === "string" && id.length <= 100))) {
@@ -17,7 +18,7 @@ export async function POST(request: Request) {
     }
     const response = await fetch(`${base}/api/v2/fantasy/leagues/${encodeURIComponent(league_id)}/trade-preview`, {
       method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ generated_at, side_a, side_b, a, b }), cache: "no-store", signal: AbortSignal.timeout(8000),
+      body: JSON.stringify({ generated_at, side_a, side_b, a, b,goal,picks }), cache: "no-store", signal: AbortSignal.timeout(8000),
     });
     const retry = response.headers.get('Retry-After');
     return NextResponse.json(await response.json(), { status: response.status, headers: {...headers, ...(retry ? {'Retry-After':retry} : {})} });

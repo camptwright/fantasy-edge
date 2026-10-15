@@ -17,6 +17,7 @@ function render(states) {
   }).outputText,{exports:module.exports,require:id=>{
     if(id==='react')return {...React,useState:initial=>[states[index++]??initial,()=>{}]};
     if(id==='@/lib/workspace')return helpers;
+    if(id==='./WorkspaceRoleChanges')return {WorkspaceRoleChanges:()=>null};
     return require(id);
   }});
   const players=Array.from({length:25},(_,i)=>({player_id:String(i),name:`Player ${String(i).padStart(2,'0')}`,position:'QB',team:null,points:i===0?0:null,

@@ -26,6 +26,10 @@ COPY config ./config
 COPY src ./src
 COPY scripts ./scripts
 
+# Seal only after the final source COPY, so API and worker images have the
+# same content identity. The manifest never includes .env or raw archives.
+RUN python scripts/backend_release_manifest.py seal --root /app
+
 RUN useradd --create-home --uid 1001 fantasy \
  && mkdir -p /app/logs /mnt/data/fantasy-edge/models /mnt/data/fantasy-edge/raw \
  && chown -R fantasy:fantasy /app /mnt/data/fantasy-edge

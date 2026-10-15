@@ -6,6 +6,7 @@ import { WorkspaceTradePicker } from "@/components/WorkspaceTradePicker";
 import type { TradeResult } from "@/lib/workspace-api.generated";
 import { SnapshotWindow } from "@/components/SnapshotWindow";
 import { WorkspaceTradeOutlook } from "@/components/WorkspaceTradeOutlook";
+import { WorkspaceDynastyControls,type DynastyScenario } from './WorkspaceDynastyControls';
 
 export function WorkspaceTrade({ overview }: { overview: ResearchContext }) {
   const router = useRouter();
@@ -16,6 +17,7 @@ export function WorkspaceTrade({ overview }: { overview: ResearchContext }) {
   const [b, setB] = useState<string[]>([]);
   const emptyPlans = {a:{add:[] as string[],drop:[] as string[]}, b:{add:[] as string[],drop:[] as string[]}};
   const [plans, setPlans] = useState(emptyPlans);
+  const [dynasty,setDynasty]=useState<DynastyScenario>({goal:'balanced',picks:[]});
   const [busy, setBusy] = useState(false);
   const [adjustmentsOpen, setAdjustmentsOpen] = useState(false);
   const [result, setResult] = useState<TradeResult | null>(null);
@@ -28,7 +30,7 @@ export function WorkspaceTrade({ overview }: { overview: ResearchContext }) {
     setBusy(true); setResult(null); setError(null);
     try {
       const response = await fetch('/api/workspace/trade', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ league_id: overview.league_id, generated_at: overview.generated_at, side_a: a, side_b: b, ...plans }),
+        body: JSON.stringify({ league_id: overview.league_id, generated_at: overview.generated_at, side_a: a, side_b: b, ...plans,...dynasty }),
         signal: AbortSignal.timeout(10000) });
       const body = await response.json();
       if (generation.current !== requestedGeneration) return;
@@ -45,6 +47,7 @@ export function WorkspaceTrade({ overview }: { overview: ResearchContext }) {
     <p className="mt-2 text-xs text-slate-400">Refresh clears the previous result. Selections stay while this panel remains open; review ownership and locks again before evaluating. An expired or unavailable checkpoint hides this panel and may clear the draft.</p>
     <p className="my-3 text-sm text-slate-300">Choose what each team gives. Each package must belong to one of two distinct rosters. Up to six players per side. For uneven trades, explicitly balance each roster with add/drop plans below. Unrostered players are not guaranteed claimable; no waiver timing or platform eligibility is inferred.</p>
     <div className="grid gap-4 md:grid-cols-2">{[{label:'A', ids:a, other:b, set:setA}, {label:'B', ids:b, other:a, set:setB}].map(side => <WorkspaceTradePicker key={side.label} label={side.label} ids={side.ids} other={side.other} players={players} busy={busy || refreshing} onChange={ids=>{side.set(ids);setPlans(emptyPlans);setResult(null);setError(null);}} />)}</div>
+    <WorkspaceDynastyControls value={dynasty} onChange={value=>{setDynasty(value);setResult(null);setError(null);}} disabled={busy} season={new Date(overview.generated_at ?? Date.now()).getFullYear()}/>
     <details onToggle={e=>setAdjustmentsOpen(e.currentTarget.open)} className="mt-4"><summary className="min-h-11 cursor-pointer text-emerald-200">Uneven-trade add/drop plans</summary>
       <p className="mb-3 text-xs text-slate-400">Changing either trade package clears both plans. Only unlocked adjustment players with known ownership are listed. Empty options may mean no eligible players in this checkpoint.</p>
       {adjustmentsOpen && <div className="grid gap-4 md:grid-cols-2">{(['a','b'] as const).map(side => {
@@ -64,6 +67,8 @@ export function WorkspaceTrade({ overview }: { overview: ResearchContext }) {
     {error && <p role="alert" className="mt-3 text-amber-200">{error}</p>}
     {result && <SnapshotWindow expiresAt={result.expires_at}><div role="status" className="mt-6 space-y-2 text-sm">
       {result.outlook && <WorkspaceTradeOutlook outlook={result.outlook} a={a} b={b} players={players} />}
+      {result.dynasty && <section className="rounded-xl border border-slate-800 p-4"><h4 className="font-semibold">Dynasty package scenario</h4><p className="mt-2">{result.dynasty.goal_guidance}</p><p className="mt-2">A gives {result.dynasty.packages.a?.scenario_package_index?.toLocaleString() ?? 'Unpriced'} · B gives {result.dynasty.packages.b?.scenario_package_index?.toLocaleString() ?? 'Unpriced'} in market-index units.</p><p className="mt-2 text-xs text-slate-400">{result.dynasty.note}</p></section>}
+      {result.market_trends && <details className="rounded-xl border border-slate-800 p-4"><summary>Market value changes · {result.market_trends.status.replaceAll('_',' ')}</summary><ul className="mt-2">{result.market_trends.players.map(p=><li key={p.player_id}>{players.find(row=>row.player_id===p.player_id)?.name ?? p.player_id}: {p.change == null ? 'Prior observation unavailable' : `${p.change>0?'+':''}${p.change.toFixed(0)} index points`}</li>)}</ul></details>}
       <h4 className="pt-4 font-semibold">History-based check <span className="text-xs font-normal text-slate-500">· {result.status.replaceAll('_',' ')}</span></h4>
       {result.blockers.map(reason => <p key={reason} className="text-amber-200">{tradeBlockerText(reason)}</p>)}
       {[result.side_a,result.side_b].map((side,i) => side && <p key={`size-${i}`}>{side.team} roster size: {side.roster_size_before ?? 'unknown'} → {side.roster_size_after ?? 'unknown'}</p>)}

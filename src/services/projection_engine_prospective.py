@@ -116,7 +116,7 @@ async def capture(db, *, now: datetime | None = None) -> dict:
     # depth fields and is at most two days old; otherwise not captured.
     catalog, synced_at = await latest_sleeper_catalog(db)
     has_depth = any(isinstance(i, dict) and "depth_chart_order" in i for i in catalog.values())
-    if not has_depth or synced_at is None or now - synced_at > timedelta(days=2):
+    if not has_depth or synced_at is None or not timedelta(0) <= now - synced_at <= timedelta(days=2):
         out["depth"] = {"status": "no_current_depth_catalog", "captured": 0}
         return out
     from src.services import projection_depth
@@ -143,18 +143,20 @@ def week_bootstrap_ci(diffs_by_week: dict[int, list[float]], draws: int = 4000, 
     weeks = list(diffs_by_week)
     means = []
     for _ in range(draws):
-        sample = np.concatenate([diffs_by_week[w] for w in rng.choice(weeks, size=len(weeks))])
+        sample = np.concatenate([diffs_by_week[weeks[i]] for i in rng.choice(len(weeks), size=len(weeks))])
         means.append(sample.mean())
     return [float(np.quantile(means, 0.025)), float(np.quantile(means, 0.975))]
 
 
 def summarize(rows: list[dict]) -> dict:
     if not rows:
-        return {"n": 0, "weeks": [], "ci": None}
+        return {"n": 0, "weeks": [], "independent_weeks": 0, "season_weeks": [], "ci": None}
     diffs: dict[int, list[float]] = {}
     for r in rows:
-        diffs.setdefault(r["week"], []).append(r["engine_error"] - r["sleeper_error"])
-    return {"n": len(rows), "weeks": sorted(diffs),
+        diffs.setdefault((r.get("season"), r["week"]), []).append(r["engine_error"] - r["sleeper_error"])
+    return {"n": len(rows), "weeks": sorted({r["week"] for r in rows}),
+            "independent_weeks": len(diffs),
+            "season_weeks": [{"season": s, "week": w} for s, w in sorted(diffs, key=str)],
             "engine_mae": round(float(np.mean([r["engine_error"] for r in rows])), 3),
             "sleeper_mae": round(float(np.mean([r["sleeper_error"] for r in rows])), 3),
             "engine_bias": round(float(np.mean([r["engine"] - r["actual"] for r in rows])), 3),
@@ -169,14 +171,21 @@ POOL = {"QB": 12, "RB": 24, "WR": 30, "TE": 12}
 def starter_pool(rows: list[dict]) -> list[dict]:
     groups: dict[tuple, list[dict]] = {}
     for r in rows:
-        groups.setdefault((r["league_id"], r["week"], r["position"]), []).append(r)
+        groups.setdefault((r["league_id"], r.get("season"), r["week"], r["position"]), []).append(r)
     selected = []
-    for (_, _, position), members in groups.items():
+    for (_, _, _, position), members in groups.items():
         n = POOL.get(position, 0)
         keep = {id(r) for r in sorted(members, key=lambda r: -r["sleeper"])[:n]}
-        keep |= {id(r) for r in sorted(members, key=lambda r: -r["actual"])[:n]}
         selected.extend(r for r in members if id(r) in keep)
     return selected
+
+
+def evidence_breakdown(rows):
+    return {"by_position": {p: summarize([r for r in rows if r['position'] == p]) for p in POOL},
+            "by_week": [{"season": s, "week": w,
+                         **summarize([r for r in rows if r.get('season') == s and r['week'] == w]),
+                         "positions": {p: summarize([r for r in rows if r.get('season') == s and r['week'] == w and r['position'] == p]) for p in POOL}}
+                        for s, w in sorted({(r.get('season'), r['week']) for r in rows}, key=str)]}
 
 
 def promotion_check(rows: list[dict], min_weeks: int = MIN_WEEKS) -> dict:
@@ -184,8 +193,8 @@ def promotion_check(rows: list[dict], min_weeks: int = MIN_WEEKS) -> dict:
     overall = summarize(pool)
     positions = {p: summarize([r for r in pool if r["position"] == p]) for p in POOL}
     blockers = []
-    if len(overall["weeks"]) < min_weeks:
-        blockers.append(f"needs_{min_weeks}_graded_weeks_has_{len(overall['weeks'])}")
+    if overall["independent_weeks"] < min_weeks:
+        blockers.append(f"needs_{min_weeks}_graded_weeks_has_{overall['independent_weeks']}")
     if overall["ci"] is None or overall["ci"][1] >= 0:
         blockers.append("pool_improvement_not_established")
     worse = [p for p, s in positions.items() if s["ci"] and s["ci"][0] > 0]
@@ -236,7 +245,7 @@ async def report(db, variant: str = "v1") -> dict:
         weights = {CORE[k]: w for k, w in offensive_weights(league.scoring_settings).items() if k in CORE}
         points = score(frozen["stats"], weights)
         count("graded")
-        rows.append({"league_id": r["league_id"], "week": r["week"], "position": r["position"],
+        rows.append({"league_id": r["league_id"], "season": game.season, "week": r["week"], "position": r["position"],
                      "game_id": r["game_id"], "player_id": str(player.id),
                      "actual": result["actual"], "sleeper": r["prediction"]["points"],
                      "engine": round(points, 2), "sleeper_error": result["absolute_error"],
@@ -252,8 +261,11 @@ async def report(db, variant: str = "v1") -> dict:
     fitted_week = max(model.get("fit_data", {}).get("paired_weeks", [0]) or [0])
     out_blend = {"weights": weights, "fitted_at": fitted,
                  "prospective_weeks_after": fitted_week,
-                 "all_paired": summarize([r for r in blended if r["week"] > fitted_week]),
-                 "promotion": promotion_check([r for r in blended if r["week"] > fitted_week])}
+                 "all_paired": summarize(blended),
+                 "evidence_type": "retrospective_reconstructed_current_weights",
+                 "promotion": {"eligible_for_owner_review": False,
+                               "blockers": ["blend_weights_not_frozen_with_forecasts"],
+                               "serving_promoted": False}}
     sources = {}
     if variant == "v1":
         # Second source and consensus (FantasyPros method): frozen pregame
@@ -277,6 +289,9 @@ async def report(db, variant: str = "v1") -> dict:
            "candidate_blend": out_blend,
            "recipe": RECIPE if variant == "v1" else RECIPE + "_depth", "version": current, "engine_forecasts": len(engine), "statuses": statuses,
            "all_paired": summarize(rows), "promotion": promotion_check(rows, VARIANT_MIN_WEEKS[variant]),
+           **evidence_breakdown(rows),
+           "evidence_type": "immutable_pregame_forecasts_current_version",
+           "starter_pool_selection": "frozen_provider_projection_rank",
            "status": "prospective_research", "serving_promoted": False}
     publish(root / reports_dir / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}.json", out)
     return out

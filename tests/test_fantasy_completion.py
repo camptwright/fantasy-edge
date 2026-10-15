@@ -36,6 +36,12 @@ def test_locked_starter_cannot_move_even_for_higher_points():
     assert result['lineup'][0]['locked']
 
 
+def test_negligible_waiver_gain_is_suppressed_in_legacy_model_too():
+    mine=[p('starter','WR',10),p('bench','WR',5)]
+    assert waivers(mine,[p('add','WR',10.1)],['WR'],['starter'])['moves']==[]
+    assert waivers(mine,[p('add','WR',11)],['WR'],['starter'])['moves'][0]['lineup_gain']==1
+
+
 def test_unbound_starter_and_duplicate_lineups_fail_closed():
     assert lineup([p('a','WR',10)],['QB'],['a'])['status']=='withheld'
     assert lineup([p('a','WR',10)],['WR','WR'],['a','a'])['status']=='withheld'

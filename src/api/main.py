@@ -20,6 +20,7 @@ from src.api.routers.sportsbook import router as sportsbook_router
 from src.api.routers.nfl_predictor import router as nfl_predictor_router
 from src.api.routers.ledger import router as ledger_router
 from src.api.routers.workspace import router as workspace_router
+from src.api.routers.personal_fantasy import router as personal_fantasy_router
 import src.api.routers.ledger_imports  # noqa: F401 - registers receipt routes
 from src.data.news import fetch_rss_headlines
 from src.db.client import dispose_api_engine, get_api_engine
@@ -138,6 +139,14 @@ app.include_router(sportsbook_router, dependencies=[Depends(require_fantasy_toke
 app.include_router(nfl_predictor_router, dependencies=[Depends(require_fantasy_token)])
 app.include_router(ledger_router, dependencies=[Depends(require_fantasy_token)])
 app.include_router(workspace_router, dependencies=[Depends(require_fantasy_token)])
+app.include_router(personal_fantasy_router, dependencies=[Depends(require_fantasy_token)])
+
+
+@app.get('/api/v2/operations/release', dependencies=[Depends(require_fantasy_token)])
+async def release_manifest_status():
+    from asyncio import to_thread
+    from src.services.release_manifest import status
+    return await to_thread(status)
 
 
 @app.get("/health", tags=["operations"])

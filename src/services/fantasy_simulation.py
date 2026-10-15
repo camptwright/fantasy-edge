@@ -2,6 +2,7 @@
 import hashlib
 import numpy as np
 from src.services.roster_stat_model import finite
+from src.services.availability_status import normalize_status
 
 
 def assumed_scale(p):
@@ -19,7 +20,7 @@ def eligibility_reasons(p):
     if p.get('locked',True): reasons.append('started_or_unbound_game')
     if p.get('weekly_evidence',{}).get('status')!='pregame_provider_projection': reasons.append('missing_fresh_projection')
     if not finite(p.get('weekly_points')): reasons.append('invalid_projection')
-    if str(p.get('injury_status') or '').strip().upper() not in ('','ACTIVE','HEALTHY','NORMAL'):
+    if normalize_status(p.get('injury_status')) not in (None, 'ACTIVE'):
         reasons.append('availability_review_required')
     samples=p.get('score_samples',[])
     if (len(samples)<8 or not all(finite(x) for x in samples)) and assumed_scale(p) is None:

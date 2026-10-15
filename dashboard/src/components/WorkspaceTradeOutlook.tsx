@@ -41,7 +41,7 @@ function SideTiles({ side }: { side: TradeOutlookSide }) {
       <span className="sr-only">Week {w.week} {signed(w.gain)}</span>
     </li>)}</ol>
     <p className="mt-1 flex justify-between text-[10px] text-slate-500"><span>W{side.weekly[0]?.week}</span><span>W{side.weekly.at(-1)?.week}</span></p>
-    {!!side.unmodeled_players.length && <p className="mt-2 text-[11px] text-amber-200/80">Counted as zero (no engine research): {side.unmodeled_players.join(", ")}.</p>}
+    {!!side.unmodeled_players.length && <p className="mt-2 text-[11px] text-amber-200/80">No finite engine forecast: {side.unmodeled_players.join(", ")}. Missing coverage withholds comparisons; only verified byes or confirmed absences can supply zero.</p>}
   </div>;
 }
 

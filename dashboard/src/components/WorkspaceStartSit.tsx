@@ -4,6 +4,7 @@ import { pct, playerProfileHref, pts, type Overview } from "@/lib/workspace";
 import type { PlayerDetail } from "@/lib/workspace-api.generated";
 import { DistributionCurve, Meter } from "./OutcomeCharts";
 import { playOdds } from "./WorkspaceAreTheyPlaying";
+import { WorkspaceLateSwap } from "./WorkspaceLateSwap";
 
 export const BOOM_BUST: Record<string, [number, number]> = { QB: [25, 12], RB: [20, 6], WR: [20, 6], TE: [15, 4], K: [12, 4], DEF: [12, 2] };
 const COLORS = ["#34d399", "#60a5fa", "#f59e0b", "#e879f9"];
@@ -20,6 +21,7 @@ export function WorkspaceStartSit({ overview }: { overview: Overview }) {
   const best = overview.outcomes;
   const top = Math.max(1, ...chosen.map(p => ranges[p.player_id]?.mean ?? p.points ?? 0));
   return <div className="space-y-6">
+    <WorkspaceLateSwap overview={overview} />
     <section aria-label="Lineup win probability" className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
       <h2 className="font-semibold">Max-win lineup <span className="ml-1 rounded bg-sky-500/15 px-2 py-0.5 align-middle text-[11px] font-medium uppercase tracking-wider text-sky-300">Simulation research</span></h2>
       {best.status !== "estimated_research" ? <p role="status" className="mt-2 text-sm text-slate-400">Withheld: {best.reason.replaceAll("_", " ")}{best.blockers.length ? ` — ${best.blockers.slice(0, 3).join("; ")}${best.blockers.length > 3 ? "…" : ""}` : ""}. No win probability is shown rather than a guess.</p> : <>
@@ -57,7 +59,7 @@ export function WorkspaceStartSit({ overview }: { overview: Overview }) {
           return <div key={p.player_id} className={left ? "text-right" : ""}>
             <dt className="font-medium" style={{ color: COLORS[i] }}><a href={playerProfileHref(overview.league_id, p.player_id)} className="hover:underline">{p.name}</a></dt>
             <dd className="mt-1 text-xs text-slate-400">Range {pts(r?.p10)}–{pts(r?.p90)} · consensus {pts(p.consensus_week_points)} · engine {pts(p.engine_week_points)} · {r?.basis?.replaceAll("_", " ") ?? "not simulated"}</dd>
-            {p.play_probability != null && <dd className="mt-1 text-xs text-amber-200">{p.injury_status}: {playOdds(p)} · risk-adjusted {pts(((r?.mean ?? p.points) ?? 0) * p.play_probability)}</dd>}
+            {p.play_probability != null && <dd className="mt-1 text-xs text-amber-200">{p.injury_status}: {playOdds(p)} · absence-only value {pts((r?.mean ?? p.points) != null ? (r?.mean ?? p.points)! * p.play_probability : null)}</dd>}
             <dd className={`mt-1 flex items-center gap-2 text-xs text-slate-400 ${left ? "justify-end" : ""}`}>Boom <Meter probability={r?.boom_probability} tone="up" label="Boom" /> Bust <Meter probability={r?.bust_probability} tone="down" label="Bust" /></dd>
           </div>;
         })}</dl>

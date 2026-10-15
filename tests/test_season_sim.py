@@ -18,6 +18,40 @@ def test_standings_count_wins_losses_ties_and_points():
     assert (t[2]["ties"], t[4]["ties"], t[4]["losses"]) == (1, 1, 1)
 
 
+def test_orphan_missing_or_duplicate_scores_do_not_change_standings():
+    rows=results()
+    expected=ss.standings(rows)
+    rows += [{'week':3,'roster_id':1,'matchup_id':'orphan','points':900},
+             {'week':3,'roster_id':2,'matchup_id':'missing','points':None},
+             {'week':3,'roster_id':3,'matchup_id':'missing','points':120}]
+    assert ss.standings(rows)==expected
+    assert ss.standings(results()+results())=={}
+
+
+@pytest.mark.asyncio
+async def test_partial_completed_history_withholds_playoff_odds_without_zero_score():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from src.api.routers import workspace
+    league=SimpleNamespace(settings={'playoff_teams':2},raw={})
+    snapshots=[]
+    for w in (1,2):
+        rows=[{'roster_id':r['roster_id'],'matchup_id':r['matchup_id'],'points':r['points']}
+              for r in results() if r['week']==w]
+        if w==2:next(r for r in rows if r['roster_id']==3)['points']=None
+        snapshots.append(SimpleNamespace(kind='matchups',week=w,payload=rows))
+    snapshots.append(SimpleNamespace(kind='schedule',week=4,payload=[
+        {'roster_id':1,'matchup_id':'a'},{'roster_id':2,'matchup_id':'a'}]))
+    db=SimpleNamespace(get=AsyncMock(return_value=league),
+        scalars=AsyncMock(return_value=SimpleNamespace(all=lambda:snapshots)))
+    data={'week':3,'players':[],'roster_positions':['QB'],
+          'rosters':[{'roster_id':i,'player_ids':[]} for i in range(1,5)]}
+    report=await workspace.compute_standings('L',db,data)
+    assert report.status=='partial_completed_history' and report.simulations==0
+    assert all(r.playoff_odds is None for r in report.rows)
+    assert next(r for r in report.rows if r.roster_id=='1').points_for==120
+
+
 def test_simulation_favours_the_strong_unbeaten_team_and_is_deterministic():
     t = ss.standings(results())
     remaining = [(3, 1, 4), (3, 2, 3), (4, 1, 2), (4, 3, 4)]
@@ -58,7 +92,7 @@ async def test_standings_endpoint_uses_snapshots_and_schedule(db, monkeypatch):
         return {"week": 3, "players": [], "roster_positions": ["QB"],
                 "rosters": [{"roster_id": i, "name": f"T{i}", "is_mine": i == 1, "player_ids": []} for i in (1, 2, 3, 4)]}
     monkeypatch.setattr(workspace, "read", fake_read)
-    view = await workspace.league_standings("L", Response(), db)
+    view = await workspace.compute_standings("L", db, await fake_read(db,'L'))
     assert view.status == "research" and view.remaining_games == 4 and view.playoff_teams == 2
     assert [r.name for r in view.rows][:1] == ["T1"] and view.rows[0].is_mine and view.rows[0].playoff_odds > 0.9
 

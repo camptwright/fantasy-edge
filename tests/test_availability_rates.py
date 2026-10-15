@@ -30,7 +30,7 @@ def test_probability_shrinks_each_level_toward_the_one_above():
 
 def test_parse_keeps_each_players_latest_week():
     rows = ar.parse(CSV)
-    assert rows["00-1"] == {"week": 6, "team": "DET", "report_status": None, "practice": "limited", "injury": "Ankle"}
+    assert rows["00-1"] == {"season": 2026, "week": 6, "team": "DET", "report_status": None, "practice": "limited", "injury": "Ankle", "reported_at": None}
     assert rows["00-2"]["practice"] is None
 
 
@@ -54,3 +54,25 @@ def test_shipped_artifact_matches_the_research_evidence():
     q_full = ar.probability("Questionable", "full", "WR")["probability"]
     q_dnp = ar.probability("Questionable", "dnp", "WR")["probability"]
     assert 0.8 < q_full <= 1 and q_dnp < q_full and ar.probability("Doubtful", "dnp", "RB")["probability"] < 0.1
+
+
+def test_practice_requires_same_team_week_season_and_both_fresh_dates():
+    now = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
+    row = {'season': 2026, 'week': 6, 'team': 'LA', 'reported_at': '2026-10-16T17:00:00Z', 'practice': 'full'}
+    report = {'season': 2026, 'fetched_at': '2026-10-18T10:00:00Z'}
+    def status(r=row, p=report, **kw):
+        return ar.practice_evidence(r, p, season=2026, week=6, team=kw.get('team', 'LAR'), now=now)['status']
+    assert status() == 'matched_fresh_report'
+    assert status(team='DET') == 'team_mismatch'
+    assert status({**row, 'week': 5}) == 'season_or_week_mismatch'
+    assert status({**row, 'season': 2025}) == 'season_or_week_mismatch'
+    assert status({**row, 'reported_at': None}) == 'undated_report'
+    assert status({**row, 'reported_at': '2026-10-20'}) == 'stale_or_future_report'
+    assert status(p={**report, 'fetched_at': '2026-10-17T10:00:00Z'}) == 'stale_or_future_report'
+
+
+def test_parse_uses_latest_report_timestamp_within_a_week():
+    header = 'season,game_type,team,week,gsis_id,practice_status,date_modified\n'
+    rows = ar.parse(header + '2026,REG,DET,6,a,Full Participation in Practice,2026-10-16\n'
+                    + '2026,REG,DET,6,a,Did Not Participate In Practice,2026-10-15\n')
+    assert rows['a']['practice'] == 'full'

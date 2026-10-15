@@ -205,7 +205,7 @@ def engine_research(players,resolved,checkpoint,league,week,now):
         p['engine']={'status':'research_partial_scoring' if gaps else 'research',
             'generated_at':checkpoint['generated_at'],'version':checkpoint.get('engine_version'),
             'week_points':next((r['points'] for r in rows if r['week']==week),None),
-            'weeks':rows[:6],'ros_points':round(sum(r['points'] for r in rows),2) if rows else None,
+            'weeks':rows,'ros_points':round(sum(r['points'] for r in rows),2) if rows else None,
             'ros_games':len(rows),'ros_lined_games':sum(r['environment']=='market_line' for r in rows),
             'conditional_on_playing':True,'serving_promoted':False}
 
@@ -300,6 +300,7 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
             'opponent':team_names.get(opponent_id),'news_status':'not_wired_to_fantasy_view',
             'position':info.get('position'),'team':info.get('team'),'weekly_points':weekly(pid),
             'injury_status':info.get('injury_status'),'roster_ids':[r.roster_id for r in rosters if pid in set(map(str,r.players))],
+            'availability_observed_at':meta.synced_at.isoformat(),
             'history_through':max((r['time'].isoformat() for r in history[canonical.id].values()),default=None) if canonical else None,
             'current_season_games':sum(r['season']==int(league.season) for r in history[canonical.id].values()) if canonical else 0,
             'canonical_player_id':str(canonical.id) if canonical else None,
@@ -333,6 +334,8 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
             'hold_recommendation':False,'official_game_status_verified':False}
     from src.services.engine_research import latest as engine_latest
     engine_research(players,resolved,await engine_latest(db),league,week,now)
+    from src.services.engine_coverage import attach_coverage
+    attach_coverage(players,games,schedule_coverage,week,now)
     by_id={p['player_id']:p for p in players}
     from src.services.fantasy_score_history import distributions,scoring_hash
     official_rules=league.raw.get('scoringSettings') if league.platform=='espn' else None
@@ -381,7 +384,12 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
     from src.services.fantasy_specialist_totals import ros_research
     specialist_ros=ros_research(players,snapshots,league,catalog,week,now)
     for p in players:p['specialist_ros_research']=specialist_ros.get(p['player_id'])
+    protected={str(pid) for pid in (getattr(mine,'reserve',None) or [])+(getattr(mine,'taxi',None) or [])}
     mine_players=[by_id[str(pid)] for pid in mine.players]
+    planning_roster=[str(pid) for pid in mine.players if str(pid) not in protected]
+    from src.services.waiver_guidance import guidance as waiver_guidance
+    waiver_plans={str(h):waiver_guidance(players,planning_roster,owned,league.roster_positions,
+        start_week=week,horizon_weeks=h) for h in (2,3,4)}
     matchrows=matchup.payload if isinstance(matchup.payload,list) else []
     mymatch=next((r for r in matchrows if r.get('roster_id')==mine.roster_id),{})
     opponent=next((r for r in matchrows if mymatch.get('matchup_id') is not None and r.get('matchup_id')==mymatch['matchup_id'] and r.get('roster_id')!=mine.roster_id),None)
@@ -410,7 +418,7 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
     lineup_decision=locked_lineup(mine_players,league.roster_positions,starters) if decisions_fresh else {
         'status':'stale_inputs','lineup':[],'total':None,'unlocked_points':None}
     from src.services.fantasy_prospective import version as prospective_version
-    return {'status':'candidate','league_id':league_id,'league_name':league.name,'week':week,'generated_at':now.isoformat(),
+    return {'status':'candidate','league_id':league_id,'league_name':league.name,'season':int(league.season),'week':week,'generated_at':now.isoformat(),
         'input_valid_until':None if stale else deadline.isoformat(),
         'catalog_page':{'offset':catalog_offset,'limit':catalog_limit,
             'total_additional_players':len(catalog_ids-owned-set(free)),
@@ -429,7 +437,7 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
         'rosters':[{'roster_id':r.roster_id,'name':r.team_name or str(r.roster_id),'is_mine':r is mine,
                     'player_ids':list(map(str,r.players)),
                     'waiver_position':(r.settings or {}).get('waiver_position')} for r in rosters],
-        'waiver_guidance':waiver_guidance(players,list(map(str,mine.players)),owned,league.roster_positions),
+        'waiver_guidance':waiver_plans['2'], 'waiver_guidance_by_horizon':waiver_plans,
         'waiver_settings':{'platform':league.platform,'waiver_type':(league.settings or {}).get('waiver_type'),
                            'waiver_clear_days':(league.settings or {}).get('waiver_clear_days')},
         'input_timestamps':{kind:row.synced_at.isoformat() for kind,row in latest.items() if kind in ('player_metadata','projections','matchups')},

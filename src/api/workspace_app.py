@@ -79,3 +79,11 @@ async def performance(response: Response):
     response.headers['Cache-Control'] = 'no-store'
     return {**snapshot(), 'service': 'workspace-preview',
             'limitations': 'Process-local backend timings, not browser navigation or worker/database health.'}
+
+
+@app.get('/api/v2/operations/release',dependencies=[Depends(require_fantasy_token)])
+async def release(response:Response):
+    from asyncio import to_thread
+    from src.services.release_manifest import status
+    response.headers['Cache-Control']='no-store'
+    return await to_thread(status)

@@ -149,7 +149,7 @@ def pair_rows(sleeper: dict, challengers: dict[str, dict], actual: dict, leagues
             scored = {name: points(v["stats"], internal if v.get("keys") == "internal" else weights) for name, v in others.items()}
             scored["consensus"] = (s + sum(scored.values())) / (1 + len(scored))
             for name, value in scored.items():
-                out[name].append({"league_id": league.league_id, "week": base["week"], "position": base["position"],
+                out[name].append({"league_id": league.league_id, "season": base.get("season"), "week": base["week"], "position": base["position"],
                                   "game_id": key[0], "player_id": key[1], "actual": round(truth, 2),
                                   "sleeper": round(s, 2), "engine": round(value, 2),
                                   "sleeper_error": abs(s - truth), "engine_error": abs(value - truth)})
@@ -159,7 +159,7 @@ def pair_rows(sleeper: dict, challengers: dict[str, dict], actual: dict, leagues
 async def report(db) -> dict:
     from src.services import espn_projections
     from src.services.projection_engine_prospective import (MIN_WEEKS, archive_root as engine_root,
-                                                            promotion_check, summarize, version)
+                                                            promotion_check, summarize, version, evidence_breakdown)
     sleeper = frozen()
     current = version()
     engine = {}
@@ -203,7 +203,8 @@ async def report(db) -> dict:
                 "with_engine": sum(k in engine for k in keys), "with_espn": sum(k in espn for k in keys)}
     out = {"generated_at": datetime.now(timezone.utc).isoformat(), "harness": "full_pool_box_score",
            "engine_version": current, "statuses": statuses,
-           "tracks": {name: {"all_paired": summarize(rows), "promotion": promotion_check(rows, MIN_WEEKS)}
+           "tracks": {name: {"all_paired": summarize(rows), "promotion": promotion_check(rows, MIN_WEEKS),
+                             **evidence_breakdown(rows), "evidence_type": "immutable_pregame_forecasts_current_version"}
                       for name, rows in tracks.items()},
            "status": "prospective_research", "serving_promoted": False}
     publish(archive_root() / "reports" / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}.json", out)

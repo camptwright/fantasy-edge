@@ -61,7 +61,7 @@ def dependency_drift(root, installed):
 
 def remote_probe():
     probe = Path(__file__).read_text().rsplit("\nif __name__ == '__main__':", 1)[0]
-    return probe + "\nfrom importlib.metadata import distributions\nprint(json.dumps({'files':source_files(Path('/app')), 'packages':{d.metadata['Name']:d.version for d in distributions()}}))\n"
+    return probe + "\nfrom importlib.metadata import distributions\ntry:\n from src.services.release_manifest import status as release_status\n release=release_status(Path('/app'))\nexcept ImportError:\n release={'status':'missing_release_implementation'}\nprint(json.dumps({'files':source_files(Path('/app')), 'packages':{d.metadata['Name']:d.version for d in distributions()}, 'release':release}))\n"
 
 
 def targets(workspace):
@@ -89,14 +89,18 @@ def main():
             actual = json.loads(result.stdout)
             files = differences(expected, actual['files'])
             packages = dependency_drift(root, actual['packages'])
+            seal = actual.get('release', {'status': 'missing_seal'})
             report['services'][service] = {
-                'status': 'drift' if any(files.values()) or packages else 'matched',
-                'source_files_checked': len(expected), 'files': files, 'dependencies': packages}
+                'status': 'drift' if any(files.values()) or packages or seal.get('status') != 'matched' else 'matched',
+                'source_files_checked': len(expected), 'files': files, 'dependencies': packages,
+                'release': seal}
         except (subprocess.SubprocessError, OSError, ValueError, KeyError):
             # Do not expose raw Docker/command output: it can contain secrets.
             report['services'][service] = {'status': 'unavailable_or_invalid_response'}
+    ids = {row.get('release', {}).get('release_id') for row in report['services'].values()}
+    report['single_release'] = len(ids) == 1 and None not in ids
     print(json.dumps(report, indent=2))
-    return int(any(row['status'] != 'matched' for row in report['services'].values()))
+    return int(not report['single_release'] or any(row['status'] != 'matched' for row in report['services'].values()))
 
 
 if __name__ == '__main__':

@@ -6,6 +6,7 @@ The retained historical candidate supplies production; this layer explains roste
 from collections import Counter
 from src.services.fantasy_decision_models import optimize, FLEX, RESERVE
 from src.services.roster_stat_model import finite
+from src.services.availability_status import normalize_status
 
 POSITIONS={'QB','RB','WR','TE'}
 MODEL='fantasy_roster_value_v1'
@@ -24,8 +25,8 @@ def compact_board(data):
 
 
 def availability_flag(p):
-    value=str(p.get('injury_status') or '').strip().upper()
-    return value not in ('','ACTIVE','HEALTHY','NORMAL') or bool(p.get('game_availability',{}).get('hold_recommendation'))
+    value = normalize_status(p.get('injury_status'))
+    return value not in (None, 'ACTIVE') or bool(p.get('game_availability',{}).get('hold_recommendation'))
 
 
 def ready(p):

@@ -6,6 +6,23 @@ export type AccuracyWeek = {
   accuracy: number;
 };
 
+export type AlternativeDrop = {
+  drop_id: string;
+  name: string | null;
+  lineup_gain: number;
+  weekly: Array<TradeWeek>;
+};
+
+export type AvailabilityReport = {
+  status: string;
+  source: string;
+  fetched_at: string | null;
+  reported_at: string | null;
+  season: number | null;
+  week: number | null;
+  team: string | null;
+};
+
 export type DistributionEvidence = {
   source: string;
   status: string;
@@ -14,6 +31,37 @@ export type DistributionEvidence = {
   reconciliation_mismatches: number | null;
   assumed_prior: boolean;
   scope: string;
+};
+
+export type DraftPickView = {
+  side: "a" | "b";
+  season: number;
+  round: number;
+  slot: number | null;
+  value: number | null;
+  source: string | null;
+  original_roster_id: string | null;
+  valuation_type: string;
+};
+
+export type DynastyPackage = {
+  player_ids: Array<string>;
+  picks: Array<DraftPickView>;
+  observed_player_index: number | null;
+  scenario_package_index: number | null;
+  unpriced_player_ids: Array<string>;
+  unpriced_picks: number;
+};
+
+export type DynastyPlan = {
+  status: string;
+  goal: string | null;
+  packages: Record<string, DynastyPackage>;
+  side_a_market_index_change: number | null;
+  market_captured_at: string | null;
+  goal_guidance: string | null;
+  pick_ownership_verified: false;
+  note: string | null;
 };
 
 export type EngineQualification = {
@@ -31,6 +79,11 @@ export type EngineWaiverRow = {
   week_gain: number | null;
   tier: "priority" | "consider" | "depth" | "stream";
   reasons: Array<string>;
+  weekly: Array<WaiverWeek>;
+  alternative_drops: Array<AlternativeDrop>;
+  needed_by_week: number | null;
+  target_game_kickoff: string | null;
+  claim_timing: string | null;
 };
 
 export type EngineWaivers = {
@@ -43,6 +96,9 @@ export type EngineWaivers = {
   teams: number | null;
   waiver_clear_days: number | null;
   protected: Array<PlayerDetail>;
+  horizon_weeks: number;
+  thresholds: WaiverThresholds;
+  coverage_blockers: Array<WaiverCoverageBlocker>;
   tier_rule: string;
 };
 
@@ -60,6 +116,26 @@ export type FantasyResearch = {
 export type GameLogWeek = {
   week: number;
   points: number;
+};
+
+export type LateSwapPlan = {
+  starter_id: string;
+  starter_name: string;
+  slot: string;
+  replacement_id: string;
+  replacement_name: string;
+  replacement_points: number;
+  projection_source: string;
+  check_by: string;
+  replacement_kickoff: string;
+  availability_trigger: string;
+  risk_adjusted_points: number | null;
+};
+
+export type LateSwapView = {
+  status: string;
+  plans: Array<LateSwapPlan>;
+  blockers: Array<SwapBlocker>;
 };
 
 export type LeagueSummary = {
@@ -88,6 +164,20 @@ export type LineupChanges = {
   bench: Array<Starter>;
 };
 
+export type MarketChange = {
+  player_id: string;
+  current: number | null;
+  prior: number | null;
+  change: number | null;
+};
+
+export type MarketTrends = {
+  status: string;
+  captured_at: string | null;
+  prior_captured_at: string | null;
+  players: Array<MarketChange>;
+};
+
 export type MatchupSide = {
   name: string;
   recorded_points: number | null;
@@ -104,6 +194,11 @@ export type MatchupView = {
   recorded_at: string | null;
   mine: MatchupSide | null;
   opponent: MatchupSide | null;
+};
+
+export type MissingCoveragePlayer = {
+  name: string;
+  position: string | null;
 };
 
 export type OutcomeView = {
@@ -156,6 +251,7 @@ export type Overview = {
   season_accuracy: Array<AccuracyWeek>;
   strength: StrengthView;
   research: FantasyResearch;
+  late_swap: LateSwapView;
 };
 
 export type PairedSummary = {
@@ -165,6 +261,7 @@ export type PairedSummary = {
   sleeper_mae: number | null;
   paired_difference: number | null;
   ci: Array<number> | null;
+  independent_weeks: number;
 };
 
 export type PlayerDetail = {
@@ -177,6 +274,11 @@ export type PlayerDetail = {
   source: string;
   locked: boolean;
   injury_status: string | null;
+  normalized_injury_status: string | null;
+  availability_evidence: AvailabilityReport | null;
+  practice_observed_at: string | null;
+  practice_evidence_status: string | null;
+  role_changes: RoleProfile | null;
   identity_status: string;
   canonical_team_id: string | null;
   game_availability_status: string;
@@ -253,6 +355,23 @@ export type QualificationTrack = {
   blockers: Array<string>;
   pool: PairedSummary;
   statuses: Record<string, number>;
+  evidence_type: string;
+  current_version: boolean;
+  by_position: Record<string, PairedSummary>;
+  by_week: Array<QualificationWeek>;
+};
+
+export type QualificationWeek = {
+  n: number;
+  weeks: Array<number>;
+  engine_mae: number | null;
+  sleeper_mae: number | null;
+  paired_difference: number | null;
+  ci: Array<number> | null;
+  independent_weeks: number;
+  season: number | null;
+  week: number;
+  positions: Record<string, PairedSummary>;
 };
 
 export type Recap = {
@@ -320,6 +439,20 @@ export type ResearchStatus = {
   serving_promoted: false;
 };
 
+export type RoleProfile = {
+  status: string;
+  trends: Record<string, RoleTrend>;
+  note: string | null;
+};
+
+export type RoleTrend = {
+  recent: number | null;
+  prior: number | null;
+  change: number | null;
+  recent_games: number;
+  prior_games: number;
+};
+
 export type SlotStrength = {
   slot: string;
   player_name: string | null;
@@ -382,6 +515,11 @@ export type StrengthView = {
   positions: Array<PositionStrength>;
   slots: Array<SlotStrength>;
   team_rankings: Array<TeamRanking>;
+};
+
+export type SwapBlocker = {
+  player_id: string;
+  reason: string;
 };
 
 export type TeamRanking = {
@@ -450,6 +588,8 @@ export type TradeResult = {
   side_a: TradeSide | null;
   side_b: TradeSide | null;
   outlook: TradeOutlook | null;
+  dynasty: DynastyPlan | null;
+  market_trends: MarketTrends | null;
   note: string;
 };
 
@@ -472,6 +612,12 @@ export type TrendingAdd = {
   adds: number;
 };
 
+export type WaiverCoverageBlocker = {
+  week: number | null;
+  missing_player_ids: Array<string>;
+  missing_players: Array<MissingCoveragePlayer>;
+};
+
 export type WaiverMove = {
   add: PlayerDetail;
   drop: PlayerDetail;
@@ -481,10 +627,21 @@ export type WaiverMove = {
   equivalent_drops: Array<PlayerDetail>;
 };
 
+export type WaiverThresholds = {
+  min_lineup_gain: number;
+  min_stream_gain: number;
+};
+
 export type WaiverView = {
   status: string;
   moves: Array<WaiverMove>;
   excluded_moves: number;
+};
+
+export type WaiverWeek = {
+  week: number;
+  gain: number;
+  add_status: string | null;
 };
 
 export type WinProbabilityCheck = {
@@ -497,3 +654,7 @@ export type WinProbabilityCheck = {
   log_loss: number | null;
   statuses: Record<string, number>;
 };
+
+export const PLAYER_DEFAULTS = {"player_id": "", "name": "", "reserve_slot": null, "position": null, "team": null, "points": null, "source": "unknown", "locked": true, "injury_status": null, "normalized_injury_status": null, "availability_evidence": null, "practice_observed_at": null, "practice_evidence_status": null, "role_changes": null, "identity_status": "unknown", "canonical_team_id": null, "game_availability_status": "not_collected", "game_availability_observed_at": null, "game_availability_hold": false, "availability_status": "unconfirmed_missing_designation", "distribution": {"source": "unknown", "status": "unknown", "observed_samples": 0, "reconciliation_samples": null, "reconciliation_mismatches": null, "assumed_prior": false, "scope": "historical_variability_not_ros_or_prospective_validation"}, "projection_observed_at": null, "history_through": null, "history_status": "unknown", "complete_scored_games": null, "missing_scoring_keys": [], "ros_status": "unknown", "ros_points": null, "known_schedule_subtotal": null, "known_remaining_games": null, "unknown_kickoffs": null, "through_week": null, "ownership": "unknown", "roster_names": [], "roster_id": null, "specialist_ros_research": null, "sos_ros_stars": null, "sos_next4_stars": null, "play_probability": null, "play_basis": null, "play_sample": null, "practice_status": null, "opponent": null, "week_game_status": null, "week_kickoff": null, "espn_week_points": null, "consensus_week_points": null, "consensus_sources": 0, "engine_status": "unknown", "engine_week_points": null, "engine_ros_points": null, "engine_ros_games": 0, "engine_ros_lined_games": 0, "engine_weeks": [], "engine_generated_at": null, "game_log": []};
+
+export const OVERVIEW_DEFAULTS = {"schema_version": "2", "league_id": "", "status": "updating", "message": "", "actionable": false, "generated_at": null, "expires_at": null, "week": null, "model_version": null, "recipe_version": null, "scoring_contract_hash": null, "lineup_status": null, "starters": [], "notes": [], "matchup": {"status": "unavailable", "reason": "No matchup snapshot is available.", "recorded_at": null, "mine": null, "opponent": null}, "lineup_changes": {"status": "withheld", "reason": "A complete, lock-preserving comparison is not available.", "start": [], "bench": []}, "roster_players": [], "comparison_players": [], "waivers": {"status": "unavailable", "moves": [], "excluded_moves": 0}, "engine_waivers": {"status": "unavailable", "scope": "engine_research_selected_horizon", "rows": [], "trending": [], "waiver_type": "unknown", "waiver_position": null, "teams": null, "waiver_clear_days": null, "protected": [], "horizon_weeks": 2, "thresholds": {"min_lineup_gain": 1.0, "min_stream_gain": 1.0}, "coverage_blockers": [], "tier_rule": "priority: adds >= 15 starting-lineup points over the selected horizon; consider: >= 5; depth: positive but smaller; stream: K/DEF weekly provider gain. Engine research thresholds, not validated value."}, "outcomes": {"status": "unavailable", "reason": "No outcome simulation in this snapshot.", "validated": false, "win_probability": null, "monte_carlo_standard_error": null, "mean": null, "opponent_mean": null, "p10": null, "p90": null, "opponent_p10": null, "opponent_p90": null, "best_win_probability": null, "best_expected_points": null, "best_changes": [], "known_final_starters": 0, "blockers": [], "player_ranges": {}, "blend_status": null, "validation_matchups": null, "validation_brier": null, "coin_flip_brier": null, "assumptions": []}, "season_accuracy": [], "strength": {"status": "unavailable", "scope": "engine_ros_research_best_starters_by_position_not_validated", "overall_rank": null, "teams": 0, "positions": [], "slots": [], "team_rankings": []}, "research": {"retention": {"status": "unavailable", "generated_at": null, "recipe": null, "requested_weeks": [], "new_captures": 0, "counts": [], "blockers": [], "serving_promoted": false}, "specialists": {"status": "unavailable", "generated_at": null, "recipe": null, "requested_weeks": [], "new_captures": 0, "counts": [], "blockers": [], "serving_promoted": false}}, "late_swap": {"status": "unavailable", "plans": [], "blockers": []}};

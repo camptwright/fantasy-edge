@@ -25,6 +25,7 @@ def test_missing_locked_injured_and_duplicate_fail_closed():
     assert evaluate([a,b],['a'],['a'],['QB'])['status']=='withheld'
     for key,value in [('locked',True),('injury_status','Questionable'),('score_samples',[1])]:
         assert evaluate([{**a,key:value},b],['a'],['b'],['QB'])['status']=='withheld'
+    assert evaluate([{**a, 'injury_status': 'INJURY_RESERVE'}, b], ['a'], ['b'], ['QB'])['status'] == 'withheld'
 
 
 def test_unknown_view_never_becomes_zero():

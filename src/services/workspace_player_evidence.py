@@ -1,5 +1,6 @@
 """Presentation only, outside the fantasy recipe glob; no forecast or promotion."""
 from math import isfinite
+from src.services.availability_status import normalize_status
 
 
 def bind_defense_identities(data, teams, espn_defenses=()):
@@ -64,9 +65,9 @@ def uncertainty_evidence(player):
 def availability_evidence(player):
     if player.get('position') in ('DEF', 'DST'):
         return 'team_unit_not_individual_injury_status'
-    designation = str(player.get('injury_status') or '').strip().upper()
+    designation = normalize_status(player.get('injury_status'))
     if not designation:
         return 'unconfirmed_missing_designation'
-    if designation in ('ACTIVE', 'HEALTHY', 'NORMAL'):
+    if designation == 'ACTIVE':
         return 'no_restriction_reported_not_game_clearance'
     return 'reported_restriction_requires_review'

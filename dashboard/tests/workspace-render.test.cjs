@@ -26,9 +26,23 @@ function loadComponent(path, overrides={}) {
   const target={exports:{}};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path,'utf8'),{
     compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2020},
-  }).outputText,{exports:target.exports,URLSearchParams,require:id=>overrides[id]??require(id)});
+  }).outputText,{exports:target.exports,URLSearchParams,require:id=> {
+    if (overrides[id]) return overrides[id];
+    if (id === '@/lib/availability') return loadComponent('src/lib/availability.ts');
+    if (id === './WorkspaceLateSwap') return loadComponent('src/components/WorkspaceLateSwap.tsx', overrides);
+    if (id === './WorkspaceDynastyControls') return loadComponent('src/components/WorkspaceDynastyControls.tsx', overrides);
+    if (id === './WorkspaceRoleChanges') return loadComponent('src/components/WorkspaceRoleChanges.tsx', overrides);
+    return require(id);
+  }});
   return target.exports;
 }
+test('availability holds and unfamiliar restrictions show review rather than green clearance',()=>{
+  const {verdict}=loadComponent('src/components/WorkspaceAreTheyPlaying.tsx',{'@/lib/workspace':loadComponent('src/lib/workspace.ts')});
+  const held=verdict({injury_status:'Q',game_availability_hold:true,week_game_status:'scheduled'});
+  assert.equal(held.label,'Review');assert.equal(held.tone,'warn');
+  const unknown=verdict({injury_status:'PROVIDER_NEW_RESTRICTION',week_game_status:'scheduled'});
+  assert.equal(unknown.label,'Review');assert.equal(unknown.tone,'warn');
+});
 test('research status exposes blockers without claiming promoted probabilities',()=>{
   const {WorkspaceResearchStatus}=loadComponent('src/components/WorkspaceResearchStatus.tsx');
   const item={status:'current',generated_at:'2026-10-10T00:00:00Z',requested_weeks:[5,6,7],new_captures:0,
@@ -70,7 +84,7 @@ test('closed trade adjustment plans do not construct their player lists',()=>{
     '@/components/WorkspaceTradeOutlook':{WorkspaceTradeOutlook:()=>React.createElement('div')},
   });
   const html=renderToStaticMarkup(React.createElement(WorkspaceTrade,{overview:{league_id:'a',generated_at:'now',comparison_players:[]}}));
-  assert.doesNotMatch(html,/<select/);
+  assert.doesNotMatch(html,/aria-label="(?:Add|Drop) Player/);
   assert.match(html,/Uneven-trade add\/drop plans/);
   assert.match(html,/disabled=""[^>]*>Evaluate saved roster impact/);
 });
@@ -155,16 +169,26 @@ test('waiver guidance fails closed and shows tiers, lineup gains and waiver prio
   const base={waiver_type:'rolling',waiver_position:6,teams:12,waiver_clear_days:2,tier_rule:'rule',trending:[]};
   const closed=renderToStaticMarkup(React.createElement(WorkspaceEngineWaivers,{overview:{league_id:'a',engine_waivers:{...base,status:'owner_roster_unresolved',rows:[]}}}));
   assert.match(closed,/No waiver guidance for this snapshot \(owner roster unresolved\)/);
-  const html=renderToStaticMarkup(React.createElement(WorkspaceEngineWaivers,{overview:{league_id:'a',engine_waivers:{...base,status:'research',rows:[
-    {add:enginePlayer('FA',{sos_ros_stars:4,sos_next4_stars:null}),compare:enginePlayer('Mine'),ros_gain:16,week:6,week_gain:-2,tier:'priority',reasons:['why']},
+  const html=renderToStaticMarkup(React.createElement(WorkspaceEngineWaivers,{overview:{league_id:'a',engine_waivers:{...base,status:'research',horizon_weeks:3,
+    thresholds:{min_lineup_gain:1,min_stream_gain:1},rows:[
+    {add:enginePlayer('FA',{sos_ros_stars:4,sos_next4_stars:null}),compare:enginePlayer('Mine'),ros_gain:16,week:6,week_gain:-2,tier:'priority',reasons:['why'],
+      weekly:[{week:6,gain:-2},{week:7,gain:18,add_status:'verified_bye'}],alternative_drops:[{drop_id:'other',name:'Other Drop',lineup_gain:12}],needed_by_week:7},
     {add:enginePlayer('K2',{position:'K',engine_ros_points:null}),compare:enginePlayer('K1'),ros_gain:null,week:null,week_gain:3.5,tier:'stream',reasons:['k']}]}}}));
   assert.match(html,/your priority 6 of 12/);
   assert.match(html,/Priority/); assert.match(html,/\+16\.0/); assert.match(html,/-2\.0/); assert.match(html,/Stream/);
   assert.match(html,/drop Mine/);
   assert.match(html,/Schedule ROS: 4 of 5 stars/); assert.match(html,/Next 4 —/);
+  assert.match(html,/3-week lineup gain/); assert.match(html,/horizon=4/);
+  assert.match(html,/Minimum improvement: 1\.0 lineup pts/); assert.match(html,/Other Drop/);
+  assert.match(html,/Useful by Week 7/); assert.match(html,/Compare other drops/);
   assert.doesNotMatch(html,/Trending adds/);
   const hot=renderToStaticMarkup(React.createElement(WorkspaceEngineWaivers,{overview:{league_id:'a',engine_waivers:{...base,status:'research',rows:[],trending:[{player:enginePlayer('Riser'),adds:5400}]}}}));
   assert.match(hot,/Trending adds on Sleeper/); assert.match(hot,/\+5,400/); assert.match(hot,/does not change the guidance/);
+  const partial=renderToStaticMarkup(React.createElement(WorkspaceEngineWaivers,{overview:{league_id:'a',engine_waivers:{...base,
+    status:'incomplete_coverage',coverage_blockers:[{week:7,missing_player_ids:['secret-id'],missing_players:[{name:'Missing WR',position:'WR'}]}],
+    rows:[{add:enginePlayer('Stream K',{position:'K'}),compare:enginePlayer('K1'),ros_gain:null,week:6,week_gain:2,tier:'stream',reasons:[]}]}}}));
+  assert.match(partial,/Add Stream K/); assert.match(partial,/Week 7: WR: Missing WR/);
+  assert.doesNotMatch(partial,/secret-id/);
 });
 test('start/sit withholds win probability with a reason and draws curves only from simulated ranges',()=>{
   const lib=loadComponent('src/lib/workspace.ts');
@@ -350,15 +374,26 @@ test('are they playing puts byes and outs first and never calls no designation a
   const {WorkspaceAreTheyPlaying,verdict}=loadComponent('src/components/WorkspaceAreTheyPlaying.tsx',{'@/lib/workspace':lib});
   const pl=(id,name,extra)=>({player_id:id,name,position:'WR',team:'DET',injury_status:null,locked:false,game_availability_hold:false,week_game_status:'scheduled',week_kickoff:'2026-10-18T17:00:00Z',opponent:'GB',...extra});
   const players=[pl('a','Healthy'),pl('b','Hockenson',{week_game_status:'no_game_this_week'}),pl('c','Flowers',{injury_status:'Questionable'}),pl('d','Hurt',{injury_status:'Out'})];
-  assert.equal(verdict(players[0]).label,'Playing'); assert.equal(verdict(players[1]).label,'Bye'); assert.equal(verdict(players[3]).label,'Out');
+  assert.equal(verdict(players[0]).label,'Scheduled'); assert.equal(verdict(players[1]).label,'Bye'); assert.equal(verdict(players[3]).label,'Out');
+  assert.equal(verdict(pl('ir','Reserve',{injury_status:'INJURY_RESERVE'})).label,'IR');
   const html=renderToStaticMarkup(React.createElement(WorkspaceAreTheyPlaying,{overview:{league_id:'L',roster_players:players,matchup:{mine:{starters:players.map((p,i)=>({slot:['WR','WR','FLEX','TE'][i],player_id:p.player_id}))}}}}));
-  assert.match(html,/2 starters not expected to play/);
+  assert.match(html,/2 starters need a replacement plan/);
   assert.ok(html.indexOf('Hockenson')<html.indexOf('Healthy') && html.indexOf('Hurt')<html.indexOf('Flowers'));
-  assert.match(html,/not a clearance/);
+  assert.match(html,/participation unconfirmed/);
   // A modelled designation shows the historical play rate and practice participation.
   const odds=verdict(pl('e','Limited',{injury_status:'Questionable',play_probability:0.78,practice_status:'limited'}));
   assert.equal(odds.label,'Q · 78%'); assert.match(odds.detail,/^Limited practice · regulars listed Questionable on the final report played 78%\. Check news/);
   assert.equal(verdict(players[2]).label,'Questionable');  // not modelled: no number invented
+});
+
+test('late swap renders roster contingency and dated check time without a transaction control',()=>{
+  const lib=loadComponent('src/lib/workspace.ts');
+  const {WorkspaceLateSwap}=loadComponent('src/components/WorkspaceLateSwap.tsx',{'@/lib/workspace':lib});
+  const html=renderToStaticMarkup(React.createElement(WorkspaceLateSwap,{overview:{league_id:'L',roster_players:[],late_swap:{
+    plans:[{starter_id:'a',starter_name:'Questionable Starter',slot:'WR',replacement_id:'b',replacement_name:'Later Backup',replacement_points:12,
+      check_by:'2026-10-18T17:00:00Z',replacement_kickoff:'2026-10-18T20:00:00Z',risk_adjusted_points:17.6}],blockers:[]}}}));
+  assert.match(html,/Later Backup/); assert.match(html,/conditional plan value/); assert.match(html,/one absence/);
+  assert.doesNotMatch(html,/<button|<form/);
 });
 
 test('league analyzer lists team scores and slot ranks',()=>{

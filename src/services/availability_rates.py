@@ -28,6 +28,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from src.models.governance import DerivedCheckpoint
 from src.services.forecast_evidence import digest
+from src.services.availability_status import normalize_status, normalize_team
 
 ARTIFACT = Path(__file__).resolve().parents[2] / "config" / "availability_rates.json"
 URL = "https://github.com/nflverse/nflverse-data/releases/download/injuries/injuries_{season}.csv"
@@ -50,7 +51,7 @@ def load() -> dict | None:
 def probability(status: str | None, practice: str | None, position: str | None, artifact: dict | None = None) -> dict | None:
     """{probability, n, basis} for a Questionable/Doubtful skill player; None when not designated or not modelled."""
     artifact = artifact or load()
-    designation = DESIGNATIONS.get(str(status or "").strip().upper())
+    designation = DESIGNATIONS.get(normalize_status(status))
     if artifact is None or designation is None or position not in ("QB", "RB", "WR", "TE"):
         return None
     tables, k = artifact["tables"], artifact["shrink"]
@@ -82,10 +83,14 @@ def parse(text: str) -> dict[str, dict]:
         gsis, week = r.get("gsis_id"), r.get("week")
         if not gsis or not str(week).isdigit() or r.get("game_type") not in (None, "", "REG"):
             continue
-        row = {"week": int(week), "team": r.get("team"), "report_status": r.get("report_status") or None,
+        season = r.get('season')
+        if not str(season).isdigit():
+            continue
+        row = {"season": int(season), "week": int(week), "team": r.get("team"), "report_status": r.get("report_status") or None,
                "practice": PRACTICE.get((r.get("practice_status") or "").strip()),
-               "injury": r.get("report_primary_injury") or r.get("practice_primary_injury") or None}
-        if gsis not in out or row["week"] >= out[gsis]["week"]:
+               "injury": r.get("report_primary_injury") or r.get("practice_primary_injury") or None,
+               "reported_at": r.get('date_modified') or r.get('report_date') or r.get('practice_date') or r.get('date') or None}
+        if gsis not in out or (row['season'], row["week"], row['reported_at'] or '') >= (out[gsis]['season'], out[gsis]["week"], out[gsis]['reported_at'] or ''):
             out[gsis] = row
     return out
 
@@ -126,20 +131,53 @@ async def attach(db, platform: str, data: dict | None, *, now: datetime | None =
     if not data or load() is None:
         return
     designated = [p for p in data.get("players", [])
-                  if DESIGNATIONS.get(str(p.get("injury_status") or "").strip().upper())]
+                  if DESIGNATIONS.get(normalize_status(p.get("injury_status")))]
     if not designated:
         return
     from src.services.player_identity import resolve_platform_players
     now = now or datetime.now(timezone.utc)
     season = now.year if now.month >= 3 else now.year - 1
-    report = (await latest(db, season) or {}).get("players", {})
+    report = await latest(db, season) or {}
     week = data.get("week")
     resolved = await resolve_platform_players(db, platform, sorted({str(p["player_id"]) for p in designated}))
     for p in designated:
         player = resolved.get(str(p["player_id"]))
-        row = report.get(player.gsis_id) if player is not None and player.gsis_id else None
-        # Practice participation only counts for this week's report.
-        practice = row["practice"] if row and (week is None or row["week"] == week) else None
+        row = report.get('players', {}).get(player.gsis_id) if player is not None and player.gsis_id else None
+        evidence = practice_evidence(row, report, season=data.get('season', season), week=week,
+                                     team=p.get('team'), now=now)
+        practice = row.get('practice') if evidence['status'] == 'matched_fresh_report' else None
         result = probability(p.get("injury_status"), practice, p.get("position"))
         if result:
-            p["_play"] = {**result, "practice": practice}
+            p["_play"] = {**result, "practice": practice,
+                'practice_evidence_status': evidence['status'], 'observed_at': evidence.get('reported_at'),
+                'evidence': evidence}
+
+
+def parsed_time(value):
+    try:
+        result = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        return result.replace(tzinfo=timezone.utc) if result.tzinfo is None else result
+    except (ValueError, TypeError):
+        return None
+
+
+def practice_evidence(row, report, *, season, week, team, now):
+    """Fetching an old file today cannot make an undated practice report current."""
+    evidence = {'status': 'not_collected', 'source': 'nflverse_injury_reports',
+                'fetched_at': report.get('fetched_at'), 'reported_at': (row or {}).get('reported_at')}
+    if not row:
+        return evidence
+    evidence.update({'season': row.get('season'), 'week': row.get('week'), 'team': row.get('team')})
+    if report.get('season') != season or row.get('season') != season or week is None or row.get('week') != week:
+        evidence['status'] = 'season_or_week_mismatch'
+    elif not normalize_team(team) or normalize_team(row.get('team')) != normalize_team(team):
+        evidence['status'] = 'team_mismatch'
+    else:
+        fetched, reported = parsed_time(report.get('fetched_at')), parsed_time(row.get('reported_at'))
+        if fetched is None or reported is None:
+            evidence['status'] = 'undated_report'
+        elif not timedelta(0) <= now-fetched <= timedelta(hours=6) or not timedelta(0) <= now-reported <= timedelta(days=4):
+            evidence['status'] = 'stale_or_future_report'
+        else:
+            evidence['status'] = 'matched_fresh_report'
+    return evidence

@@ -25,14 +25,10 @@ def test_waiver_move_dropping_an_ir_player_swaps_to_an_equal_drop_or_is_withheld
     assert all(e.player_id != "dart" for m in view.moves for e in m.equivalent_drops)
 
 
-def test_engine_waivers_resolve_without_protected_players(monkeypatch):
+def test_engine_waivers_filter_protected_players_without_get_recalculation(monkeypatch):
     import src.services.waiver_guidance as wg
-    seen = {}
-
-    def fake(players, mine, owned, positions):
-        seen["mine"] = mine
-        return {"status": "research", "rows": [{"add_id": "fa", "drop_id": "a", "lineup_gain": 20.0, "week": 7, "week_gain": 2.0,
-                                                "weeks_improved": 5, "weeks": 6}]}
+    def fake(*args, **kwargs):
+        raise AssertionError('A GET must not recalculate waiver guidance')
     monkeypatch.setattr(wg, "guidance", fake)
     add = player("fa", roster_ids=[])
     players = [add, player("dart"), player("a"), player("b"), player("s")]
@@ -41,8 +37,7 @@ def test_engine_waivers_resolve_without_protected_players(monkeypatch):
                                               "weeks_improved": 5, "weeks": 6}]}
     d = data(players=players, waiver_guidance=stored, _protected={"dart": "IR"})
     view = ws.engine_waiver_context(d, by_id)
-    assert "dart" not in seen["mine"]
-    assert [r.compare.player_id for r in view.rows] == ["a"]
+    assert view.rows == []
     assert [p.player_id for p in view.protected] == ["dart"]
 
 

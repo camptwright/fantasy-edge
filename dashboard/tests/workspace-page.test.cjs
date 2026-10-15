@@ -21,10 +21,11 @@ async function page(tool, status='snapshot_available', view='fantasy') {
   const fake = () => new Proxy({}, {get: (_, name) => typeof name === 'string' ? () => React.createElement('div',{'data-tool':name}) : undefined});
   const module=load('src/app/workspace/page.tsx',id => {
     if(id==='@/lib/workspace') return helpers;
+    if(id==='@/lib/workspace-view') return {hydrateOverview: row=>row};
     if(id==='next/link') return {default:({children,...props})=>React.createElement('a',{href:props.href},children)};
     if(id==='@/lib/fantasy-api') return {fantasyApi:async path=>{
       calls.push(path);
-      return path.endsWith('/overview') ? overview : {items:[{league_id:'a',name:'My league',platform:'sleeper',sport:'nfl'}]};
+      return path.includes('/view?') ? overview : {items:[{league_id:'a',name:'My league',platform:'sleeper',sport:'nfl'}]};
     }};
     if(id==='@/components/SnapshotWindow') return {SnapshotWindow:({children})=>children,SnapshotRetry:()=>React.createElement('p',{'data-retry':'auto'})};
     if(id.startsWith('@/components/')) return fake();
@@ -33,7 +34,7 @@ async function page(tool, status='snapshot_available', view='fantasy') {
   return {html:renderToStaticMarkup(await module.default({searchParams:Promise.resolve({tool,view,league:'a'})})),calls};
 }
 test('fantasy screens render only their requested tools with two bounded reads',async()=>{
-  const expected={overview:['SeasonTiles','WorkspaceMatchup','WorkspaceAreTheyPlaying','QuickActions','WorkspaceDailyBrief','PositionStrength','WorkspaceOutlook'],startsit:['WorkspaceStartSit'],team:['WorkspaceAreTheyPlaying','WorkspaceRoster','WorkspaceLineupReview'],waivers:['WorkspaceResearchStatus','WorkspaceEngineWaivers','WorkspacePositionLadder','WorkspaceRoster'],players:['WorkspaceResearchStatus','WorkspaceComparison'],trade:['WorkspaceTradeIdeas','WorkspaceTrade'],league:['WorkspaceStandings','WorkspaceLeagueAnalyzer','PositionStrength'],recap:['WorkspaceRecap'],player:['WorkspacePlayerProfile']};
+  const expected={overview:['SeasonTiles','WorkspaceMatchup','WorkspaceAreTheyPlaying','QuickActions','WorkspaceDailyBrief','PositionStrength','WorkspaceOutlook'],startsit:['WorkspaceStartSit'],team:['WorkspaceAreTheyPlaying','WorkspaceRoster','WorkspaceLineupReview'],waivers:['WorkspaceEngineWaivers','WorkspacePositionLadder','WorkspaceRoster','WorkspaceResearchStatus'],players:['WorkspaceComparison','WorkspaceResearchStatus'],trade:['WorkspaceTradeIdeas','WorkspaceTrade'],league:['WorkspaceStandings','WorkspaceLeagueAnalyzer','PositionStrength'],recap:['WorkspaceRecap'],player:['WorkspacePlayerProfile'],journal:['WorkspaceDecisionHistory']};
   for(const [tool,names] of Object.entries(expected)) {
     const {html,calls}=await page(tool);
     // Trade adds one bounded read for the win-win trade finder.

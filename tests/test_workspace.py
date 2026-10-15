@@ -435,6 +435,19 @@ def test_waiver_guidance_fails_closed():
     assert workspace.overview('league', data).engine_waivers.status == 'owner_roster_unresolved'
 
 
+def test_waiver_response_filters_protected_drop_without_running_optimizer(monkeypatch):
+    data=engine_data()
+    data['_protected']={'mine_wr':'IR'}
+    data['waiver_guidance']={'status':'research','rows':[
+        {'add_id':'fa_wr','drop_id':'mine_wr','lineup_gain':10,'week_gain':3},
+        {'add_id':'fa_k','drop_id':'mine_k','lineup_gain':None,'week_gain':2,'stream':True}]}
+    def forbidden(*_args,**_kwargs):raise AssertionError('GET invoked the waiver solver')
+    monkeypatch.setattr(workspace,'resolve_without',forbidden)
+    result=workspace.engine_waiver_context(data,{p['player_id']:p for p in data['players']})
+    assert [r.add.player_id for r in result.rows]==['fa_k']
+    assert [p.player_id for p in result.protected]==['mine_wr']
+
+
 def test_outcome_view_exposes_research_and_names_changes_without_validation_claims():
     data = engine_data()
     data['outcome_simulation'] = {'status': 'estimated_research', 'reason': 'r', 'known_final_starters': 2,

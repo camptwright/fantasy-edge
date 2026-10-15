@@ -17,6 +17,8 @@ def recipe():
     files=list(root.glob('fantasy_*.py'))+[root/'roster_stat_model.py',root/'player_identity.py',
                                           root/'result_eligibility.py',root/'lab_availability.py',
                                           root/'injury_evidence.py']
+    files += [root/name for name in ('engine_coverage.py','waiver_guidance.py','trade_finder.py',
+                                     'availability_status.py','engine_research.py') if (root/name).exists()]
     codes={p.name:semantic_hash(p.read_text()) for p in files}
     mapping=root.parents[1]/'config/nfl_player_lab_ids.json'
     codes['identity_mapping']=mapping.read_text() if mapping.exists() else None

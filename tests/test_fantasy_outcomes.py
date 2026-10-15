@@ -94,3 +94,15 @@ def test_bye_and_out_starters_score_zero_but_stay_replaceable():
     assert "bench" in out["max_win_probability_lineup"]["player_ids"]
     by_id["r1"] = player("r1", "RB", "C", "D", injury="Out")
     assert fo.research(by_id, ["q1", "w1", "r1"], ["q2", "w2", "r2"], [], slots, {}, NOW, draws=2000)["player_ranges"]["r1"]["basis"] == "designated_out"
+
+
+def test_provider_reserve_aliases_and_conflicting_event_holds():
+    p = player('r', 'RB', 'C', 'D', injury='INJURY_RESERVE')
+    entry, reason = fo._entry(p, {}, NOW)
+    assert reason is None and entry['basis'] == 'designated_out' and entry['final_points'] == 0
+    entry, reason = fo._entry({**p, 'game_availability': {'hold_recommendation': True}}, {}, NOW)
+    assert entry is None and reason == 'event_availability_hold'
+    # Final platform scores are actual evidence, even if stale platform labels remain IR.
+    final = {**p, 'week_game_status': 'final', 'game_availability': {'hold_recommendation': True}}
+    entry, reason = fo._entry(final, {'r': 12}, NOW)
+    assert reason is None and entry['final_points'] == 12

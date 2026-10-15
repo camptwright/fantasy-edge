@@ -33,6 +33,7 @@ from pathlib import Path
 
 import numpy as np
 from scipy.stats import norm
+from src.services.availability_status import ABSENT, normalize_status
 
 MODEL_PATH = Path(__file__).resolve().parents[2] / "config" / "fantasy_outcome_model.json"
 OFFENSE = ("QB", "RB", "WR", "TE")
@@ -172,7 +173,7 @@ def best_lineup(fixed: dict[int, str], open_slots: list[tuple[int, str]], pool: 
             "candidates_evaluated": len(candidates), "search_truncated": truncated}
 
 
-UNAVAILABLE = {"OUT", "IR", "PUP", "SUS", "SUSPENDED", "NA"}
+UNAVAILABLE = ABSENT
 
 
 def _entry(p: dict, recorded: dict, now) -> tuple[dict | None, str | None]:
@@ -193,7 +194,9 @@ def _entry(p: dict, recorded: dict, now) -> tuple[dict | None, str | None]:
         return None, "unknown_game_binding"
     if datetime.fromisoformat(kickoff) <= now:
         return None, "game_in_progress"
-    if str(p.get("injury_status") or "").strip().upper() in UNAVAILABLE:
+    if p.get('game_availability', {}).get('hold_recommendation'):
+        return None, 'event_availability_hold'
+    if normalize_status(p.get("injury_status")) in UNAVAILABLE:
         return {**base, "final_points": 0.0, "basis": "designated_out"}, None
     model = load_model()
     provider = p.get("weekly_points") if p.get("weekly_evidence", {}).get("status") == "pregame_provider_projection" else None

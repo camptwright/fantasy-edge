@@ -22,6 +22,55 @@ class TradeAdjustment(BaseModel):
     drop: list[str] = Field(default_factory=list, max_length=6)
 
 
+class DraftPickInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    side: Literal['a','b']
+    season: int = Field(ge=2020,le=2100)
+    round: int = Field(ge=1,le=10)
+    slot: int | None = Field(default=None,ge=1,le=32)
+    value: float | None = Field(default=None,ge=0,allow_inf_nan=False)
+    source: str | None = Field(default=None,max_length=200)
+    original_roster_id: str | None = Field(default=None,max_length=100)
+
+
+class DynastyPackage(BaseModel):
+    player_ids: list[str] = Field(default_factory=list)
+    picks: list['DraftPickView'] = Field(default_factory=list)
+    observed_player_index: float | None = None
+    scenario_package_index: float | None = None
+    unpriced_player_ids: list[str] = Field(default_factory=list)
+    unpriced_picks: int = 0
+
+
+class DraftPickView(DraftPickInput):
+    valuation_type: str = 'unpriced'
+
+
+class DynastyPlan(BaseModel):
+    status: str
+    goal: str | None = None
+    packages: dict[str,DynastyPackage] = Field(default_factory=dict)
+    side_a_market_index_change: float | None = None
+    market_captured_at: str | None = None
+    goal_guidance: str | None = None
+    pick_ownership_verified: Literal[False] = False
+    note: str | None = None
+
+
+class MarketChange(BaseModel):
+    player_id: str
+    current: float | None = None
+    prior: float | None = None
+    change: float | None = None
+
+
+class MarketTrends(BaseModel):
+    status: str
+    captured_at: str | None = None
+    prior_captured_at: str | None = None
+    players: list[MarketChange] = Field(default_factory=list)
+
+
 class TradeRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     generated_at: datetime
@@ -29,6 +78,8 @@ class TradeRequest(BaseModel):
     side_b: list[str] = Field(min_length=1, max_length=6)
     a: TradeAdjustment = Field(default_factory=TradeAdjustment)
     b: TradeAdjustment = Field(default_factory=TradeAdjustment)
+    goal: Literal['balanced','contender','rebuild'] = 'balanced'
+    picks: list[DraftPickInput] = Field(default_factory=list,max_length=12)
 
 
 class TradeSide(BaseModel):
@@ -74,7 +125,7 @@ class TradeOutlook(BaseModel):
     side_b: TradeOutlookSide | None = None
     player_ros_points: dict[str, float | None] = Field(default_factory=dict)
     note: str = ('Engine research: each remaining week your best offensive lineup is re-solved before and after the trade '
-                 '(byes and missing projections count as zero), summed by the starting player\'s position. '
+                 '(only verified byes or confirmed absences supply zero; missing coverage withholds comparisons), summed by the starting player\'s position. '
                  'Not validated, not market value, and not acceptance advice.')
 
 
@@ -87,6 +138,8 @@ class TradeResult(BaseModel):
     side_a: TradeSide | None = None
     side_b: TradeSide | None = None
     outlook: TradeOutlook | None = None
+    dynasty: DynastyPlan | None = None
+    market_trends: MarketTrends | None = None
     note: str = 'Conditional offensive lineup points per game, not ROS gains, market fairness or acceptance advice. No byes, injury recovery or transaction processing modeled.'
 
 
@@ -143,7 +196,7 @@ def trade_context(data: dict, request: TradeRequest) -> TradeResult:
 def trade_outlook_context(data: dict, by_id: dict, request: TradeRequest, plans: dict) -> TradeOutlook:
     from src.services.trade_outlook import outlook
     raw = outlook(data, request.side_a, request.side_b, plans)
-    if raw['status'] != 'research':
+    if raw['status'] != 'research' and not (raw.get('side_a') and raw.get('side_b')):
         return TradeOutlook(status=raw['status'])
     def side(row):
         if row.get('status') != 'research':
@@ -153,8 +206,8 @@ def trade_outlook_context(data: dict, by_id: dict, request: TradeRequest, plans:
             by_position={k: v for k, v in row['by_position'].items() if finite_points(v) is not None},
             weekly=[TradeWeek(**w) for w in row['weekly']],
             unmodeled_players=[by_id.get(pid, {}).get('name') or pid for pid in row['unmodeled_player_ids']])
-    return TradeOutlook(status='research', side_a=side(raw['side_a']), side_b=side(raw['side_b']),
-                        player_ros_points={k: finite_points(v) for k, v in raw['player_ros_points'].items()})
+    return TradeOutlook(status=raw['status'], side_a=side(raw['side_a']), side_b=side(raw['side_b']),
+                        player_ros_points={k: finite_points(v) for k, v in raw.get('player_ros_points',{}).items()})
 
 
 @router.post('/leagues/{league_id}/trade-preview', response_model=TradeResult)
@@ -193,6 +246,11 @@ def with_market(result: TradeResult, data: dict, league, request: TradeRequest) 
     total = lambda side: sum(values[i] for i in side) if side and all(values.get(i) is not None for i in side) else None
     result.outlook.market = TradeMarket(status=raw.get('status', 'unavailable'), captured_at=raw.get('captured_at'),
         values=values, side_a_total=total(request.side_a), side_b_total=total(request.side_b))
+    from src.services.dynasty_trade_planning import plan
+    from src.services.fantasy_market_trends import trends
+    result.dynasty=DynastyPlan(**plan(data,request.side_a,request.side_b,goal=request.goal,
+        picks=[p.model_dump(exclude_none=True) for p in request.picks],market=raw))
+    result.market_trends=MarketTrends(**trends(cohort(league,len(data.get('rosters',[]))),league.platform,ids))
     return result
 
 
@@ -357,6 +415,31 @@ class FantasyResearch(BaseModel):
     specialists: ResearchStatus = Field(default_factory=ResearchStatus)
 
 
+class LateSwapPlan(BaseModel):
+    starter_id: str
+    starter_name: str
+    slot: str
+    replacement_id: str
+    replacement_name: str
+    replacement_points: float
+    projection_source: str
+    check_by: str
+    replacement_kickoff: str
+    availability_trigger: str
+    risk_adjusted_points: float | None = None
+
+
+class SwapBlocker(BaseModel):
+    player_id: str
+    reason: str
+
+
+class LateSwapView(BaseModel):
+    status: str = 'unavailable'
+    plans: list[LateSwapPlan] = Field(default_factory=list)
+    blockers: list[SwapBlocker] = Field(default_factory=list)
+
+
 class Overview(BaseModel):
     schema_version: Literal["2"] = "2"
     league_id: str
@@ -382,6 +465,7 @@ class Overview(BaseModel):
     season_accuracy: list[AccuracyWeek] = Field(default_factory=list)
     strength: 'StrengthView' = Field(default_factory=lambda: StrengthView())
     research: FantasyResearch = Field(default_factory=FantasyResearch)
+    late_swap: LateSwapView = Field(default_factory=LateSwapView)
 
 
 class DistributionEvidence(BaseModel):
@@ -472,6 +556,30 @@ class EngineWeek(BaseModel):
     environment: str
 
 
+class AvailabilityReport(BaseModel):
+    status: str
+    source: str
+    fetched_at: str | None = None
+    reported_at: str | None = None
+    season: int | None = None
+    week: int | None = None
+    team: str | None = None
+
+
+class RoleTrend(BaseModel):
+    recent: float | None = None
+    prior: float | None = None
+    change: float | None = None
+    recent_games: int = 0
+    prior_games: int = 0
+
+
+class RoleProfile(BaseModel):
+    status: str
+    trends: dict[str,RoleTrend] = Field(default_factory=dict)
+    note: str | None = None
+
+
 class PlayerDetail(BaseModel):
     player_id: str
     name: str
@@ -483,6 +591,11 @@ class PlayerDetail(BaseModel):
     source: str = 'unknown'
     locked: bool = True
     injury_status: str | None = None
+    normalized_injury_status: str | None = None
+    availability_evidence: AvailabilityReport | None = None
+    practice_observed_at: str | None = None
+    practice_evidence_status: str | None = None
+    role_changes: RoleProfile | None = None
     identity_status: str = 'unknown'
     canonical_team_id: str | None = None
     game_availability_status: str = 'not_collected'
@@ -536,6 +649,10 @@ class PlayerDetail(BaseModel):
     game_log: list[GameLogWeek] = Field(default_factory=list)
 
 
+class WaiverWeek(TradeWeek):
+    add_status: str | None = None
+
+
 class EngineWaiverRow(BaseModel):
     trending_adds: int | None = None  # Sleeper adds in the last 24 h (context only)
     add: PlayerDetail
@@ -545,6 +662,34 @@ class EngineWaiverRow(BaseModel):
     week_gain: float | None = None
     tier: Literal['priority', 'consider', 'depth', 'stream'] = 'depth'
     reasons: list[str] = Field(default_factory=list)
+    weekly: list[WaiverWeek] = Field(default_factory=list)
+    alternative_drops: list['AlternativeDrop'] = Field(default_factory=list)
+    needed_by_week: int | None = None
+    target_game_kickoff: str | None = None
+    claim_timing: str | None = None
+
+
+class AlternativeDrop(BaseModel):
+    drop_id: str
+    name: str | None = None
+    lineup_gain: float
+    weekly: list[TradeWeek] = Field(default_factory=list)
+
+
+class MissingCoveragePlayer(BaseModel):
+    name: str
+    position: str | None = None
+
+
+class WaiverCoverageBlocker(BaseModel):
+    week: int | None = None
+    missing_player_ids: list[str] = Field(default_factory=list)
+    missing_players: list[MissingCoveragePlayer] = Field(default_factory=list)
+
+
+class WaiverThresholds(BaseModel):
+    min_lineup_gain: float = 1.0
+    min_stream_gain: float = 1.0
 
 
 class TrendingAdd(BaseModel):
@@ -554,7 +699,7 @@ class TrendingAdd(BaseModel):
 
 class EngineWaivers(BaseModel):
     status: str = 'unavailable'
-    scope: str = 'engine_research_ros_not_validated'
+    scope: str = 'engine_research_selected_horizon'
     rows: list[EngineWaiverRow] = Field(default_factory=list)
     # Sleeper's most-added players (24 h) still unrostered in this league; crowd context only.
     trending: list[TrendingAdd] = Field(default_factory=list)
@@ -564,7 +709,10 @@ class EngineWaivers(BaseModel):
     waiver_clear_days: int | None = None
     # Your IR/taxi players: never suggested as drops (each add is re-solved without them).
     protected: list[PlayerDetail] = Field(default_factory=list)
-    tier_rule: str = ('priority: adds >= 15 starting-lineup points over the remaining weeks; consider: >= 5; '
+    horizon_weeks: int = 2
+    thresholds: WaiverThresholds = Field(default_factory=WaiverThresholds)
+    coverage_blockers: list[WaiverCoverageBlocker] = Field(default_factory=list)
+    tier_rule: str = ('priority: adds >= 15 starting-lineup points over the selected horizon; consider: >= 5; '
                       'depth: positive but smaller; stream: K/DEF weekly provider gain. '
                       'Engine research thresholds, not validated value.')
 
@@ -663,6 +811,7 @@ Overview.model_rebuild()
 
 
 def player_detail(player: dict) -> PlayerDetail:
+    from src.services.availability_status import normalize_status
     diagnostics = player.get('history_diagnostics', {})
     ros = player.get('ros', {})
     history = ros.get('per_game', {})
@@ -674,6 +823,10 @@ def player_detail(player: dict) -> PlayerDetail:
         position=player.get('position'), team=player.get('team'),
         points=finite_points(player.get('decision_points')), source=player.get('decision_source', 'unknown'),
         locked=player.get('locked') is not False, injury_status=player.get('injury_status'),
+        normalized_injury_status=normalize_status(player.get('injury_status')),
+        availability_evidence=(player.get('_play') or {}).get('evidence'),
+        practice_observed_at=(player.get('_play') or {}).get('observed_at'),
+        practice_evidence_status=(player.get('_play') or {}).get('practice_evidence_status'),
         identity_status=(player.get('_workspace_team_identity', {}).get('status', 'unresolved_team')
                          if player.get('position') in ('DEF', 'DST') else player.get('identity_status', 'unknown')),
         canonical_team_id=(player.get('_workspace_team_identity', {}).get('canonical_team_id')
@@ -838,11 +991,16 @@ def _engine_waivers(data: dict, by_id: dict, mine: list) -> EngineWaivers:
                    waiver_position=mine[0].get('waiver_position'), teams=len(data.get('rosters', [])) or None,
                    waiver_clear_days=settings.get('waiver_clear_days'))
     stored = data.get('waiver_guidance') or {}
-    if stored.get('status') != 'research':
+    context.update(horizon_weeks=stored.get('horizon_weeks',2),thresholds=stored.get('thresholds',{}),
+        coverage_blockers=[{**b,'missing_players':[{'name':by_id.get(pid,{}).get('name',pid),
+            'position':by_id.get(pid,{}).get('position')} for pid in b.get('missing_player_ids',[])]}
+            for b in stored.get('coverage_blockers',[])],
+        tier_rule='Conditional 2–4 week lineup comparisons; minimum gains apply. Each row is an alternative, with claim timing requiring platform confirmation.')
+    if stored.get('status') not in ('research','incomplete_coverage'):
         return EngineWaivers(status=stored.get('status', 'unavailable'), **context)
     protected = data.get('_protected') or {}
-    if protected and any(r.get('drop_id') in protected for r in stored.get('rows', [])):
-        stored = resolve_without(data, mine[0], protected) or stored
+    # The producer excludes reserve/taxi players. Revalidate ownership here,
+    # but never invoke the optimizer while serving a request.
     owned = {str(pid) for r in data.get('rosters', []) for pid in r.get('player_ids', [])}
     my_ids = set(map(str, mine[0].get('player_ids', []))) - set(protected)
     rows = []
@@ -868,9 +1026,13 @@ def _engine_waivers(data: dict, by_id: dict, mine: list) -> EngineWaivers:
             reasons.append('Most weeks have no market line yet (team-model environment).')
         rows.append(EngineWaiverRow(add=player_detail(add), compare=player_detail(drop), ros_gain=gain,
             week=row.get('week'), week_gain=week_gain, reasons=reasons,
+            weekly=row.get('weekly',[]),needed_by_week=row.get('needed_by_week'),
+            target_game_kickoff=row.get('target_game_kickoff'),claim_timing=row.get('claim_timing'),
+            alternative_drops=[{**r,'name':by_id.get(r['drop_id'],{}).get('name',r['drop_id'])}
+                for r in row.get('alternative_drops',[]) if r['drop_id'] in my_ids],
             tier='priority' if gain >= 15 else 'consider' if gain >= 5 else 'depth'))
     if not rows:
-        return EngineWaivers(status='no_positive_research_moves', **context)
+        return EngineWaivers(status=stored['status'] if stored['status']=='incomplete_coverage' else 'no_positive_research_moves', **context)
     order = {'priority': 0, 'consider': 1, 'stream': 2, 'depth': 3}
     rows.sort(key=lambda r: (order[r.tier], -(r.ros_gain if r.ros_gain is not None else r.week_gain or 0),
                              r.add.player_id))
@@ -1051,6 +1213,10 @@ async def league_overview(league_id: str, response: Response, db: AsyncSession =
         from src.services import sleeper_trending
         data['_trending'] = (await sleeper_trending.latest(db) or {}).get('players', {})
     result = overview(league_id, data)
+    if result.status=='snapshot_available':
+        from src.services.fantasy_late_swap import plans
+        result.late_swap=LateSwapView(**plans([p.model_dump() for p in result.roster_players],
+            [p.model_dump() for p in result.matchup.mine.starters] if result.matchup.mine else []))
     if result.status == 'snapshot_available':
         result.season_accuracy = await season_accuracy(db, league_id, data)
     from asyncio import to_thread
@@ -1064,6 +1230,45 @@ async def league_overview(league_id: str, response: Response, db: AsyncSession =
     return result
 
 
+@router.get('/leagues/{league_id}/view',response_model=Overview,response_model_exclude_unset=True)
+async def league_view(league_id:str,response:Response,
+    tool:Literal['today','overview','team','startsit','waivers','players','player','trade','league','recap','journal']='overview',
+    player:str|None=None,compare:str|None=None,horizon:int=2,db:AsyncSession=Depends(get_db)):
+    if horizon not in (2,3,4):raise HTTPException(422,'Choose a 2–4 week horizon')
+    result=await league_overview(league_id,response,db)
+    selected=[p for p in (player,compare) if p]
+    if any(len(p)>100 for p in selected):raise HTTPException(422,'Player ID too long')
+    if tool=='waivers' and horizon!=2 and result.status=='snapshot_available':
+        data=await read(db,league_id)
+        if data:
+            await attach_protected(db,league_id,data)
+            data['waiver_guidance']=data.get('waiver_guidance_by_horizon',{}).get(str(horizon),{})
+            result.engine_waivers=engine_waiver_context(data,{str(p['player_id']):p for p in data.get('players',[])})
+    if tool=='player' and selected and result.status=='snapshot_available':
+        from src.services.player_identity import resolve_platform_players
+        from src.services.role_change_profiles import profile
+        league=await db.get(SleeperLeague,league_id)
+        identities=await resolve_platform_players(db,league.platform,set(selected))
+        for p in result.comparison_players:
+            identity=identities.get(p.player_id)
+            if p.player_id in selected and identity:
+                p.role_changes=RoleProfile(**await profile(db,identity.id,season=int(league.season)))
+    from src.services.workspace_view_response import trim
+    return trim(result,tool,selected)
+
+
+@router.get('/leagues/{league_id}/players/{player_id}',response_model=PlayerDetail)
+async def detailed_player(league_id:str,player_id:str,response:Response,generated_at:str|None=None,db:AsyncSession=Depends(get_db)):
+    if len(player_id)>100:raise HTTPException(422,'Player ID too long')
+    result=await league_view(league_id,response,tool='player',player=player_id,db=db)
+    players=result.get('comparison_players',[])
+    if result.get('status')!='snapshot_available':raise HTTPException(409,'Current checkpoint unavailable; retry shortly')
+    if generated_at is not None and generated_at!=result.get('generated_at'):
+        raise HTTPException(409,'The league snapshot changed; refresh before comparing player evidence')
+    if not players:raise HTTPException(404,'Player missing from current checkpoint')
+    return PlayerDetail(**players[0])
+
+
 class PairedSummary(BaseModel):
     n: int = 0
     weeks: list[int] = Field(default_factory=list)
@@ -1071,6 +1276,13 @@ class PairedSummary(BaseModel):
     sleeper_mae: float | None = None
     paired_difference: float | None = None
     ci: list[float] | None = None
+    independent_weeks: int = 0
+
+
+class QualificationWeek(PairedSummary):
+    season: int | None = None
+    week: int
+    positions: dict[str, PairedSummary] = Field(default_factory=dict)
 
 
 class QualificationTrack(BaseModel):
@@ -1086,6 +1298,10 @@ class QualificationTrack(BaseModel):
     blockers: list[str] = Field(default_factory=list)
     pool: PairedSummary = Field(default_factory=PairedSummary)
     statuses: dict[str, int] = Field(default_factory=dict)
+    evidence_type: str = 'prospective_report_unavailable'
+    current_version: bool = False
+    by_position: dict[str, PairedSummary] = Field(default_factory=dict)
+    by_week: list[QualificationWeek] = Field(default_factory=list)
 
 
 class WinProbabilityCheck(BaseModel):
@@ -1109,7 +1325,7 @@ class EngineQualification(BaseModel):
 def qualification_tracks(root) -> list[QualificationTrack]:
     """Latest saved prospective report per track; a missing report is a status, not zeros."""
     import json
-    from src.services.projection_engine_prospective import VARIANT_MIN_WEEKS, VARIANTS
+    from src.services.projection_engine_prospective import VARIANT_MIN_WEEKS, VARIANTS, version, depth_version
 
     def summary(raw):
         raw = raw or {}
@@ -1127,19 +1343,32 @@ def qualification_tracks(root) -> list[QualificationTrack]:
         except (OSError, ValueError):
             tracks.append(QualificationTrack(name=label, status='report_unreadable', required_weeks=MIN_WEEKS))
             continue
-        extra = [(f'{label} · Sleeper blend', (report.get('candidate_blend') or {}).get('promotion') or {}, None),
-                 ('ESPN projections', (report.get('espn') or {}).get('promotion') or {}, None),
-                 ('Consensus: Sleeper + ESPN + engine', (report.get('consensus') or {}).get('promotion') or {}, None)
+        extra = [(f'{label} · Sleeper blend', (report.get('candidate_blend') or {}).get('promotion') or {}, report.get('candidate_blend') or {}),
+                 ('ESPN projections', (report.get('espn') or {}).get('promotion') or {}, report.get('espn') or {}),
+                 ('Consensus: Sleeper + ESPN + engine', (report.get('consensus') or {}).get('promotion') or {}, report.get('consensus') or {})
                  ] if variant == 'v1' else []
         for name, block, meta in ((label, report.get('promotion') or {}, report), *extra):
-            if meta is None and not block:
+            if not meta and not block:
                 continue  # older reports carry no ESPN/consensus grading yet
-            pool = summary(block.get('pool'))
+            reconstructed = 'Sleeper blend' in name
+            current = report.get('version') == (version() if variant == 'v1' else depth_version())
+            pool = summary(block.get('pool') or (meta.get('all_paired') if reconstructed else {}))
+            independent = pool.independent_weeks or len(pool.weeks)
+            blockers = list(block.get('blockers', []))
+            eligible = bool(block.get('eligible_for_owner_review')) and current and not reconstructed
+            if bool(block.get('eligible_for_owner_review')) and not current:
+                blockers.append('report_does_not_match_current_version')
+            if bool(block.get('eligible_for_owner_review')) and reconstructed:
+                blockers.append('blend_weights_not_frozen_with_forecasts')
             tracks.append(QualificationTrack(name=name, status=report.get('status', 'unknown'),
                 generated_at=report.get('generated_at'), version=report.get('version'),
-                engine_forecasts=report.get('engine_forecasts') if meta else None, graded_weeks=len(pool.weeks),
-                required_weeks=block.get('required_weeks', MIN_WEEKS), eligible_for_owner_review=bool(block.get('eligible_for_owner_review')),
-                blockers=block.get('blockers', []), pool=pool, statuses=report.get('statuses', {}) if meta else {}))
+                engine_forecasts=report.get('engine_forecasts') if meta is report else None, graded_weeks=independent,
+                required_weeks=block.get('required_weeks', MIN_WEEKS), eligible_for_owner_review=eligible,
+                blockers=blockers, pool=pool, statuses=report.get('statuses', {}) if meta is report else {},
+                current_version=current,
+                evidence_type='retrospective_reconstructed_current_weights' if reconstructed else ('immutable_pregame_forecasts_current_version' if current else 'historical_older_version'),
+                by_position={p: summary(raw) for p, raw in (meta.get('by_position') or block.get('positions') or {}).items()},
+                by_week=meta.get('by_week') or []))
     # Full pool (every projected player, box-score results): the FantasyPros pool, not only rostered players.
     files = sorted((root / 'pool' / 'reports').glob('*.json'))
     try:
@@ -1155,10 +1384,15 @@ def qualification_tracks(root) -> list[QualificationTrack]:
                                              required_weeks=VARIANT_MIN_WEEKS['v1']))
             continue
         pool = summary(block.get('pool'))
+        current = report.get('engine_version') == version()
+        meta = report.get('tracks', {}).get(key, {})
         tracks.append(QualificationTrack(name=name, status=report.get('status', 'unknown'), generated_at=report.get('generated_at'),
-            version=report.get('engine_version'), graded_weeks=len(pool.weeks), required_weeks=block.get('required_weeks', 6),
-            eligible_for_owner_review=bool(block.get('eligible_for_owner_review')), blockers=block.get('blockers', []),
-            pool=pool, statuses=report.get('statuses', {})))
+            version=report.get('engine_version'), graded_weeks=pool.independent_weeks or len(pool.weeks), required_weeks=block.get('required_weeks', 6),
+            eligible_for_owner_review=bool(block.get('eligible_for_owner_review')) and current, blockers=block.get('blockers', []) + (['report_does_not_match_current_version'] if block.get('eligible_for_owner_review') and not current else []),
+            pool=pool, statuses=report.get('statuses', {}), current_version=current,
+            evidence_type='immutable_pregame_forecasts_current_version' if current else 'historical_older_version',
+            by_position={p: summary(raw) for p, raw in (meta.get('by_position') or block.get('positions') or {}).items()},
+            by_week=meta.get('by_week') or []))
     return tracks
 
 
@@ -1210,13 +1444,21 @@ class TradeIdeas(BaseModel):
 
 @router.get('/leagues/{league_id}/trade-ideas', response_model=TradeIdeas)
 async def trade_ideas(league_id: str, response: Response, db: AsyncSession = Depends(get_db)):
+    from src.services.workspace_background import cached
+    response.headers['Cache-Control']='no-store'
+    league=await db.get(SleeperLeague,league_id)
+    if league is None:raise HTTPException(404,'League not found')
+    data=await read(db,league_id)
+    summary=await cached(db,league_id,'trade-ideas',data)
+    return TradeIdeas(**summary) if summary is not None else TradeIdeas(status='updating')
+
+
+async def compute_trade_ideas(league_id,db,data):
     from src.services import trade_finder
     from src.services.fantasy_market import cohort, selected
-    response.headers['Cache-Control'] = 'no-store'
     league = await db.get(SleeperLeague, league_id)
     if league is None:
         raise HTTPException(404, 'League not found')
-    data = await read(db, league_id)
     if data is None:
         return TradeIdeas(status='updating')
     await attach_protected(db, league_id, data)
@@ -1264,15 +1506,23 @@ class StandingsView(BaseModel):
 
 @router.get('/leagues/{league_id}/standings', response_model=StandingsView)
 async def league_standings(league_id: str, response: Response, db: AsyncSession = Depends(get_db)):
+    from src.services.workspace_background import cached
+    response.headers['Cache-Control']='no-store'
+    league=await db.get(SleeperLeague,league_id)
+    if league is None:raise HTTPException(404,'League not found')
+    data=await read(db,league_id)
+    summary=await cached(db,league_id,'standings',data)
+    return StandingsView(**summary) if summary is not None else StandingsView(status='updating')
+
+
+async def compute_standings(league_id,db,data):
     from src.models.sleeper import SleeperLeagueSnapshot
     from src.services import season_sim
     from src.services.fantasy_decision_models import FLEX, RESERVE
     from src.services.waiver_guidance import OFFENSE, lineup_total
-    response.headers['Cache-Control'] = 'no-store'
     league = await db.get(SleeperLeague, league_id)
     if league is None:
         raise HTTPException(404, 'League not found')
-    data = await read(db, league_id)
     if data is None or not data.get('week'):
         return StandingsView(status='updating')
     week = int(data['week'])
@@ -1284,7 +1534,7 @@ async def league_standings(league_id: str, response: Response, db: AsyncSession 
         rows = snap.payload if isinstance(snap.payload, list) else []
         if snap.kind == 'matchups' and snap.week < week:
             results += [{'week': snap.week, 'roster_id': r['roster_id'], 'matchup_id': r['matchup_id'],
-                         'points': float(r.get('points') or 0.0)} for r in rows if r.get('matchup_id') is not None]
+                         'points': finite_points(r.get('points'))} for r in rows if r.get('matchup_id') is not None]
         elif (snap.kind == 'matchups' and snap.week == week) or (snap.kind == 'schedule' and snap.week > week):
             for r in rows:
                 if r.get('matchup_id') is not None:
@@ -1292,7 +1542,11 @@ async def league_standings(league_id: str, response: Response, db: AsyncSession 
     games = sorted((w, *sorted(teams)) for (w, _), teams in remaining.items() if len(teams) == 2)
     table = season_sim.standings(results)
     if not table:
-        return StandingsView(status='no_completed_weeks', week=week)
+        return StandingsView(status='partial_completed_history' if results else 'no_completed_weeks', week=week)
+    completed = season_sim.completed_results(results)
+    expected_teams = {r['roster_id'] for r in data.get('rosters', [])}
+    history_complete = (len(completed) == len(results) and set(table) == expected_teams and
+                        all(t['games'] == week - 1 for t in table.values()))
     playoff_teams = int((league.settings or {}).get('playoff_teams') or
                         ((league.raw or {}).get('settings', {}).get('scheduleSettings', {}) or {}).get('playoffTeamCount') or 6)
     by_id = {str(p['player_id']): p for p in data.get('players', [])}
@@ -1300,22 +1554,24 @@ async def league_standings(league_id: str, response: Response, db: AsyncSession 
     weeks = sorted({g[0] for g in games})
     lineups = {}
     for r in data.get('rosters', []):
-        members = [by_id[pid] for pid in map(str, r.get('player_ids', [])) if pid in by_id and by_id[pid].get('position') in OFFENSE]
+        members = [by_id[pid] for pid in map(str, r.get('player_ids', [])) if pid in by_id and (by_id[pid].get('position') in OFFENSE or not by_id[pid].get('position'))]
         for w in weeks:
             total = lineup_total(members, slots, w) if slots else None
             lineups[(r['roster_id'], w)] = total or None
     strength = season_sim.weekly_strength(table, weeks, lineups)
-    scores = [r['points'] for r in results]
+    scores = [r['points'] for r in completed]
     sd = max(season_sim.MIN_SD, float(__import__('numpy').std(scores))) if len(scores) > 4 else 25.0
-    odds = season_sim.simulate(table, games, strength, playoff_teams, sd=sd) if games else {}
+    odds = season_sim.simulate(table, games, strength, playoff_teams, sd=sd) if games and history_complete else {}
     names = {r['roster_id']: r.get('name') for r in data.get('rosters', [])}
     mine = {r['roster_id'] for r in data.get('rosters', []) if r.get('is_mine') is True}
     rows = [StandingRow(roster_id=str(t), name=names.get(t), is_mine=t in mine, wins=v['wins'], losses=v['losses'],
                         ties=v['ties'], points_for=round(v['pf'], 2), points_against=round(v['pa'], 2),
                         **(odds.get(t) or {})) for t, v in table.items()]
     rows.sort(key=lambda r: (-(r.wins + 0.5 * r.ties), -r.points_for))
-    return StandingsView(status='research', week=week, playoff_teams=playoff_teams, remaining_games=len(games),
-                         simulations=season_sim.SIMS if games else 0, rows=rows)
+    return StandingsView(status='research' if history_complete else 'partial_completed_history', week=week,
+                         playoff_teams=playoff_teams, remaining_games=len(games),
+                         simulations=season_sim.SIMS if games and history_complete else 0, rows=rows,
+                         **({} if history_complete else {'note': 'Standings include complete paired outcomes only. Missing completed results withhold playoff probabilities.'}))
 
 
 class RecapGame(BaseModel):

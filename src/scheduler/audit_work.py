@@ -31,6 +31,9 @@ def refresh_fantasy_models():
                 try:
                     async with get_worker_db() as db:
                         result=await refresh(db,league_id)
+                        if result.get('status')=='refreshed':
+                            from src.services.workspace_background import refresh as refresh_views
+                            result['views']=await refresh_views(db,league_id)
                     results.append(result)
                     break
                 except DBAPIError as exc:

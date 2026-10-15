@@ -28,6 +28,8 @@ PREDICTION = {
     'engine_research': None,
     'fantasy_outcomes': None,
     'waiver_guidance': None,
+    'engine_coverage': None,
+    'availability_status': None,
 }
 CAPTURE = {
     'fantasy_prospective': {'candidates', 'capture_forecasts'},

@@ -30,6 +30,7 @@ export const FANTASY_TOOLS = [
   {id: 'startsit', label: 'Start/Sit'},
   {id: 'waivers', label: 'Waivers'}, {id: 'players', label: 'Players'},
   {id: 'trade', label: 'Trade analyzer'}, {id: 'league', label: 'League'}, {id: 'recap', label: 'Post-game'},
+  {id: 'journal', label: 'My decisions'},
 ] as const;
 /** `player` is a detail screen reached from rows, not a tab. */
 export type FantasyTool = typeof FANTASY_TOOLS[number]['id'] | 'player';

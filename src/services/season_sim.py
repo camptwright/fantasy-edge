@@ -14,17 +14,31 @@ Research: no league-specific tiebreakers beyond points for, no divisions.
 from __future__ import annotations
 
 import numpy as np
+from collections import Counter
+from src.services.roster_stat_model import finite
 
 SIMS = 10000
 MIN_SD = 15.0
 
 
-def standings(results: list[dict]) -> dict:
-    """results: [{week, roster_id, matchup_id, points}] for completed weeks."""
-    table: dict = {}
+def completed_results(results):
+    """Keep both sides only when a unique completed matchup has both scores."""
     by_game: dict = {}
+    appearances = Counter((r['week'], r['roster_id']) for r in results)
     for r in results:
         by_game.setdefault((r["week"], r["matchup_id"]), []).append(r)
+    return [r for game in by_game.values() if len(game) == 2 and
+            game[0]['roster_id'] != game[1]['roster_id'] and
+            all(finite(r.get('points')) and appearances[(r['week'], r['roster_id'])] == 1 for r in game)
+            for r in game]
+
+
+def standings(results: list[dict]) -> dict:
+    """Standings use complete paired outcomes; orphan scores affect no team."""
+    table: dict = {}
+    by_game: dict = {}
+    for r in completed_results(results):
+        by_game.setdefault((r['week'], r['matchup_id']), []).append(r)
         t = table.setdefault(r["roster_id"], {"wins": 0, "losses": 0, "ties": 0, "pf": 0.0, "pa": 0.0, "games": 0})
         t["pf"] += r["points"]
         t["games"] += 1
@@ -77,7 +91,8 @@ def weekly_strength(table: dict, weeks: list[int], lineup: dict | None = None, c
     for team, t in table.items():
         ppg = t["pf"] / t["games"] if t["games"] else 0.0
         proj = {w: (lineup or {}).get((team, w)) for w in weeks}
-        known = [v for v in proj.values() if v]
+        proj = {w: v if finite(v) else None for w, v in proj.items()}
+        known = [v for v in proj.values() if v is not None]
         avg = sum(known) / len(known) if known else None
         for w in weeks:
             factor = min(clip[1], max(clip[0], proj[w] / avg)) if avg and proj[w] is not None else 1.0
