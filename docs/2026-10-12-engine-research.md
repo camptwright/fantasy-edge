@@ -515,9 +515,9 @@ Findings:
   and snap trend (~0.10): Sleeper reacts slowly to TE role changes. The
   boosted engine correction gained 0.10 at TE (-0.164, -0.038), the linear
   one 0.05 (CI touching zero). That is the only lead, and it is post hoc.
-- xFP is the best single trailing predictor of next-week points for QB, and
-  roughly ties trailing actual points elsewhere, as the practitioner
-  literature claims. But the engine already captures the same volume.
+- The practitioner claim that xFP beats actual points as a predictor holds
+  only for QB (Spearman 0.14 vs 0.12). For RB (0.21 vs 0.25) and WR (0.19 vs
+  0.20) trailing actual points is slightly better, and for TE they tie.
 
 Decision: do not add these stats to the engine or the decision models. The
 next engine work, if any, should target pre-kickoff information (injury
