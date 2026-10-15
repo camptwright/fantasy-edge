@@ -1,6 +1,6 @@
 # Engine v2 plan: merging the two research tracks (draft, 2026-10-15)
 
-Status: v2 built and frozen (lean); the registered 2022 test follows. Owner approved the build 2026-10-15. Engine v1, its prospective record
+Status: v2 (lean) built, failed its registered 2022 test, and captured prospectively as research since 2026-10-15 (week 6). Owner approved the build 2026-10-15. Engine v1, its prospective record
 and the decision-model cohort (`1c14c946116d`) stay untouched: v2 is a new
 recipe in new modules, and no PREDICTION module changes before week 11.
 
@@ -318,3 +318,30 @@ prospectively as a research track beside v1 and the depth variant,
 against Sleeper frozen before kickoff. That is the only clean test left.
 Any v2 change from here is a new version with its own prospective
 record.
+
+## Serving (2026-10-15)
+
+- `projection_engine_v2_data` builds records and features for both the lab
+  (nflreadpy) and the worker (nflverse release CSVs, cached under
+  `raw/nflverse-v2-cache`).
+  - On 2026 rows, serving predictions equal the lab's exactly.
+  - Peak memory is 511 MB. A first attempt that held whole CSVs was killed
+    at the worker's 1.5 GiB limit.
+- `fantasy.projection_engine_v2` runs every 3 hours on the evaluation
+  queue.
+  - It freezes forecasts at their first capture inside the 72-hour window
+    (create-only files under `projection-engine/v2/forecasts`).
+  - It grades them as variant `v2` against Sleeper frozen before kickoff
+    (6 graded weeks required).
+  - First run: 2 games, 64 forecasts, 27.5 s, version `7eeb6fd0…`.
+- Never served. The decision-model cohort is unchanged (`1c14c946116d`).
+- Changes after the registration commit, none to the model:
+  - streaming and memory work;
+  - an opponent leak in the refactored availability features, caught by
+    comparing against the registered code and covered by a regression test;
+  - duplicate Sleeper IDs now resolve to the entry that is projected to play.
+
+  With these, the lab's development figure moves from -0.074 to -0.075. The
+  registered result stands as produced at 20c2da0.
+- The earliest possible owner review is after 6 graded prospective weeks:
+  weeks 6-11, so late November.
