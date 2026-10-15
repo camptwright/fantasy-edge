@@ -378,6 +378,18 @@ snapshots, weekly roster status and final injury reports, so
 Engine v1's version (and its prospective record) is unchanged; the depth
 variant's version changes.
 
+## Correction (2026-10-15): Sleeper's archive is not a pre-game baseline
+
+Every Sleeper comparison below that uses Sleeper's historical weekly
+endpoint (the registered holdout, the advanced-stats test, the gap anatomy)
+graded against projections that absorb in-game news after kickoff. Evidence
+and consequences: `docs/2026-10-15-engine-v2-plan.md`, "Sleeper archive
+leakage". The conclusion "Sleeper is better than the engine for
+decision-relevant players" overstates Sleeper's pre-game edge by an unknown
+amount. Against Sleeper numbers this app froze before kickoff (2026 weeks
+2-5), v1 trails by +0.165 (CI -0.035 to +0.349) and v2 is level (+0.03).
+Comparisons between this app's own models are unaffected.
+
 ## Pre-registered holdout test of engine v1 (registered 2026-10-15, before any run)
 
 Why: the promotion gate needs six graded prospective weeks, and that takes

@@ -1,6 +1,6 @@
 # Engine v2 plan: merging the two research tracks (draft, 2026-10-15)
 
-Status: planning. Nothing here is built. Engine v1, its prospective record
+Status: v2 built and frozen (lean); the registered 2022 test follows. Owner approved the build 2026-10-15. Engine v1, its prospective record
 and the decision-model cohort (`1c14c946116d`) stay untouched: v2 is a new
 recipe in new modules, and no PREDICTION module changes before week 11.
 
@@ -173,9 +173,119 @@ parity, and a blend that beats Sleeper by a small but measurable margin,
 concentrated in weeks 1-4 and role changes. No accuracy figure is promised
 before testing.
 
-## Decisions needed
+## Decisions (owner, 2026-10-15)
 
-- May W2 use Sleeper's season-long projection as a prior?
-- When to spend the sealed 2022 season: once, for the frozen v2 plus blend.
-- Confirm no decision-model changes before week 11, so the current cohort
-  can finish.
+- W2 may use Sleeper's season-long projection as a prior: yes.
+- The sealed 2022 season is spent once, on the frozen v2 plus blend: yes.
+- No decision-model (PREDICTION module) changes before week 11: confirmed.
+
+## Sleeper archive leakage (found 2026-10-15)
+
+Sleeper's historical weekly endpoint (`/v1/projections/nfl/regular/{season}/{week}`)
+is not a pre-game record. It absorbs in-game news after kickoff.
+
+- **2026 weeks 2-5 against the projections this app froze before kickoff**
+  (`fantasy-prospective/provider-weekly`, 1,606 player-weeks, both Sleeper
+  leagues' scoring):
+  - the endpoint's values miss actual points by 4.28 on average, against
+    5.78 for the frozen copies;
+  - its changes since the freeze correlate +0.46 with the outcome;
+  - this holds for every capture lead time.
+- **2021-2025 archive:** among RB/WR/TE with no injury designation who had
+  played 70%+ of snaps in each of their previous two games:
+  - those who then left a game early (<30% of snaps) had that game's
+    projection cut by more than half 22% of the time (108 cases);
+  - those who played normally had it cut 0.3% of the time (4,024 cases).
+  - This shows in every season.
+
+Consequences:
+
+- Every historical engine-vs-Sleeper comparison in
+  `docs/2026-10-12-engine-research.md` (the registered holdout, the
+  advanced-stats test, the gap anatomy) graded against a Sleeper baseline
+  that holds some post-kickoff information. Those gaps overstate Sleeper's
+  pre-game edge by an unknown amount. Comparisons between this app's own
+  models (v2 vs v1) are unaffected.
+- Inputs: Sleeper projections for the game being projected are never a v2
+  input, historically or live. Projections for games already played
+  (last week's, and week 1's from week 2 on) are allowed. Their
+  contamination is past information, and live serving reads the same
+  archive, so lab and serving see the same thing.
+- A clean Sleeper comparison exists only where this app froze Sleeper's
+  numbers before kickoff: 2026 onward.
+
+## Development results (2026-10-15, `scripts/engine_lab.py`)
+
+Graded 2023-2025, rolling origin by week, symmetric starter pool,
+week-cluster bootstrap, 2016 Warriors scoring. 2022 is never graded.
+Negative means the first model is better.
+
+| Configuration | vs v1, identical rows | vs Sleeper archive (leak-advantaged) | Blend vs Sleeper archive |
+|---|---|---|---|
+| core (v1's inputs as ridge stages) | +0.043 (+0.008, +0.079) | +0.187 | |
+| core + offseason | +0.004 | +0.065 | |
+| core + role speed | +0.007 | +0.072 | |
+| core + availability | -0.007 | +0.047 | |
+| core + opportunity, team play, QB rush, depth, efficiency or opponent | +0.038 to +0.047 | +0.165 to +0.189 | |
+| all groups | -0.076 (-0.118, -0.030) | -0.014 (-0.065, +0.033) | -0.059 (-0.094, -0.026) |
+| **lean** (core, offseason, role, availability, previous-week Sleeper) | **-0.074 (-0.117, -0.029)** | **-0.018 (-0.066, +0.027)** | **-0.055 (-0.087, -0.024)** |
+
+Other findings:
+
+- A gradient-boosted share stage instead of ridge scores +0.016 against the
+  Sleeper archive, versus ridge's +0.007 on the same groups. No gain, so
+  the stages stay numpy ridge, which the serving image can run.
+- MAE rewards the median; the best per-position median shift gains ≤0.02.
+  Not applied.
+- An earlier run that fed Sleeper's projection for the game itself scored
+  -0.063 against the archive. That is the leak, so it is discarded.
+- Opportunity quality, play selection, QB rushing detail, depth of target,
+  efficiency and opponent context each add nothing on top of core (Track A
+  items 1, 3-7), confirming the advanced-stats result. The gains come from
+  the offseason prior, faster role updates and who is available this week:
+  the gap anatomy's two findings.
+
+2026 weeks 2-5 against Sleeper frozen before kickoff (clean baseline, about
+550 pool rows, only 4 week clusters, so the intervals are rough):
+
+| Comparison | all | lean |
+|---|---|---|
+| v2 vs frozen Sleeper | +0.032 (-0.141, +0.172) | +0.026 (-0.122, +0.150) |
+| v1 vs frozen Sleeper | +0.165 (-0.035, +0.349) | |
+| v2 vs v1 | -0.156 (-0.179, -0.137) | -0.133 (-0.148, -0.100) |
+| 50/50 blend vs frozen Sleeper | -0.069 (-0.173, +0.015) | -0.060 (-0.176, +0.025) |
+
+Frozen design: **lean**. It needs no play-by-play, so serving can build it
+from data the app already ingests plus nflverse release CSVs.
+
+## Registered test (2026-10-15, before any 2022 run)
+
+Spends the sealed 2022 season once, as approved.
+
+- **Model:** `src/services/projection_engine_v2.py` and `scripts/engine_lab.py`
+  as committed with this section, configuration `lean`, constants as
+  committed (RIDGE 10, HALF_LIFE 2, PLAYER_GAMES 12, TEAM_GAMES 8). No
+  change after this commit.
+- **Data:** nflverse 2019-2022 and Sleeper's archived weekly projections. v2
+  refits every week on games before that week's first kickoff (training
+  rows from 2020 on), so no later season informs 2022.
+- **Comparators:**
+  - v1 (`projection_engine.py` DEFAULT, nflverse history 2021-2022) on
+    identical rows;
+  - the Sleeper archive (leak-advantaged, so a conservative bar);
+  - the blend rule as committed (per position and phase, a v2 weight
+    learned on earlier weeks' out-of-sample rows from 2021 on).
+- **Metric:** paired absolute error on the symmetric pool (top 12/24/30/12
+  QB/RB/WR/TE by either side), 2016 Warriors scoring, week-cluster
+  bootstrap with 4000 draws, seed 0.
+- **Pass bar, all four required:**
+  1. v2 minus v1: pooled CI upper < 0.
+  2. v2 minus Sleeper archive: pooled CI lower ≤ 0 (not significantly worse).
+  3. Blend minus Sleeper archive: pooled CI upper < 0.
+  4. No position where v2 is significantly worse than v1 (CI lower > 0).
+- **Reporting:** the result is reported whatever it is. A pass opens the
+  prospective track only: v2 serves decisions only after 6 graded
+  prospective weeks against frozen Sleeper, and no decision-model change
+  before week 11.
+
+    .venv/bin/python -m scripts.engine_lab confirm --scoring warriors_scoring.json --out lab --configs lean
