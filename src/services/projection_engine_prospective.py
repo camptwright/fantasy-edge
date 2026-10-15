@@ -41,7 +41,7 @@ from src.services.roster_stat_prospective import publish
 
 MIN_WEEKS = 6
 # The depth/status variant qualifies on 5 graded weeks (owner decision, 2026-10-12).
-VARIANT_MIN_WEEKS = {"v1": MIN_WEEKS, "depth": 5}
+VARIANT_MIN_WEEKS = {"v1": MIN_WEEKS, "depth": 5, "v2": MIN_WEEKS}
 SOURCES = ("projection_engine.py", "game_environment.py")
 
 
@@ -69,7 +69,18 @@ def depth_version() -> str:
                           .encode()).hexdigest()
 
 
-VARIANTS = {"v1": ("forecasts", "reports"), "depth": ("depth/forecasts", "depth/reports")}
+VARIANTS = {"v1": ("forecasts", "reports"), "depth": ("depth/forecasts", "depth/reports"),
+            "v2": ("v2/forecasts", "v2/reports")}
+
+
+def variant_version(variant: str) -> str:
+    if variant == "v2":
+        from src.services.projection_engine_v2_prospective import version as v2_version
+        return v2_version()
+    return version() if variant == "v1" else depth_version()
+
+
+VARIANT_RECIPES = {"v1": RECIPE, "depth": RECIPE + "_depth", "v2": "projection_engine_v2_lean"}
 
 
 def _record(p, game, recipe: str, v: str, now: datetime, extra: dict | None = None) -> dict:
@@ -216,7 +227,7 @@ def promotion_check(rows: list[dict], min_weeks: int = MIN_WEEKS) -> dict:
 async def report(db, variant: str = "v1") -> dict:
     root = archive_root()
     forecasts_dir, reports_dir = VARIANTS[variant]
-    current = version() if variant == "v1" else depth_version()
+    current = variant_version(variant)
     engine = [json.loads(p.read_text()) for p in sorted((root / forecasts_dir).glob("*.json"))]
     engine = {(r["game_id"], r["player_id"]): r for r in engine if r["version"] == current}
     provider_dir = Path(get_settings().raw_archive_dir) / "fantasy-prospective" / "provider-weekly"
@@ -296,7 +307,7 @@ async def report(db, variant: str = "v1") -> dict:
                                  "all_paired": summarize(consensus_rows), "promotion": promotion_check(consensus_rows)}}
     out = {"generated_at": datetime.now(timezone.utc).isoformat(), "variant": variant, **sources,
            "candidate_blend": out_blend,
-           "recipe": RECIPE if variant == "v1" else RECIPE + "_depth", "version": current, "engine_forecasts": len(engine), "statuses": statuses,
+           "recipe": VARIANT_RECIPES[variant], "version": current, "engine_forecasts": len(engine), "statuses": statuses,
            "all_paired": summarize(rows), "promotion": promotion_check(rows, VARIANT_MIN_WEEKS[variant]),
            **evidence_breakdown(rows),
            "evidence_type": "immutable_pregame_forecasts_current_version",

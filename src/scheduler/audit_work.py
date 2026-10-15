@@ -127,6 +127,31 @@ def projection_engine_research():
     return asyncio.run(run())
 
 
+@celery_app.task(name='fantasy.projection_engine_v2',soft_time_limit=840,time_limit=900)
+def projection_engine_v2():
+    """Freeze pregame engine v2 (lean) projections, then grade them against frozen Sleeper.
+
+    Research only (failed its registered 2022 test); a separate task so its
+    nflverse downloads can never delay v1's capture."""
+    async def run():
+        from src.services import projection_engine_v2_prospective
+        from src.services.projection_engine_prospective import report
+        out,errors={},{}
+        async with get_worker_db() as db:
+            for name,step in (('capture',projection_engine_v2_prospective.capture),('graded',lambda db:report(db,'v2'))):
+                try:
+                    out[name]=await step(db)
+                except Exception as exc:  # noqa: BLE001 - recorded, re-raised below
+                    await db.rollback()
+                    errors[name]=f'{type(exc).__name__}: {exc}'[:300]
+        result={'capture':out.get('capture'),'statuses':(out.get('graded') or {}).get('statuses'),
+                'errors':errors,'serving_promoted':False}
+        if errors:
+            raise RuntimeError(f'projection_engine_v2 steps failed: {errors}')
+        return result
+    return asyncio.run(run())
+
+
 @celery_app.task(name='fantasy.compress_raw_archive',soft_time_limit=1500,time_limit=1800)
 def compress_raw_archive():
     """Lossless gzip of day-old append-only archive files; see raw_retention.COMPRESSIBLE."""

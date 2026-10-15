@@ -1428,14 +1428,15 @@ class EngineQualification(BaseModel):
 def qualification_tracks(root) -> list[QualificationTrack]:
     """Latest saved prospective report per track; a missing report is a status, not zeros."""
     import json
-    from src.services.projection_engine_prospective import VARIANT_MIN_WEEKS, VARIANTS, version, depth_version
+    from src.services.projection_engine_prospective import VARIANT_MIN_WEEKS, VARIANTS, variant_version
 
     def summary(raw):
         raw = raw or {}
         return PairedSummary(**{k: raw.get(k) for k in PairedSummary.model_fields if raw.get(k) is not None})
 
     tracks = []
-    for variant, label in (('v1', 'Projection engine v1'), ('depth', 'Engine + depth chart/status')):
+    for variant, label in (('v1', 'Projection engine v1'), ('depth', 'Engine + depth chart/status'),
+                           ('v2', 'Projection engine v2 (research)')):
         MIN_WEEKS = VARIANT_MIN_WEEKS[variant]
         files = sorted((root / VARIANTS[variant][1]).glob('*.json'))
         if not files:
@@ -1454,7 +1455,7 @@ def qualification_tracks(root) -> list[QualificationTrack]:
             if not meta and not block:
                 continue  # older reports carry no ESPN/consensus grading yet
             reconstructed = 'Sleeper blend' in name
-            current = report.get('version') == (version() if variant == 'v1' else depth_version())
+            current = report.get('version') == variant_version(variant)
             pool = summary(block.get('pool') or (meta.get('all_paired') if reconstructed else {}))
             independent = pool.independent_weeks or len(pool.weeks)
             blockers = list(block.get('blockers', []))
@@ -1487,7 +1488,7 @@ def qualification_tracks(root) -> list[QualificationTrack]:
                                              required_weeks=VARIANT_MIN_WEEKS['v1']))
             continue
         pool = summary(block.get('pool'))
-        current = report.get('engine_version') == version()
+        current = report.get('engine_version') == variant_version('v1')
         meta = report.get('tracks', {}).get(key, {})
         tracks.append(QualificationTrack(name=name, status=report.get('status', 'unknown'), generated_at=report.get('generated_at'),
             version=report.get('engine_version'), graded_weeks=pool.independent_weeks or len(pool.weeks), required_weeks=block.get('required_weeks', 6),

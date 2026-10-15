@@ -25,7 +25,7 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_routes={name: {"queue": "evaluation"} for name in (
         "fantasy.evaluate_models", "fantasy.grade_forecasts", "fantasy.refresh_missing_results",
-        "fantasy.refresh_fantasy_models", "fantasy.projection_engine_research",
+        "fantasy.refresh_fantasy_models", "fantasy.projection_engine_research", "fantasy.projection_engine_v2",
         "fantasy.compress_raw_archive")},
     beat_schedule={
         "observe-operations": {"task":"fantasy.observe_operations","schedule":300.0},
@@ -36,6 +36,7 @@ celery_app.conf.update(
         "refresh-nfl-stats": {"task":"fantasy.refresh_nfl_stats","schedule":86400.0},
         "refresh-snap-counts": {"task":"fantasy.refresh_snap_counts","schedule":86400.0},
         "projection-engine-research": {"task":"fantasy.projection_engine_research","schedule":1800.0},
+        "projection-engine-v2": {"task":"fantasy.projection_engine_v2","schedule":10800.0},
         "raw-retention-report": {"task":"fantasy.raw_retention_report","schedule":86400.0},
         "compress-raw-archive": {"task":"fantasy.compress_raw_archive","schedule":3600.0},
         "archive-rosters": {"task": "fantasy.archive_rosters", "schedule": 21600.0},

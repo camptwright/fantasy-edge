@@ -110,7 +110,7 @@ def test_capture_is_create_only_and_versioned(tmp_path, monkeypatch):
 
 
 def test_depth_variant_qualifies_on_five_weeks():
-    assert prospective.VARIANT_MIN_WEEKS == {"v1": 6, "depth": 5}
+    assert prospective.VARIANT_MIN_WEEKS == {"v1": 6, "depth": 5, "v2": 6}
     five = prospective.promotion_check(_rows(range(1, 6), 4.0, 5.0), prospective.VARIANT_MIN_WEEKS["depth"])
     assert five["required_weeks"] == 5 and not any(b.startswith("needs_") for b in five["blockers"])
     assert "needs_6_graded_weeks_has_5" in prospective.promotion_check(_rows(range(1, 6), 4.0, 5.0))["blockers"]

@@ -27,16 +27,14 @@ import math
 import pickle
 import urllib.request
 from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import numpy as np
 
 from scripts.research_holdout import GATE_POOL
 from src.services import projection_engine_v2 as v2
+from src.services import projection_engine_v2_data as D
 from src.services.fantasy_decision_models import CORE, offensive_weights
-from src.services.game_environment import implied_points
 from src.services.projection_engine_prospective import week_bootstrap_ci
 
 SEASONS = list(range(2019, 2027))  # 2026: weeks played so far, for the frozen-baseline check
@@ -44,29 +42,12 @@ TRAIN_FROM = 2020
 SEALED = 2022
 GRADED = (2023, 2024, 2025)
 SLEEPER = "https://api.sleeper.app/v1/projections/nfl/regular/{season}/{week}"
-EASTERN = ZoneInfo("America/New_York")
 DRAWS, SEED = 4000, 0
-STAT_COLUMNS = {"targets": "targets", "receptions": "receptions", "receiving_yards": "receiving_yards",
-                "receiving_tds": "receiving_touchdowns", "carries": "rushing_attempts",
-                "rushing_yards": "rushing_yards", "rushing_tds": "rushing_touchdowns",
-                "attempts": "passing_attempts", "completions": "passing_completions",
-                "passing_yards": "passing_yards", "passing_tds": "passing_touchdowns",
-                "passing_interceptions": "passing_interceptions",
-                "passing_2pt_conversions": "passing_2pt_conversions",
-                "rushing_2pt_conversions": "rushing_2pt_conversions",
-                "receiving_2pt_conversions": "receiving_2pt_conversions"}
-FUMBLES = ("sack_fumbles_lost", "rushing_fumbles_lost", "receiving_fumbles_lost")
 X_COLUMNS = {"receptions_exp": "x_receptions", "rec_yards_gained_exp": "x_receiving_yards",
              "rec_touchdown_exp": "x_receiving_touchdowns", "rush_yards_gained_exp": "x_rushing_yards",
              "rush_touchdown_exp": "x_rushing_touchdowns", "pass_completions_exp": "x_passing_completions",
              "pass_yards_gained_exp": "x_passing_yards", "pass_touchdown_exp": "x_passing_touchdowns",
              "pass_interception_exp": "x_passing_interceptions"}
-SLEEPER_VOLUME = {"targets": "rec_tgt", "rushing_attempts": "rush_att", "passing_attempts": "pass_att"}
-ON_ROSTER = ("ACT", "INA")
-
-
-def kickoff(gameday: str, gametime: str | None) -> datetime:
-    return datetime.fromisoformat(f"{gameday}T{gametime or '13:00'}").replace(tzinfo=EASTERN)
 
 
 def sleeper_week(cache: Path, season: int, week: int) -> dict:
@@ -74,41 +55,27 @@ def sleeper_week(cache: Path, season: int, week: int) -> dict:
     if not path.exists():
         with urllib.request.urlopen(SLEEPER.format(season=season, week=week), timeout=60) as r:
             path.write_text(r.read().decode())
-    return {k: v for k, v in json.loads(path.read_text()).items() if isinstance(v, dict) and v}
+    return json.loads(path.read_text())
 
 
 # ---------------------------------------------------------------- build
 
 def build(out: Path) -> dict:
-    """Per-game records from nflverse, cached: games, team-games, player-games, rosters, Sleeper."""
+    """Shared v2 records (projection_engine_v2_data.assemble) plus lab-only play-by-play and xFP detail."""
     import nflreadpy as nfl
     import polars as pl
-    games = {}
-    for g in nfl.load_schedules(SEASONS).iter_rows(named=True):
-        if g["game_type"] != "REG" or g["home_score"] is None:
-            continue
-        home_spread = -float(g["spread_line"]) if g["spread_line"] is not None else None
-        hp, ap = implied_points(float(g["total_line"]), home_spread) if home_spread is not None and g["total_line"] is not None else (None, None)
-        games[g["game_id"]] = {"season": g["season"], "week": g["week"], "kickoff": kickoff(g["gameday"], g["gametime"]),
-                               "home": g["home_team"], "away": g["away_team"], "home_points": hp, "away_points": ap,
-                               "home_spread": home_spread, "total": g["total_line"],
-                               "score": {g["home_team"]: g["home_score"], g["away_team"]: g["away_score"]}}
-    players, team_tot = {}, defaultdict(lambda: defaultdict(float))
-    for r in nfl.load_player_stats(SEASONS, summary_level="week").iter_rows(named=True):
-        g = games.get(r["game_id"])
-        if g is None or r["team"] not in (g["home"], g["away"]):
-            continue
-        stats = {stat: float(r[col] or 0) for col, stat in STAT_COLUMNS.items()}
-        stats["fumbles_lost"] = float(sum(r[c] or 0 for c in FUMBLES))
-        players[(r["game_id"], r["player_id"])] = {
-            "gsis": r["player_id"], "game_id": r["game_id"], "season": g["season"], "week": g["week"],
-            "kickoff": g["kickoff"], "team": r["team"], "position": r["position"], "stats": stats,
-            "air_yards": float(r["receiving_air_yards"] or 0)}
-        t = team_tot[(r["game_id"], r["team"])]
-        t["targets"] += stats["targets"]
-        t["carries"] += stats["rushing_attempts"]
-        t["pass_att"] += stats["passing_attempts"]
-        t["air_yards"] += max(0.0, float(r["receiving_air_yards"] or 0))
+    schedules = list(nfl.load_schedules(SEASONS).iter_rows(named=True))
+    rosters = list(nfl.load_rosters_weekly(SEASONS).iter_rows(named=True))
+    cache = out / "sleeper"
+    cache.mkdir(parents=True, exist_ok=True)
+    played = sorted({(g["season"], g["week"]) for g in schedules if g["game_type"] == "REG" and g["home_score"] is not None})
+    sleeper = {}
+    for season in SEASONS:
+        for week in sorted({w for s, w in played if s == season}) if season >= TRAIN_FROM else (1,):
+            sleeper[(season, week)] = sleeper_week(cache, season, week)
+    data = D.assemble(schedules, nfl.load_player_stats(SEASONS, summary_level="week").iter_rows(named=True),
+                      nfl.load_snap_counts(SEASONS).iter_rows(named=True), rosters,
+                      nfl.load_ff_playerids().iter_rows(named=True), sleeper)
     team_pbp, player_pbp = {}, defaultdict(lambda: defaultdict(float))
     for season in SEASONS:
         pbp = nfl.load_pbp([season]).filter((pl.col("season_type") == "REG") & (pl.col("two_point_attempt") != 1)
@@ -145,233 +112,40 @@ def build(out: Path) -> dict:
     for r in nfl.load_ff_opportunity(SEASONS).iter_rows(named=True):
         if r["game_id"] and r["player_id"]:
             xfp[(r["game_id"], r["player_id"])] = {name: float(r[c]) if r[c] is not None else None for c, name in X_COLUMNS.items()}
-    rosters = nfl.load_rosters_weekly(SEASONS)
-    pfr_to_gsis, sleeper_to_gsis, rookie, on_team = {}, {}, {}, defaultdict(set)
-    for r in rosters.iter_rows(named=True):
-        g = r["gsis_id"]
-        if not g:
-            continue
-        if r["pfr_id"]:
-            pfr_to_gsis[r["pfr_id"]] = g
-        if r["sleeper_id"]:
-            sleeper_to_gsis[str(r["sleeper_id"])] = g
-        if r["rookie_year"] == r["season"] and r["draft_number"]:
-            rookie[(r["season"], g)] = int(r["draft_number"])
-        if r["status"] in ON_ROSTER and r["game_type"] == "REG":
-            on_team[(r["season"], r["week"], r["team"])].add(g)
-    ids = nfl.load_ff_playerids()
-    for s, g in zip(ids["sleeper_id"].to_list(), ids["gsis_id"].to_list()):
-        if s is not None and g:
-            sleeper_to_gsis.setdefault(str(int(s)) if isinstance(s, float) else str(s), g)
-    snaps = {}
-    for r in nfl.load_snap_counts(SEASONS).iter_rows(named=True):
-        g = pfr_to_gsis.get(r["pfr_player_id"])
-        if g and r["game_type"] == "REG":
-            snaps[(r["game_id"], g)] = float(r["offense_pct"] or 0)
-    for key, p in players.items():
+    for key, p in data["players"].items():
         tp = team_pbp.get((p["game_id"], p["team"]), {})
-        tt = team_tot[(p["game_id"], p["team"])]
-        p.update({"team_targets": tt["targets"], "team_carries": tt["carries"], "team_pass_att": tt["pass_att"],
-                  "team_air_yards": tt["air_yards"], "team_dropbacks": tp.get("dropbacks", 0.0),
-                  "team_rz_targets": tp.get("rz_targets", 0.0), "team_rz_carries": tp.get("rz_carries", 0.0),
-                  "team_gl_carries": tp.get("gl_carries", 0.0), "snap_pct": snaps.get(key)})
-        p.update({k: v for k, v in player_pbp.get(key, {}).items()})
+        p.update({"team_dropbacks": tp.get("dropbacks", 0.0), "team_rz_targets": tp.get("rz_targets", 0.0),
+                  "team_rz_carries": tp.get("rz_carries", 0.0), "team_gl_carries": tp.get("gl_carries", 0.0)})
+        p.update(player_pbp.get(key, {}))
         p.update(xfp.get(key, {}))
-    teams = {}
-    for (game_id, team), tt in team_tot.items():
-        g = games[game_id]
-        home = team == g["home"]
-        tp = team_pbp.get((game_id, team), {})
-        teams[(game_id, team)] = {"game_id": game_id, "team": team, "opp": g["away"] if home else g["home"],
-                                  "season": g["season"], "week": g["week"], "kickoff": g["kickoff"],
-                                  "implied": g["home_points"] if home else g["away_points"],
-                                  "spread": (g["home_spread"] if home else -g["home_spread"]) if g["home_spread"] is not None else None,
-                                  "total": g["total"], "pass_att": tt["pass_att"], "carries": tt["carries"],
-                                  "targets": tt["targets"], "plays": tp.get("plays", tt["pass_att"] + tt["carries"]),
-                                  "dropbacks": tp.get("dropbacks", tt["pass_att"]), "proe": tp.get("proe")}
-    cache = out / "sleeper"
-    cache.mkdir(parents=True, exist_ok=True)
-    sleeper = {}
-    for season in SEASONS:
-        played = sorted({g["week"] for g in games.values() if g["season"] == season})
-        for week in (played if season >= TRAIN_FROM else (1,)):
-            sleeper[(season, week)] = {sleeper_to_gsis[k]: v for k, v in sleeper_week(cache, season, week).items()
-                                       if k in sleeper_to_gsis}
-    data = {"games": games, "teams": teams, "players": players, "rookie": rookie, "on_team": dict(on_team),
-            "sleeper": sleeper}
+    for key, t in data["teams"].items():
+        tp = team_pbp.get(key)
+        if tp:
+            t.update({"plays": tp["plays"], "dropbacks": tp["dropbacks"], "proe": tp["proe"]})
     (out / "records.pkl").write_bytes(pickle.dumps(data))
     return data
 
 
 def build_availability(out: Path) -> dict:
-    """Pre-game availability: injury-report Out/Doubtful, roster status, depth-chart rank."""
     import nflreadpy as nfl
     import polars as pl
     games = pickle.loads((out / "records.pkl").read_bytes())["games"]
-    out_list = defaultdict(set)
-    for r in nfl.load_injuries(SEASONS).iter_rows(named=True):
-        if r["game_type"] == "REG" and r["report_status"] in ("Out", "Doubtful") and r["gsis_id"]:
-            out_list[(r["season"], r["week"], r["team"])].add(r["gsis_id"])
-    for r in nfl.load_rosters_weekly(SEASONS).iter_rows(named=True):
-        if r["game_type"] == "REG" and r["gsis_id"] and r["status"] in ("RES", "DEV", "CUT", "RET", "EXE", "TRD"):
-            out_list[(r["season"], r["week"], r["team"])].add(r["gsis_id"])
-    depth = {}
     weekly = [s for s in SEASONS if s <= 2024]
-    for r in nfl.load_depth_charts(weekly).filter(
-            (pl.col("formation") == "Offense") & pl.col("position").is_in(list(v2.POSITIONS))
-            & (pl.col("game_type") == "REG")).iter_rows(named=True):
-        if r["gsis_id"] and r["depth_team"]:
-            key = (r["season"], r["week"], r["club_code"], r["gsis_id"])
-            depth[key] = min(depth.get(key, 99), int(r["depth_team"]))
-    kick = defaultdict(dict)
-    for g in games.values():
-        if g["season"] >= 2025:
-            for team in (g["home"], g["away"]):
-                kick[(g["season"], team)][g["week"]] = g["kickoff"]
+    snapshots = []
     for season in [s for s in SEASONS if s >= 2025]:
-        snap = nfl.load_depth_charts([season]).filter(pl.col("pos_abb").is_in(list(v2.POSITIONS)) & pl.col("gsis_id").is_not_null())
-        by_team = defaultdict(lambda: defaultdict(dict))
-        for r in snap.iter_rows(named=True):
-            dt = datetime.fromisoformat(r["dt"].replace("Z", "+00:00"))
-            cur = by_team[r["team"]][dt]
-            cur[r["gsis_id"]] = min(cur.get(r["gsis_id"], 99), int(r["pos_rank"]))
-        for team, snaps in by_team.items():
-            times = sorted(snaps)
-            for week, ko in kick.get((season, team), {}).items():
-                before = [t for t in times if t < ko]
-                if before:
-                    for gsis, rank in snaps[before[-1]].items():
-                        depth[(season, week, team, gsis)] = rank
-    extra = {"out": dict(out_list), "depth": depth}
+        snapshots += nfl.load_depth_charts([season]).filter(pl.col("gsis_id").is_not_null()).iter_rows(named=True)
+    extra = D.availability(games, nfl.load_injuries(SEASONS).iter_rows(named=True),
+                           nfl.load_rosters_weekly(SEASONS).iter_rows(named=True),
+                           nfl.load_depth_charts(weekly).iter_rows(named=True), snapshots)
     (out / "availability.pkl").write_bytes(pickle.dumps(extra))
-    print("availability", len(out_list), "depth", len(depth))
+    print("availability", len(extra["out"]), "depth", len(extra["depth"]))
     return extra
 
 
-def team_availability(data: dict, extra: dict) -> dict:
-    """(season, week, team) -> {position or '*': {out_<stat>, return_<stat>}} from teammates' recent shares."""
-    by_team = defaultdict(list)
-    for p in data["players"].values():
-        by_team[p["team"]].append(p)
-    out = {}
-    for team, ps in by_team.items():
-        games = sorted({(p["kickoff"], p["game_id"], p["season"], p["week"]) for p in ps})
-        played = defaultdict(list)
-        for p in sorted(ps, key=lambda p: p["kickoff"]):
-            played[p["game_id"]].append(p)
-        for i, (_, game_id, season, week) in enumerate(games):
-            recent = games[max(0, i - 4):i]
-            if not recent:
-                continue
-            last_ids = {p["gsis"] for p in played[recent[-1][1]]}
-            seen = defaultdict(list)
-            for _, gid, _, _ in recent:
-                for p in played[gid]:
-                    seen[p["gsis"]].append(p)
-            listed = extra["out"].get((season, week, team), set())
-            agg = defaultdict(lambda: defaultdict(float))
-            for gsis, games_p in seen.items():
-                pos = games_p[-1]["position"]
-                for stat, key in v2.SHARES.items():
-                    shares = [g["stats"][stat] / g["team_" + key] for g in games_p[-3:] if g["team_" + key] > 0]
-                    share = float(np.mean(shares)) if shares else 0.0
-                    if gsis in listed:
-                        kind = "out"
-                    elif gsis not in last_ids:
-                        kind = "return"
-                    else:
-                        continue
-                    for scope in ("*", pos):
-                        agg[scope][f"{kind}_{stat}"] += share
-            out[(season, week, team)] = {k: dict(v) for k, v in agg.items()}
-    return out
-
-
-# ---------------------------------------------------------------- features
-
-def features(data: dict, scoring: dict) -> tuple[list[dict], list[dict]]:
-    teams, players = data["teams"], data["players"]
-    by_team = defaultdict(list)
-    for t in sorted(teams.values(), key=lambda t: t["kickoff"]):
-        by_team[t["team"]].append(t)
-    team_rows, team_feat = [], {}
-    for team, seq in by_team.items():
-        for i, t in enumerate(seq):
-            if t["implied"] is None:
-                continue
-            opp_seq = [x for x in by_team.get(t["opp"], []) if x["kickoff"] < t["kickoff"]]
-            allowed = [teams[(x["game_id"], x["opp"])] for x in opp_seq if (x["game_id"], x["opp"]) in teams]
-            f = v2.team_features(seq[:i], t, allowed)
-            team_feat[(t["game_id"], team)] = f
-            team_rows.append({**f, "season": t["season"], "week": t["week"], "kickoff": t["kickoff"],
-                              "pass_att": t["pass_att"], "carries": t["carries"]})
-    by_player = defaultdict(list)
-    for p in sorted(players.values(), key=lambda p: p["kickoff"]):
-        by_player[p["gsis"]].append(p)
-    rates = {s: v2.league_rates([p for p in players.values() if p["season"] < s or (s == SEASONS[0] and p["season"] == s)])
-             for s in SEASONS}
-    vacated = vacated_volume(data)
-    extra_path = out_dir_of(data)
-    extra = pickle.loads(extra_path.read_bytes()) if extra_path and extra_path.exists() else {"out": {}, "depth": {}}
-    avail = team_availability(data, extra)
-    sw = offensive_weights(scoring)
-    rows = []
-    for gsis, seq in by_player.items():
-        for i, p in enumerate(seq):
-            if p["position"] not in v2.POSITIONS or p["season"] < TRAIN_FROM:
-                continue
-            tf = team_feat.get((p["game_id"], p["team"]))
-            if tf is None:
-                continue
-            s1 = data["sleeper"].get((p["season"], 1), {}).get(gsis)
-            s1 = s1 if p["week"] > 1 else None
-            ctx = {"sleeper_w1": {k: float(s1.get(c, 0) or 0) for k, c in SLEEPER_VOLUME.items()} if s1 else None,
-                   "rookie_pick": data["rookie"].get((p["season"], gsis)),
-                   "vacated": vacated.get((p["season"], p["week"], p["team"])),
-                   "availability": avail.get((p["season"], p["week"], p["team"]), {}),
-                   "depth_rank": extra["depth"].get((p["season"], p["week"], p["team"], gsis))}
-            row = v2.player_features(seq[:i], p, ctx, rates[p["season"]])
-            # Sleeper's archived projections absorb in-game news (docs/2026-10-15-engine-v2-plan.md,
-            # "Sleeper archive leakage"), so only projections for games already played are inputs:
-            # last week's, and week 1's from week 2 on.
-            prev = next((data["sleeper"].get((p["season"], w), {}).get(gsis) for w in range(p["week"] - 1, 0, -1)
-                         if data["sleeper"].get((p["season"], w), {}).get(gsis, {}).get("gp")), None)
-            for stat, col in SLEEPER_VOLUME.items():
-                row[f"sl_prev_{stat}"] = float(prev.get(col, 0) or 0) / v2.VOLUME_DENOM[stat] if prev else math.nan
-            row["sl_prev_missing"] = float(prev is None)
-            row.update(tf)
-            row.update({"position": p["position"], "stats": p["stats"], "team_targets": p["team_targets"],
-                        "team_carries": p["team_carries"], "team_pass_att": p["team_pass_att"]})
-            v2.add_league_rates(row, rates[p["season"]])
-            sl = data["sleeper"].get((p["season"], p["week"]), {}).get(gsis)
-            meta = {"gsis": gsis, "game_id": p["game_id"], "season": p["season"], "week": p["week"],
-                    "kickoff": p["kickoff"], "team": p["team"],
-                    "sleeper": sum(float(sl.get(k, 0) or 0) * w for k, w in sw.items()) if sl else None}
-            rows.append((row, meta))
-    return team_rows, rows
-
-
-def vacated_volume(data: dict) -> dict:
-    """(season, week, team) -> last season's target/carry share of players no longer on the active roster."""
-    season_tot = defaultdict(lambda: defaultdict(float))
-    player_tot = defaultdict(lambda: defaultdict(float))
-    for p in data["players"].values():
-        season_tot[(p["season"], p["team"])]["targets"] += p["stats"]["targets"]
-        season_tot[(p["season"], p["team"])]["rushing_attempts"] += p["stats"]["rushing_attempts"]
-        player_tot[(p["season"], p["team"], p["gsis"])]["targets"] += p["stats"]["targets"]
-        player_tot[(p["season"], p["team"], p["gsis"])]["rushing_attempts"] += p["stats"]["rushing_attempts"]
-    last = defaultdict(list)
-    for (season, team, gsis), tot in player_tot.items():
-        last[(season, team)].append((gsis, tot))
-    out = {}
-    for (season, week, team), roster in data["on_team"].items():
-        prev = last.get((season - 1, team), [])
-        st = season_tot.get((season - 1, team))
-        if not prev or not st:
-            continue
-        out[(season, week, team)] = {stat: sum(t[stat] for g, t in prev if g not in roster) / st[stat] if st[stat] else 0.0
-                                     for stat in ("targets", "rushing_attempts")}
-    return out
+def features(data: dict, scoring: dict) -> tuple[list[dict], list]:
+    path = OUT_DIR[0] / "availability.pkl" if OUT_DIR[0] else None
+    extra = pickle.loads(path.read_bytes()) if path and path.exists() else {"out": {}, "depth": {}}
+    return D.features(data, extra, offensive_weights(scoring))
 
 
 # ---------------------------------------------------------------- rolling origin
@@ -399,10 +173,6 @@ def run(team_rows: list[dict], rows: list, groups, weeks: list[tuple[int, int]])
 
 FRAME_CACHE: dict = {}
 OUT_DIR: list = [None]
-
-
-def out_dir_of(_data) -> Path | None:
-    return OUT_DIR[0] / "availability.pkl" if OUT_DIR[0] else None
 
 
 # ---------------------------------------------------------------- grading
@@ -482,7 +252,7 @@ CONFIGS = {
     **{f"core+{g}": ("core", g) for g in v2.GROUPS if g != "core"},
     "all": v2.GROUPS,
     # groups that earned their place in development, and need no play-by-play
-    "lean": ("core", "offseason", "role", "availability", "sleeper_prev"),
+    "lean": D.LEAN,
     **{f"all-{g}": tuple(x for x in v2.GROUPS if x != g) for g in v2.GROUPS if g != "core"},
 }
 

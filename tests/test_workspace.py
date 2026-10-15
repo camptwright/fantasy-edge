@@ -488,7 +488,7 @@ def test_game_log_comes_from_league_scored_history_only():
 
 def test_engine_qualification_reads_latest_reports_and_never_promotes(tmp_path):
     import json
-    assert [(t.status, t.required_weeks) for t in workspace.qualification_tracks(tmp_path)] == [('no_report_yet', 6), ('no_report_yet', 5)] + [('no_report_yet', 6)] * 3
+    assert [(t.status, t.required_weeks) for t in workspace.qualification_tracks(tmp_path)] == [('no_report_yet', 6), ('no_report_yet', 5), ('no_report_yet', 6)] + [('no_report_yet', 6)] * 3
     promo = {'eligible_for_owner_review': False, 'blockers': ['needs_6_graded_weeks_has_2'],
              'pool': {'n': 40, 'weeks': [6, 7], 'engine_mae': 5.1, 'sleeper_mae': 5.3, 'paired_difference': -0.2, 'ci': [-0.5, 0.1]}}
     for sub in ('reports', 'depth/reports'):
