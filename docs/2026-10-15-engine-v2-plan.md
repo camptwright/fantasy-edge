@@ -289,3 +289,32 @@ Spends the sealed 2022 season once, as approved.
   before week 11.
 
     .venv/bin/python -m scripts.engine_lab confirm --scoring warriors_scoring.json --out lab --configs lean
+
+### Registered test result (2026-10-15, run once after the registration commit 20c2da0)
+
+**Failed: two of four conditions.**
+
+| Condition | 2022 result (95% CI) | Met |
+|---|---|---|
+| 1. v2 minus v1 < 0 | -0.020 (-0.106, +0.056), 1,579 pool rows | no |
+| 2. v2 not significantly worse than the Sleeper archive | -0.033 (-0.126, +0.059) | yes |
+| 3. Blend minus Sleeper archive < 0 | -0.051 (-0.107, +0.006) | no |
+| 4. No position significantly worse than v1 | QB -0.06, RB -0.07, WR +0.03, TE -0.01; none significant | yes |
+
+- Every pooled difference points the same way as in development, but v2's
+  gain over v1 is a quarter of the development estimate (-0.020 vs -0.074).
+- Weeks 1-4 carry it: -0.134 vs v1 (weeks 5-18: +0.014). The offseason
+  prior is the part that replicates.
+- By position against the Sleeper archive: QB -0.41 (significant), RB
+  -0.12, WR +0.19 (significant), TE -0.04. The blend gains significantly at
+  QB and RB and loses at WR.
+- One difference from development, noted after the fact and not used to
+  excuse the result: 2022's models train on two prior seasons, against up
+  to five in development.
+
+What it means: v2 is **not confirmed**. It does not serve decisions, and
+"beats v1" or "beats Sleeper" is not claimed. It is captured
+prospectively as a research track beside v1 and the depth variant,
+against Sleeper frozen before kickoff. That is the only clean test left.
+Any v2 change from here is a new version with its own prospective
+record.
