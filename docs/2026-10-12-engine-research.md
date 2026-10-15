@@ -471,3 +471,56 @@ Changes made as a result:
   Decisions keep using Sleeper's projections, which this test supports.
 - 2022 (Sleeper and nflverse both available, 2021 as history) stays sealed for
   the next engine with a structural change, under a protocol registered first.
+
+## Do advanced usage stats help? (2026-10-15, `scripts/research_advanced_stats.py`)
+
+Exploratory, development seasons only (2023-2025 W1-18 graded, 2022 used as
+history and never graded, so it stays sealed). 16,814 player-weeks with an
+engine projection, a Sleeper projection and a stat line.
+
+Added to the box-score usage the engine already reads (targets, carries,
+attempts, team shares, trailing points), all trailing and strictly before
+kickoff: nflverse expected fantasy points rescored with league scoring (xFP)
+and points minus xFP; snap share and a route proxy (on field on a dropback,
+from nflverse participation); targets per route; air-yard share; aDOT; WOPR;
+red-zone target/carry and goal-line carry shares; last-game snap/route share
+and snap trend. Coverage: snap/route 100%, xFP 98%, aDOT 79%.
+
+Method: residual corrections trained leave-one-season-out, same learner with
+and without the advanced set, graded on the symmetric starter pool (top
+12/24/30/12 by either source), week-cluster bootstrap. Two learners:
+absolute-error gradient boosting, and per-position Huber linear models.
+
+Paired MAE difference (negative = the advanced set helps), points per player:
+
+| Comparison | Boosting | Linear |
+|---|---|---|
+| Sleeper + box correction, adding advanced | +0.004 (-0.011, +0.019) | +0.013 (-0.003, +0.029) |
+| Sleeper + advanced correction vs raw Sleeper | -0.005 (-0.039, +0.031) | +0.007 (-0.034, +0.048) |
+| Engine + box correction, adding advanced | -0.019 (-0.044, +0.006) | +0.011 (-0.013, +0.035) |
+| Engine + advanced correction vs raw Sleeper | +0.110 (+0.047, +0.173) | +0.136 (+0.074, +0.196) |
+| Raw engine vs raw Sleeper (same rows) | +0.076 (+0.019, +0.131) | |
+
+Findings:
+
+- The advanced stats carry no measurable information beyond box-score usage
+  and Sleeper's projection. The confidence intervals are narrow (about
+  ±0.02 points per player), so this is a tight null, not an underpowered one.
+- They do not close the engine's gap to Sleeper. The gap (~0.08-0.14) is not
+  missing usage detail; the likeliest source is what RotoWire knows before
+  kickoff that no box score shows: injuries and practice reports, inactives,
+  depth-chart and coaching changes, news.
+- Single-stat signal agrees: no feature's Spearman correlation with Sleeper's
+  miss exceeds 0.10 at any position. The largest are TE last-game route share
+  and snap trend (~0.10): Sleeper reacts slowly to TE role changes. The
+  boosted engine correction gained 0.10 at TE (-0.164, -0.038), the linear
+  one 0.05 (CI touching zero). That is the only lead, and it is post hoc.
+- xFP is the best single trailing predictor of next-week points for QB, and
+  roughly ties trailing actual points elsewhere, as the practitioner
+  literature claims. But the engine already captures the same volume.
+
+Decision: do not add these stats to the engine or the decision models. The
+next engine work, if any, should target pre-kickoff information (injury
+designations, practice participation, inactives) rather than more usage
+detail. It would be tested on the sealed 2022 season under a newly
+registered protocol.
