@@ -135,19 +135,23 @@ def projection_engine_v2():
     2026-10-15). A separate task so its nflverse downloads can never delay
     v1's capture."""
     async def run():
-        from src.services import projection_engine_v2_serving
+        from src.services import projection_engine_v2_serving, sleeper_season_projections
         from src.services.projection_engine_prospective import report
         out,errors={},{}
         async with get_worker_db() as db:
-            for name,step in (('serve',projection_engine_v2_serving.run),('graded',lambda db:report(db,'v2'))):
+            for name,step in (('serve',projection_engine_v2_serving.run),('graded',lambda db:report(db,'v2')),
+                              ('season_projections',sleeper_season_projections.capture)):
                 try:
                     out[name]=await step(db)
                 except Exception as exc:  # noqa: BLE001 - recorded, re-raised below
                     await db.rollback()
                     errors[name]=f'{type(exc).__name__}: {exc}'[:300]
         served=out.get('serve') or {}
-        result={'serving':served.get('serving'),'capture':served.get('capture'),
-                'statuses':(out.get('graded') or {}).get('statuses'),'errors':errors}
+        graded=out.get('graded') or {}
+        result={'serving':served.get('serving'),'capture':served.get('capture'),'statuses':graded.get('statuses'),
+                'blend':((graded.get('production_blend') or {}).get('all_paired') or {}).get('paired_difference'),
+                'espn_statuses':(graded.get('espn_league') or {}).get('statuses'),
+                'season_projections':out.get('season_projections'),'errors':errors}
         if errors:
             raise RuntimeError(f'projection_engine_v2 steps failed: {errors}')
         return result

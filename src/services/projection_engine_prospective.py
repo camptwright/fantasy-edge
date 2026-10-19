@@ -224,6 +224,116 @@ def promotion_check(rows: list[dict], min_weeks: int = MIN_WEEKS) -> dict:
             "pool": overall, "positions": positions, "serving_promoted": False}
 
 
+def blend_rows(rows: list[dict], weights: dict[str, float] | float = 0.5) -> list[dict]:
+    """The decision projection on graded rows: w * engine + (1 - w) * provider.
+
+    Mirrors fantasy_decision_models.blend_engine_v2: a provider projection of
+    zero or less stays the provider's (out or bye; the engine is conditional
+    on playing).
+    """
+    out = []
+    for r in rows:
+        w = weights if isinstance(weights, float) else weights.get(r["position"], 0.5)
+        value = w * r["engine"] + (1 - w) * r["sleeper"] if r["sleeper"] > 0 else r["sleeper"]
+        out.append({**r, "engine": round(value, 2), "engine_error": abs(value - r["actual"])})
+    return out
+
+
+WEIGHT_GRID = tuple(i / 10 for i in range(11))
+
+
+def fit_weights(rows: list[dict]) -> dict[str, float]:
+    """Per-position weight on the engine minimising MAE over `rows` (grid of tenths, ties to 0.5)."""
+    weights = {}
+    for position in POOL:
+        members = [r for r in rows if r["position"] == position and r["sleeper"] > 0]
+        if members:
+            weights[position] = min(WEIGHT_GRID, key=lambda w: (
+                np.mean([abs(w * r["engine"] + (1 - w) * r["sleeper"] - r["actual"]) for r in members]), abs(w - 0.5)))
+    return weights
+
+
+def position_weight_candidate(rows: list[dict]) -> dict:
+    """Research only: per-position blend weights, scored leave-one-week-out against the fixed 0.5 blend.
+
+    Each held-out week is predicted with weights fitted on the other graded
+    weeks, so the comparison is out of sample. Early-season weights need a
+    season of weeks 1-4 captures (v2's capture began in week 6, 2026).
+    """
+    weeks = sorted({(r.get("season"), r["week"]) for r in rows}, key=str)
+    if len(weeks) < 3:
+        return {"status": f"needs_3_graded_weeks_has_{len(weeks)}", "serving_promoted": False}
+    held = []
+    for week in weeks:
+        train = [r for r in rows if (r.get("season"), r["week"]) != week]
+        test = [r for r in rows if (r.get("season"), r["week"]) == week]
+        fitted = blend_rows(test, fit_weights(train))
+        fixed = {(r["game_id"], r["player_id"], r["league_id"]): r for r in blend_rows(test)}
+        held += [{**r, "sleeper": fixed[(r["game_id"], r["player_id"], r["league_id"])]["engine"],
+                  "sleeper_error": fixed[(r["game_id"], r["player_id"], r["league_id"])]["engine_error"]} for r in fitted]
+    return {"status": "research", "weights_all_weeks": fit_weights(rows),
+            "comparison": "leave_one_week_out_position_weights_vs_fixed_half",
+            "vs_fixed_half": summarize(held), "serving_promoted": False}
+
+
+def production_blend(rows: list[dict]) -> dict:
+    blended = blend_rows(rows)
+    return {"members": ["sleeper", "engine_v2"], "weight": 0.5, "all_paired": summarize(blended),
+            "promotion": promotion_check(blended), **evidence_breakdown(blended),
+            "position_weights": position_weight_candidate(rows)}
+
+
+async def espn_league_rows(db, engine: dict, leagues: dict) -> dict:
+    """v2 and the v2 + ESPN blend in ESPN leagues, graded against ESPN's reconciled player scores.
+
+    The provider is ESPN's own applied total, frozen pregame by
+    fantasy_weekly_evidence; v2 is scored with that league's ESPN rules
+    (player_scoring), and positions whose rules v2 cannot fully score are skipped.
+    """
+    from src.services.fantasy_decision_models import player_scoring
+    from src.services.fantasy_weekly_evidence import grade_archive
+    provider_dir = Path(get_settings().raw_archive_dir) / "fantasy-prospective" / "provider-weekly"
+    engine_games = {game_id for game_id, _ in engine}
+    records = [json.loads(p.read_text()) for p in sorted(provider_dir.glob("*.json"))]
+    records = [r for r in records if r["league_id"].startswith("espn:")
+               and r.get("prediction", {}).get("source") == "espn" and r["game_id"] in engine_games]
+    identity = await resolve_platform_players(db, "espn", sorted({r["player_id"] for r in records}))
+    rows, statuses = [], {}
+
+    def count(status):
+        statuses[status] = statuses.get(status, 0) + 1
+    for r in records:
+        player, league = identity.get(r["player_id"]), leagues.get(r["league_id"])
+        frozen = engine.get((r["game_id"], str(player.id))) if player else None
+        if frozen is None or league is None:
+            count("unpaired")
+            continue
+        if datetime.fromisoformat(frozen["captured_at"]) >= datetime.fromisoformat(frozen["kickoff"]):
+            count("invalid_engine_capture_time")
+            continue
+        scoring, gaps = player_scoring(league, r["position"])
+        if gaps:
+            count("partial_scoring")
+            continue
+        game = await db.get(Game, uuid.UUID(r["game_id"]))
+        archive = await db.get(SleeperLeagueSnapshot, (r["league_id"], r["week"], "historical_player_scores"))
+        result = grade_archive(r, game, archive)
+        if result["status"] != "graded_platform_total":
+            count(result.get("result_blocker", result["status"]))
+            continue
+        points = score(frozen["stats"], {CORE[k]: w for k, w in offensive_weights(scoring).items() if k in CORE})
+        count("graded")
+        rows.append({"league_id": r["league_id"], "season": game.season, "week": r["week"], "position": r["position"],
+                     "game_id": r["game_id"], "player_id": str(player.id), "actual": result["actual"],
+                     "sleeper": r["prediction"]["points"], "engine": round(points, 2),
+                     "sleeper_error": result["absolute_error"], "engine_error": abs(points - result["actual"])})
+    blended = blend_rows(rows)
+    return {"provider": "espn", "note": "'sleeper' fields hold the ESPN provider projection in this section",
+            "statuses": statuses, "engine_v2": summarize(rows), "blend": summarize(blended),
+            "blend_promotion": promotion_check(blended), "blend_by_position":
+            {p: summarize([r for r in blended if r["position"] == p]) for p in POOL}}
+
+
 async def report(db, variant: str = "v1") -> dict:
     root = archive_root()
     forecasts_dir, reports_dir = VARIANTS[variant]
@@ -305,6 +415,9 @@ async def report(db, variant: str = "v1") -> dict:
                             "promotion": promotion_check(espn_rows)},
                    "consensus": {"members": ["sleeper", "espn", "engine_v1"], "weights": "equal",
                                  "all_paired": summarize(consensus_rows), "promotion": promotion_check(consensus_rows)}}
+    if variant == "v2":
+        sources = {"production_blend": production_blend(rows),
+                   "espn_league": await espn_league_rows(db, engine, leagues)}
     out = {"generated_at": datetime.now(timezone.utc).isoformat(), "variant": variant, **sources,
            "candidate_blend": out_blend,
            "recipe": VARIANT_RECIPES[variant], "version": current, "engine_forecasts": len(engine), "statuses": statuses,

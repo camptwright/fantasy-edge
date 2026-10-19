@@ -390,3 +390,27 @@ changes before week 11.
   169 (2016 Warriors), 209 (Inaugural Crossover), 185 (ESPN league).
 - **How to measure it.** The frozen v2 track still decides whether the
   blend is earning its place. Review it after 6 graded weeks.
+
+## Grading the production setup (2026-10-18)
+
+- **Blend grading.** `report(db, "v2")` now also grades the blend that
+  decisions actually use (`production_blend`): 50/50 v2 + frozen Sleeper,
+  with the same zero rule as decisions. It reports the starter pool,
+  positions, weeks and the promotion criterion.
+- **ESPN league.** `espn_league` grades v2, and the v2 + ESPN blend, in the
+  ESPN league against ESPN's reconciled player scores (`grade_archive`).
+  - v2 is scored with that league's ESPN rules.
+  - Positions whose rules v2 cannot fully score are skipped, as in
+    decisions.
+- **Position weights (research only).** Per-position engine weights on a
+  grid of tenths.
+  - Each held-out week is scored with weights fitted on the other graded
+    weeks, against the fixed 0.5.
+  - Needs at least 3 graded weeks. Never served.
+  - Early-season weights need weeks 1-4 captures, which means 2027.
+- **Season-long prior.** `sleeper_season_projections.capture` freezes
+  Sleeper's season-long projections whenever Sleeper updates them. It runs
+  in the v2 task, and the copies are gzipped after a day.
+  - First copy: 3,117 rows.
+  - Nothing reads it yet. It becomes testable once enough weeks are frozen.
+- None of this changes v1's or v2's version, or the decision cohort.

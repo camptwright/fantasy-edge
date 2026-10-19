@@ -70,7 +70,7 @@ async def plan(db,*,now=None,days=90,max_files=500,max_bytes=256*1024*1024):
 # Every reader of these directories goes through src.utils.archive_io.
 COMPRESSIBLE=('result-observations','roster-evidence','grading','grading/deltas','forecasts','mlb_availability',
     'espn_injuries','aggregate-props','fantasy-scoring-source','college-player-lab',
-    'fantasy-prospective/reports')
+    'fantasy-prospective/reports','sleeper-season-projections')
 
 
 def compress_daily(*,now=None,min_age=timedelta(days=1),max_bytes=2*1024**3,root=None):
