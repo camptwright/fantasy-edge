@@ -45,7 +45,7 @@ def _stream_eligible(player, week):
 
 
 def guidance(players: list[dict], mine: list[str], owned: set[str], roster_positions: list[str], *,
-             start_week=None, horizon_weeks=2, min_lineup_gain=1.0, min_stream_gain=1.0) -> dict:
+             start_week=None, horizon_weeks=2, min_lineup_gain=1.0, min_stream_gain=1.0, keep=()) -> dict:
     if not finite(min_lineup_gain) or min_lineup_gain < 0 or not finite(min_stream_gain) or min_stream_gain < 0:
         raise ValueError('gain thresholds must be finite and nonnegative')
     by_id = {str(p["player_id"]): p for p in players}
@@ -71,7 +71,8 @@ def guidance(players: list[dict], mine: list[str], owned: set[str], roster_posit
                for p in sorted((q for q in roster if q.get("position") == pos),
                                key=lambda q: q.get("weekly_points") or 0)[:max(0, sum(q.get("position") == pos for q in roster)
                                                                                - roster_positions.count(pos))]]
-    drops = offense + surplus
+    # The owner's never-drop players still play in the lineup; they are just never the drop.
+    drops = [p for p in offense + surplus if str(p["player_id"]) not in set(map(str, keep))]
     rows = []
     for add in pool if not blockers else []:
         best = None
@@ -107,7 +108,8 @@ def guidance(players: list[dict], mine: list[str], owned: set[str], roster_posit
                      'claim_timing': 'check_league_waiver_deadline_before_target_game'})
     # K/DEF streaming: the provider's weekly projection only.
     for pos in ("K", "DEF"):
-        current = [p for p in roster if p.get("position") == pos and _stream_eligible(p, weeks[0])]
+        current = [p for p in roster if p.get("position") == pos and _stream_eligible(p, weeks[0])
+                   and str(p["player_id"]) not in set(map(str, keep))]
         if not current:
             continue
         worst = min(current, key=lambda p: p["weekly_points"])

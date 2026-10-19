@@ -62,3 +62,25 @@ def test_trade_finder_never_offers_a_protected_player():
          "rosters": [{"roster_id": 1, "is_mine": True, "player_ids": ["dart", "wr1", "qb2"]}, {"roster_id": 2, "is_mine": False, "player_ids": ["wr2"]}]}
     rows = trade_finder.find({**d, "_protected": {"dart": "IR"}})["rows"]
     assert all(r["give_id"] != "dart" for r in rows)
+
+
+def test_never_drop_players_play_but_are_never_the_drop():
+    from src.services.fantasy_locks import waivers
+    def q(pid, points):
+        return {"player_id": pid, "name": pid, "position": "WR", "decision_points": points, "weekly_points": points,
+                "locked": False, "injury_status": None}
+    mine = [q("starter", 10), q("keep", 5), q("spare", 4)]
+    assert waivers(mine, [q("add", 12)], ["WR"], ["starter"], keep={"keep"})["moves"][0]["drop_id"] == "spare"
+    assert waivers(mine, [q("add", 12)], ["WR"], ["starter"], keep={"keep", "spare"})["moves"] == []
+
+
+def test_waiver_guidance_skips_never_drop_players_but_counts_them_in_the_lineup():
+    from tests.test_waiver_guidance import p
+    from src.services.waiver_guidance import guidance
+    players = [p("qb", "QB", {6: 20, 7: 20}, True), p("wr", "WR", {6: 10, 7: 10}, True), p("rb", "RB", {6: 6, 7: 6}, True),
+               p("bench", "WR", {6: 2, 7: 2}, True), p("fa_rb", "RB", {6: 9, 7: 9}, False),
+               p("k", "K", {}, True, weekly=7.0), p("k2", "K", {}, True, weekly=5.0), p("fa_k", "K", {}, False, weekly=9.0)]
+    mine = [x["player_id"] for x in players if x["roster_ids"]]
+    slots = ["QB", "WR", "FLEX", "K", "BN", "BN", "BN"]
+    rows = {r["add_id"]: r for r in guidance(players, mine, set(mine), slots, keep={"bench", "k2"})["rows"]}
+    assert rows["fa_rb"]["drop_id"] not in ("bench", "k2") and rows["fa_k"]["drop_id"] == "k"

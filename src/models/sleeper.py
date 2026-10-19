@@ -69,3 +69,14 @@ class SleeperLeagueSnapshot(Base):
     kind: Mapped[str] = mapped_column(String(24), primary_key=True)
     payload: Mapped[list | dict] = mapped_column(JSONB, nullable=False)
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class FantasyNeverDrop(Base):
+    """Owner-chosen players that drop suggestions never offer, per league (any platform).
+
+    Owner data, not code: editing it never changes a prediction identity.
+    """
+    __tablename__ = "fantasy_never_drop"
+    league_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)

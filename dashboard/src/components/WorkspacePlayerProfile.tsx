@@ -2,6 +2,7 @@ import { environmentLabel, fantasyToolHref, pct, playerResearchHref, pts, type O
 import { DistributionCurve, Meter } from "./OutcomeCharts";
 import { BOOM_BUST } from "./WorkspaceStartSit";
 import { WorkspaceRoleChanges } from './WorkspaceRoleChanges';
+import { NeverDropToggle } from "./NeverDropToggle";
 
 function heatClass(points: number) {
   return points >= 20 ? "bg-emerald-500/30 text-emerald-100" : points >= 12 ? "bg-emerald-500/15 text-emerald-200"
@@ -41,6 +42,7 @@ export function WorkspacePlayerProfile({ overview, playerId }: { overview: Overv
           {player.locked && <span className="rounded-full bg-slate-800 px-2.5 py-1 text-slate-400">Locked / game binding unknown</span>}
         </p>
       </div>
+      <NeverDropToggle leagueId={overview.league_id} playerId={player.player_id} initial={player.never_drop} />
       <a href={playerResearchHref(overview.league_id, player.player_id)} className="inline-flex min-h-11 items-center rounded-lg border border-slate-700 px-4 text-sm hover:border-emerald-500">Compare</a>
     </header>
     <dl className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">

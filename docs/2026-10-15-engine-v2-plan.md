@@ -414,3 +414,20 @@ changes before week 11.
   - First copy: 3,117 rows.
   - Nothing reads it yet. It becomes testable once enough weeks are frozen.
 - None of this changes v1's or v2's version, or the decision cohort.
+
+## Never-drop list (2026-10-18)
+
+- **What it is.** Owner-chosen players per league, in table
+  `fantasy_never_drop` (migration 0031), that drop suggestions skip:
+  `waiver_guidance` (lineup and K/DEF streaming drops) and
+  `fantasy_locks.waivers`. They still count in the lineup.
+- **How to edit it.** API under `/api/v2/personal-fantasy/leagues/{id}/never-drop`.
+  In the workspace, the player page has a "Never drop" toggle and the roster
+  table shows a KEEP tag.
+- **Fix.** `fantasy_locks.waivers` now also skips IR/taxi players. Before,
+  only the workspace view filtered them out of its moves.
+- **Seeded.** Jaxson Dart (12508) in 2016 Warriors, the only league where he
+  is on the owner's roster.
+- **New identity.** Changing the drop logic made a new decision cohort:
+  `19386ef16f58` (prediction `d30eec0e2a1a`), replacing `8b422d0cdd6d`.
+  Editing the list itself is data and never changes it.

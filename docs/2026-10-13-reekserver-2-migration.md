@@ -120,3 +120,50 @@ dumped back, so decide within the first day.
 - Reekserver-2 also hosts the media stack. Postgres's 1 GB memory cap
   and the workers' limits in the compose file still apply, so the app cannot
   starve Jellyfin.
+
+## Further research (2026-10-18)
+
+All checks were read-only, apart from one throwaway container that was
+removed afterwards; the server was left as found.
+
+- **The Mac's AI models are already reachable from the server.** The tunnel
+  that option 1 recommended is already running: launchd job
+  `com.camptwright.chisel-ollama-tunnel` runs
+  `~/.local/chisel/run-client.sh`. On the server's `ai-net` network,
+  `http://chisel-server:11434/api/tags` lists the Mac's qwen3.5:9b and
+  llama3.2:3b. After the move, LiteLLM joins `ai-net` as an external
+  network and uses `OLLAMA_BASE_URL=http://chisel-server:11434`. No router
+  change is needed.
+  - The server's own `ollama` container (llama3.2:3b, also on `ai-net`) can
+    serve as LiteLLM's fallback when the Mac is asleep or off.
+- **Host.** Debian 13, x86_64, 6 cores, 31 GB RAM (25 GB available), 462 GB
+  disk free. Load average 0.4 across 23 containers; qbittorrent is the
+  largest at 4.9 GB.
+- **Sizes today.** Database 2.9 GB, raw archive 15 GB (it was about 13 GB
+  on 10-13), models directory 0.5 MB.
+- **Transfer speed.** The Mac sends to the server at about 110 MB/s
+  (gigabit; 1,000 MB in 9 s over ssh).
+  - The raw archive pre-seed takes about 2.5 minutes and runs before the
+    downtime.
+  - The dump copy takes under a minute.
+  - So `pg_dump`/`pg_restore` sets the downtime; the 45-minute estimate
+    stands.
+- **Postgres memory.** It uses 762 MiB of its 1 GiB cap on the Mac. Raise
+  the cap to 2 GiB on the server, which has room.
+- **Same numbers on the new chip.** The four largest v2 fits were captured
+  on the Mac (arm64), recomputed on the server (x86_64, numpy 2.5.3 in a
+  removed `python:3.12-slim` container) and compared:
+  - largest coefficient difference 6e-13, largest prediction difference
+    6e-13;
+  - records round to 4 decimals and v2's version id doesn't depend on the
+    chip, so the move doesn't break its record;
+  - the decision cohort's identity covers Python and package versions, not
+    the chip, so it carries over as long as the image is the same.
+- **Still to confirm during prep.** The pinned LiteLLM digest has an amd64
+  image (`docker compose build`/`pull` on the server will show it).
+- **Credential.** The chisel server's auth string was printed once in this
+  session's local tool output while being inspected. It never left the
+  machine, but rotating it costs little: update the server's `--auth` and
+  `~/.local/chisel/run-client.sh` together.
+- **Owner decisions still open.** Only the date now. Recommended: Wednesday
+  2026-10-28, after week 7's grading and before Thursday's captures.

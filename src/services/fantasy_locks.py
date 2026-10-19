@@ -33,7 +33,9 @@ def lineup(players, slots, starters):
         'reason':'Only unstarted slots optimized; no live remaining-points or full-lineup total inferred.'}
 
 
-def waivers(mine, free, slots, starters, *, min_lineup_gain=1.0):
+def waivers(mine, free, slots, starters, *, min_lineup_gain=1.0, keep=()):
+    """`keep`: IR/taxi and never-drop players, still in the lineup pool but never the drop."""
+    keep=set(map(str,keep))
     before=lineup(mine,slots,starters)
     if before['unlocked_points'] is None:
         return {'status':before['status'],'before':before,'moves':[]}
@@ -42,7 +44,7 @@ def waivers(mine, free, slots, starters, *, min_lineup_gain=1.0):
         if add.get('locked',True) or not finite(add.get('decision_points')):continue
         alternatives=[]
         for drop in sorted(mine,key=lambda p:str(p['player_id'])):
-            if drop['player_id'] in starters or drop.get('locked',True):continue
+            if drop['player_id'] in starters or str(drop['player_id']) in keep or drop.get('locked',True):continue
             after=lineup([p for p in mine if p['player_id']!=drop['player_id']]+[add],slots,starters)
             if after['unlocked_points'] is None:continue
             gain=round(after['unlocked_points']-before['unlocked_points'],2)

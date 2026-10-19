@@ -8,7 +8,7 @@ from sqlalchemy import select, or_
 
 from src.models.facts import Game, PlayerGameStat
 from src.models.identity import Team
-from src.models.sleeper import SleeperLeague, SleeperLeagueSnapshot, SleeperRoster
+from src.models.sleeper import FantasyNeverDrop, SleeperLeague, SleeperLeagueSnapshot, SleeperRoster
 from src.services.player_identity import resolve_platform_players
 from src.services.result_eligibility import no_pending_correction
 from src.services.roster_stat_model import estimate, finite
@@ -413,11 +413,13 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
     specialist_ros=ros_research(players,snapshots,league,catalog,week,now)
     for p in players:p['specialist_ros_research']=specialist_ros.get(p['player_id'])
     protected={str(pid) for pid in (getattr(mine,'reserve',None) or [])+(getattr(mine,'taxi',None) or [])}
+    never_drop=set((await db.scalars(select(FantasyNeverDrop.player_id).where(FantasyNeverDrop.league_id==league_id))).all())
+    for p in players:p['never_drop']=p['player_id'] in never_drop
     mine_players=[by_id[str(pid)] for pid in mine.players]
     planning_roster=[str(pid) for pid in mine.players if str(pid) not in protected]
     from src.services.waiver_guidance import guidance as waiver_guidance
     waiver_plans={str(h):waiver_guidance(players,planning_roster,owned,league.roster_positions,
-        start_week=week,horizon_weeks=h) for h in (2,3,4)}
+        start_week=week,horizon_weeks=h,keep=never_drop) for h in (2,3,4)}
     matchrows=matchup.payload if isinstance(matchup.payload,list) else []
     mymatch=next((r for r in matchrows if r.get('roster_id')==mine.roster_id),{})
     opponent=next((r for r in matchrows if mymatch.get('matchup_id') is not None and r.get('matchup_id')==mymatch['matchup_id'] and r.get('roster_id')!=mine.roster_id),None)
@@ -471,6 +473,7 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
         'input_timestamps':{kind:row.synced_at.isoformat() for kind,row in latest.items() if kind in ('player_metadata','projections','matchups')},
         'model_version':'fantasy_decisions_v5','recipe_version':prospective_version(),
         'serving_replaced':False,'scoring_settings':league.scoring_settings,
+        'never_drop':sorted(never_drop),
         'projection_blend':{'engine_v2_weight':V2_WEIGHT,'engine_v2_version':(v2_checkpoint or {}).get('engine_version'),
             'engine_v2_generated_at':(v2_checkpoint or {}).get('generated_at'),
             'blended_players':sum(p['projection_source']=='blend_provider_engine_v2' for p in players)},
@@ -482,7 +485,8 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
                    'your_pregame_projection':a,'opponent_pregame_projection':b,
                    'projected_margin':round(a-b,2) if not stale and proj.week==week and matchup_bound and a is not None and b is not None else None,
                    'win_probability':None,'reason':'Pregame only; no calibrated win probability or remaining-points model. Started games, stale inputs and missing projections block decisions.'},
-        'waivers':locked_waivers(mine_players,[by_id[p] for p in free],league.roster_positions,starters) if decisions_fresh else {'status':'withheld_stale_inputs','moves':[]},
+        'waivers':locked_waivers(mine_players,[by_id[p] for p in free],league.roster_positions,starters,
+            keep=protected|never_drop) if decisions_fresh else {'status':'withheld_stale_inputs','moves':[]},
         'validation_lineups':{'your_starters':mymatch.get('starters',[]),'opponent_starters':opponent.get('starters',[]) if opponent else [],
             'games':[{'id':str(g.id),'kickoff':g.game_time.isoformat() if g.game_time else None} for g in week_games]},
         'players':players,'notes':['Read-only candidates; no lineup, waiver claim or trade is submitted.',
