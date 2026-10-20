@@ -21,9 +21,11 @@ export async function WorkspaceMarkets() {
     fantasyApi<Signal[]>("/signals?sport=nfl", 5000), fantasyApi<Signal[]>("/signals?sport=ncaaf", 5000),
     fantasyApi<Ledger>("/api/v1/ledger", 5000), fantasyApi<{ narrative: string; generated_at: string }>("/recommendations", 5000),
     fantasyApi<TeamProjections>("/team-projections/nfl", 5000)]);
-  const college = await fantasyApi<TeamProjections>("/team-projections/ncaaf", 5000);
-  const unavailable = nfl === null && ncaaf === null;
-  const signals = [...(nfl ?? []), ...(ncaaf ?? [])];
+  const [college, nba] = await Promise.all([fantasyApi<TeamProjections>("/team-projections/ncaaf", 5000),
+    fantasyApi<Signal[]>("/signals?sport=nba", 5000)]);
+  const unavailable = nfl === null && ncaaf === null && nba === null;
+  // NBA game lines use the Elo/totals baseline; none are actionable without a validated model.
+  const signals = [...(nfl ?? []), ...(ncaaf ?? []), ...(nba ?? [])];
   const actionable = signals.filter(s => s.actionable);
   const upcoming = signals.filter(s => !s.game_time || Date.parse(s.game_time) > Date.now())
     .sort((a, b) => Number(b.actionable) - Number(a.actionable) || (b.ev_percent ?? -99) - (a.ev_percent ?? -99)).slice(0, 15);
