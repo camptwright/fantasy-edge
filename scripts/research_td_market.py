@@ -189,8 +189,13 @@ def analyse(rows):
         p = min(max(p, 1e-4), 1 - 1e-4)
         return -(y * math.log(p) + (1 - y) * math.log(1 - p))
 
-    methods = ["raw", "pin_adj", "team_scaled", "v2", "v1", "espn"]
+    # ESPN's frozen projections are missing for some weeks; compare it on its own subset.
+    methods = ["raw", "pin_adj", "team_scaled", "v2", "v1"]
     common = [r for r in rows if all(r.get(m) is not None for m in methods)]
+    with_espn = [r for r in common if r.get("espn") is not None]
+    if with_espn:
+        d = [ll(r["espn"], r["y"]) - ll(r["v2"], r["y"]) for r in with_espn]
+        print(f"espn subset rows {len(with_espn)} games {len({r['gid'] for r in with_espn})}: logloss vs v2 {np.mean(d):+.4f}")
     print("common rows", len(common), "scored", sum(r["y"] for r in common), "games", len({r["gid"] for r in common}))
     rng = np.random.default_rng(7)
     gids = sorted({r["gid"] for r in common})

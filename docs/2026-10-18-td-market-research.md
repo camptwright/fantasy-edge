@@ -69,3 +69,19 @@ The observed scoring rate was 0.191.
   own prospective record. Until then, nothing changes.
 - The prices cost no extra ParlayAPI credits: the NFL props call already
   pays for them.
+
+## Rerun 2026-10-20: all of week 6 (14 games)
+
+- **Sample:** 269 player-games with every source, 48 TD scorers.
+- **Change:** ESPN is now compared on its own subset (246 rows), because its
+  frozen projections are missing for some players.
+- **Log loss vs v2 (95% CI):**
+  - v2 is still the best: 0.4053, mean P 0.185 vs 0.178 observed;
+  - market capped by team scoring +0.010 (-0.003, +0.023);
+  - market adjusted to Pinnacle +0.011 (-0.004, +0.026);
+  - market as quoted +0.014 (-0.002, +0.030);
+  - ESPN +0.011;
+  - v1 +0.024 (+0.007, +0.040), now clearly worse than v2.
+- **Blending in the market** still doesn't help: +0.002 at 25% weight.
+- **Decision unchanged:** no change; rerun after each week and decide at
+  weeks 9-10.
