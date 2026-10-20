@@ -19,6 +19,8 @@ def test_celery_schedule_covers_every_ingestion_source():
     assert {item["task"] for item in scheduled.values()} == {
         "fantasy.research_shadow",
         "fantasy.prop_board",
+        "fantasy.sync_pinnacle_props",
+        "fantasy.sync_nba_players",
         "fantasy.register_nfl_lab",
         "fantasy.refresh_nfl_stats",
         "fantasy.refresh_snap_counts",

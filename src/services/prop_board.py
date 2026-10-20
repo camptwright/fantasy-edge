@@ -35,7 +35,7 @@ from src.services.forecast_evidence import digest
 from src.services.sharp_pricing import brand
 from src.utils.odds_math import american_to_decimal, american_to_implied, remove_vig_two_way
 
-SPORTS = ("nfl", "ncaaf")
+SPORTS = ("nfl", "ncaaf", "nba")
 FRESH = timedelta(hours=12)        # quotes older than this are dropped
 REFRESH = timedelta(minutes=9)
 TRACK_EV = 0.03
@@ -43,6 +43,9 @@ TRACK_BOOKS = 3
 TRACK_LIMIT = 3000
 STATS = {"passing_yards", "passing_attempts", "passing_completions", "passing_touchdowns", "passing_interceptions",
          "rushing_yards", "rushing_attempts", "receptions", "receiving_yards"}
+NBA_STATS = {"points", "rebounds", "assists", "three_pointers_made", "points_rebounds_assists", "points_rebounds",
+             "points_assists", "rebounds_assists", "steals", "blocks", "steals_blocks", "turnovers"}
+SPORT_STATS = {"nfl": STATS, "ncaaf": STATS, "nba": NBA_STATS}
 EXCLUDED_BOOKS = {"underdog", "prizepicks"}  # DFS pick'em, not priced two-way offers
 
 
@@ -140,7 +143,7 @@ async def _quotes(db, sport: str, now: datetime):
         .join(Player, Player.id == PlayerPropLine.player_id).join(Game, Game.id == PlayerPropLine.game_id)
         .where(Game.sport == sport, Game.status == "scheduled", Game.game_time.is_not(None), Game.game_time > now,
                Game.game_time <= now + timedelta(days=8), PlayerPropLine.observed_at >= now - FRESH,
-               PlayerPropLine.stat_type.in_(STATS))
+               PlayerPropLine.stat_type.in_(SPORT_STATS[sport]))
         .distinct(PlayerPropLine.player_id, PlayerPropLine.game_id, PlayerPropLine.stat_type, PlayerPropLine.source)
         .order_by(PlayerPropLine.player_id, PlayerPropLine.game_id, PlayerPropLine.stat_type, PlayerPropLine.source,
                   PlayerPropLine.observed_at.desc()))).all()
@@ -150,7 +153,7 @@ async def _history(db, sport: str, player_ids: set, now: datetime, season: int):
     """{player: [(kickoff, game, stat, value)]} for final games of this and last season, newest first."""
     rows = (await db.execute(select(PlayerGameStat.player_id, PlayerGameStat.stat_type, PlayerGameStat.value, Game)
         .join(Game, Game.id == PlayerGameStat.game_id)
-        .where(PlayerGameStat.player_id.in_(player_ids), PlayerGameStat.stat_type.in_(STATS), Game.sport == sport,
+        .where(PlayerGameStat.player_id.in_(player_ids), PlayerGameStat.stat_type.in_(SPORT_STATS[sport]), Game.sport == sport,
                Game.status == "final", Game.season.in_([season - 1, season]), Game.game_time.is_not(None),
                Game.game_time < now, or_(Game.game_type.is_(None), Game.game_type == "REG")))).all()
     out = defaultdict(list)
@@ -186,6 +189,34 @@ async def _nfl_context(db, now: datetime, season: int):
     return team_of, latest_team, dvp_ranks(allowed)
 
 
+async def _nba_context(db, history: dict, season: int):
+    """Team per player-game from archived box scores (nba_context); D-vs-Pos by ESPN position G/F/C."""
+    from src.services.nba_context import player_teams
+    from uuid import UUID
+    games = await player_teams(db)
+    team_of = {(UUID(pid), UUID(gid)): UUID(tid) for gid, g in games.items() for pid, tid in g["players"].items()}
+    group = {"PG": "G", "SG": "G", "G": "G", "SF": "F", "PF": "F", "F": "F", "C": "C"}
+    positions = {p.id: group.get(p.position) for p in (await db.scalars(select(Player).where(Player.sport == "nba"))).all()}
+    per_game = defaultdict(lambda: defaultdict(float))
+    seasons = defaultdict(lambda: {"now": [], "before": []})
+    played = {}
+    for pid, rows in history.items():
+        for _, g, stat, value in rows:
+            team = team_of.get((pid, g.id))
+            pos = positions.get(pid)
+            if team is None or pos not in ("G", "F", "C"):
+                continue
+            defense = g.away_team_id if team == g.home_team_id else g.home_team_id
+            per_game[(defense, pos, stat)][g.id] += value
+            played[g.id] = g.season
+    for key, by_game in per_game.items():
+        for gid, allowed in by_game.items():
+            seasons[key]["now" if played[gid] == season else "before"].append(allowed)
+    # Early season: this season plus all of last season (not an arbitrary slice of it).
+    allowed = {k: (v["now"] if len(v["now"]) >= 4 else v["now"] + v["before"]) for k, v in seasons.items()}
+    return team_of, {}, dvp_ranks(allowed)
+
+
 async def build(db, sport: str, *, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     quotes = await _quotes(db, sport, now)
@@ -208,6 +239,10 @@ async def build(db, sport: str, *, now: datetime | None = None) -> dict:
     team_of, latest_team, dvp = ({}, {}, {})
     if sport == "nfl":
         team_of, latest_team, dvp = await _nfl_context(db, now, season)
+    elif sport == "nba":
+        # D-vs-Pos needs every player's games against each defense, not just tonight's players.
+        everyone = set((await db.scalars(select(Player.id).where(Player.sport == "nba"))).all())
+        team_of, latest_team, dvp = await _nba_context(db, await _history(db, sport, everyone, now, season), season)
     engine_stats, engine_artifact = {}, None
     if sport == "nfl":
         from src.services.engine_research import latest as engine_latest
@@ -215,6 +250,10 @@ async def build(db, sport: str, *, now: datetime | None = None) -> dict:
         checkpoint = await engine_latest(db)
         if engine_artifact and checkpoint and checkpoint.get("status") == "research":
             engine_stats = prop_engine.engine_stats(checkpoint)
+    nba_means = {}
+    if sport == "nba":
+        from src.services import nba_prop_engine
+        nba_means = await nba_prop_engine.project(db, list({g.id: g for _, g in meta.values()}.values()), now)
     season_start = min((g.game_time for g in (r[1] for v in history.values() for r in v) if g.season == season), default=None)
     rows, books = [], Counter()
     for key, offers in groups.items():
@@ -240,7 +279,14 @@ async def build(db, sport: str, *, now: datetime | None = None) -> dict:
         rank = dvp.get((opponent, player.position, stat)) if opponent else None
         engine = None
         projected = engine_stats.get((str(player.id), str(game.id)), {}).get(stat)
-        if projected and engine_artifact and stat in prop_engine.STATS:
+        if sport == "nba":
+            from src.services import nba_prop_engine
+            mean = nba_means.get((player.id, game.id), {}).get(stat)
+            p = nba_prop_engine.over_probability(stat, mean, c["line"]) if mean else None
+            if p is not None:
+                engine = {"projection": round(mean, 1), "over_probability": round(p, 3),
+                          "minutes": round(nba_means[(player.id, game.id)]["minutes"], 1)}
+        elif projected and engine_artifact and stat in prop_engine.STATS:
             p = prop_engine.over_probability(stat, projected, c["line"], engine_artifact)
             if p is not None:
                 engine = {"projection": round(projected, 1), "over_probability": round(p, 3)}
@@ -320,6 +366,34 @@ async def _save(db, name: str, payload: dict, now: datetime):
         index_elements=["name"], set_={k: getattr(statement.excluded, k) for k in values if k != "name"}))
 
 
+FREEZE_BEFORE = timedelta(minutes=90)
+FORECAST_DIRECTORY = "nba-prop-forecasts"
+
+
+def freeze(board: dict, now: datetime, root=None) -> int:
+    """Create-only record of each NBA game's engine and no-vig market, first build within 90 minutes of tip.
+
+    Grading the engine against the market needs both as they stood pregame;
+    a later rebuild never overwrites the first record (raw/nba-prop-forecasts).
+    """
+    from pathlib import Path
+    from config.settings import get_settings
+    from src.services.roster_stat_prospective import publish
+    root = Path(root or get_settings().raw_archive_dir) / FORECAST_DIRECTORY
+    by_game = defaultdict(list)
+    for r in board["rows"]:
+        tip = datetime.fromisoformat(r["game_time"])
+        if r["engine"] and now < tip <= now + FREEZE_BEFORE:
+            by_game[r["game_id"]].append({k: r[k] for k in ("player_id", "player", "team", "opponent", "stat", "line", "books",
+                                                             "fair_over", "best_over", "best_under", "engine")})
+    written = 0
+    for game_id, rows in by_game.items():
+        written += publish(root / f"{game_id}.json", {"game_id": game_id, "captured_at": now.isoformat(),
+                                                      "game_time": rows and next(r["game_time"] for r in board["rows"] if r["game_id"] == game_id),
+                                                      "rows": rows})
+    return written
+
+
 async def refresh(db, *, now: datetime | None = None, force: bool = False) -> dict:
     now = now or datetime.now(timezone.utc)
     out = {}
@@ -336,6 +410,8 @@ async def refresh(db, *, now: datetime | None = None, force: bool = False) -> di
         await _save(db, tracker_name(sport), updated, now)
         await db.commit()
         out[sport] = {"rows": len(board["rows"]), "tracked": updated["summary"]["tracked"]}
+        if sport == "nba":
+            out[sport]["frozen_games"] = freeze(board, now)
     return out
 
 

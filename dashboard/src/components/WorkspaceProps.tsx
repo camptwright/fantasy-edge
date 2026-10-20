@@ -3,10 +3,10 @@ import { percent, signedPct, type PropBoard as Board } from "@/lib/props";
 import { PropBoard } from "@/components/PropBoard";
 import { ParlayGenerator } from "@/components/ParlayGenerator";
 
-const SPORTS = [["nfl", "NFL"], ["ncaaf", "College"]] as const;
+const SPORTS = [["nfl", "NFL"], ["ncaaf", "College"], ["nba", "NBA"]] as const;
 
 /** Props workspace: line-shopping board, the value tracker's record, and the local-AI parlay generator. */
-export async function WorkspaceProps({ sport }: { sport: "nfl" | "ncaaf" }) {
+export async function WorkspaceProps({ sport }: { sport: "nfl" | "ncaaf" | "nba" }) {
   const board = await fantasyApi<Board>(`/props/board/${sport}?limit=500`, 6000);
   const t = board?.tracker;
   return <div className="space-y-6">

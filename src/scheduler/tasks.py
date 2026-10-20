@@ -190,6 +190,28 @@ def sync_pinnacle() -> dict[str, int]:
         raise
 
 
+@celery_app.task(name="fantasy.sync_pinnacle_props")
+def sync_pinnacle_props() -> dict:
+    """Free Pinnacle NBA player props (src/ingest/pinnacle_props.py)."""
+    async def run() -> dict:
+        from src.ingest.pinnacle_props import STATS, poll_props
+        async with get_worker_db() as db:
+            return {sport: await poll_props(db, sport) for sport in STATS}
+
+    return asyncio.run(run())
+
+
+@celery_app.task(name="fantasy.sync_nba_players")
+def sync_nba_players() -> dict:
+    """NBA identities and current teams from ESPN rosters (src/ingest/nba_players.py)."""
+    async def run() -> dict:
+        from src.ingest.nba_players import sync_nba_players as sync
+        async with get_worker_db() as db:
+            return await sync(db)
+
+    return asyncio.run(run())
+
+
 @celery_app.task(name="fantasy.sync_bovada")
 def sync_bovada() -> dict[str, int]:
     async def run() -> dict[str, int]:

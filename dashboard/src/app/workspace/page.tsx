@@ -132,7 +132,7 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
           </SnapshotWindow>
         </div>}
       </> : <>
-        <div className="mt-6">{view === "props" ? <WorkspaceProps sport={query.sport === "ncaaf" ? "ncaaf" : "nfl"} /> : view === "markets" ? <WorkspaceMarkets /> : view === "research" ? <WorkspaceResearch /> : <WorkspaceSettings />}</div>
+        <div className="mt-6">{view === "props" ? <WorkspaceProps sport={query.sport === "ncaaf" || query.sport === "nba" ? query.sport : "nfl"} /> : view === "markets" ? <WorkspaceMarkets /> : view === "research" ? <WorkspaceResearch /> : <WorkspaceSettings />}</div>
         {!!panels[view].length && <><h2 className="mt-8 text-lg font-semibold">Full tools</h2>
         <div className="mt-4 grid gap-4 md:grid-cols-2">{panels[view].map(([path, title, detail]) => <Tool key={path} href={path.startsWith("/fantasy") ? fantasyHref(path, league) : path} title={title} detail={detail} />)}</div></>}
       </>}

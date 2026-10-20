@@ -31,7 +31,7 @@ function Detail({ row }: { row: PropRow }) {
       <p className="text-slate-400">Last 5: <span className="tabular-nums text-slate-200">{row.hit.last5.join(" · ") || "—"}</span>{row.hit.average_l10 != null && <> · L10 avg <span className="tabular-nums text-slate-200">{row.hit.average_l10}</span></>}</p>
       <p className="mt-1 text-slate-400">Over hit rate: L5 {rate(row.hit.l5)} · L10 {rate(row.hit.l10)} · season {rate(row.hit.season)}{row.opponent ? ` · vs ${row.opponent} ${rate(row.hit.vs_opponent)}` : ""}</p>
       {row.dvp && <p className="mt-1 text-slate-400">{row.opponent} rank {row.dvp.rank} of {row.dvp.teams} allowing {statLabel(row.stat).toLowerCase()} to {row.position}s (1 = most).</p>}
-      {row.engine && <p className="mt-1 text-slate-400">Engine projection {row.engine.projection} · {percent(row.engine.over_probability)} over <span className="text-sky-300">(research)</span></p>}
+      {row.engine && <p className="mt-1 text-slate-400">Engine projection {row.engine.projection}{row.engine.minutes != null ? ` in ${row.engine.minutes} min` : ""} · {percent(row.engine.over_probability)} over <span className="text-sky-300">(research)</span></p>}
     </div>
   </div>;
 }
@@ -57,7 +57,7 @@ export function PropBoard({ board }: { board: Board }) {
       <label className="flex min-h-10 items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={valueOnly} onChange={e => setValueOnly(e.target.checked)} className="h-4 w-4" />+EV only</label>
     </div>
     <p className="mt-2 text-xs text-slate-500">{rows.length} props · fair = no-vig average of every book at the main line · EV at the best price</p>
-    {!rows.length ? <p role="status" className="mt-3 rounded-xl border border-slate-800 p-4 text-sm text-slate-400">{board.rows.length ? "No props match these filters." : "No upcoming props are posted yet. Books post most NFL props midweek; this board refreshes every 10 minutes."}</p> :
+    {!rows.length ? <p role="status" className="mt-3 rounded-xl border border-slate-800 p-4 text-sm text-slate-400">{board.rows.length ? "No props match these filters." : board.sport === "nba" ? "No upcoming NBA props are posted yet. Books post them the day before tip-off; this board refreshes every 10 minutes." : "No upcoming props are posted yet. Books post most NFL props midweek; this board refreshes every 10 minutes."}</p> :
     <ul className="mt-3 space-y-2">{rows.slice(0, shown).map(r => {
       const side = bestSide(r);
       const l10 = sideRate(r.hit.l10, side);

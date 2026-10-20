@@ -21,6 +21,11 @@ small settings map, and the two supported sports (`nfl`, `ncaaf`) share one
 schema and one code path parametrized by a string, not a branching
 framework.
 
+**NBA props added 2026-10-20** (owner request, opening night): NBA joins the
+prop board (Pinnacle guest-API props, ESPN rosters for identity, a research
+projection engine). See `docs/2026-10-20-nba-props.md`. NBA fantasy is not
+built yet.
+
 ## Stack
 
 Python 3.12 · PostgreSQL 16 · Docker Compose.

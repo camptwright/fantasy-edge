@@ -88,6 +88,9 @@ celery_app.conf.update(
         # a team-market line actually moves.
         "sync-pinnacle": {"task": "fantasy.sync_pinnacle", "schedule": 1800.0},
         "sync-bovada": {"task": "fantasy.sync_bovada", "schedule": 1800.0},
+        # Free NBA player props (two guest-API requests) and NBA rosters.
+        "sync-pinnacle-props": {"task": "fantasy.sync_pinnacle_props", "schedule": 600.0},
+        "sync-nba-players": {"task": "fantasy.sync_nba_players", "schedule": 21600.0},
         # PrizePicks scraping is prohibited by this repository's policy.
         # Health check, not a data source - runs less often than any
         # individual poller since it only needs to catch a source going

@@ -9,7 +9,7 @@ export type PropRow = {
   best_over: { book: string; price: number } | null; best_under: { book: string; price: number } | null;
   ev_over: number | null; ev_under: number | null; other_lines: number[];
   hit: { l5: Rate; l10: Rate; season: Rate; vs_opponent: Rate; average_l10: number | null; last5: number[] };
-  engine: { projection: number; over_probability: number } | null; dvp: { rank: number; teams: number } | null;
+  engine: { projection: number; over_probability: number; minutes?: number } | null; dvp: { rank: number; teams: number } | null;
   offers: Offer[]; last_seen: string; score: number;
 };
 export type TrackerSummary = { tracked: number; graded: number; wins: number; units: number; roi: number | null;
