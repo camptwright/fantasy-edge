@@ -84,3 +84,26 @@ def test_waiver_guidance_skips_never_drop_players_but_counts_them_in_the_lineup(
     slots = ["QB", "WR", "FLEX", "K", "BN", "BN", "BN"]
     rows = {r["add_id"]: r for r in guidance(players, mine, set(mine), slots, keep={"bench", "k2"})["rows"]}
     assert rows["fa_rb"]["drop_id"] not in ("bench", "k2") and rows["fa_k"]["drop_id"] == "k"
+
+
+def test_starter_demand_splits_flex_and_counts_superflex_as_qb():
+    from src.services.fantasy_decision_models import starter_demand
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "SUPER_FLEX", "K", "DEF", "BN", "IR"]
+    assert starter_demand(slots, 12) == {"QB": 24, "RB": 28, "WR": 28, "TE": 16}
+
+
+def test_starters_and_starter_level_ranks_are_never_the_drop():
+    from src.services.fantasy_decision_models import drop_protection
+    def q(pid, pos, ros, mine=True):
+        return {"player_id": pid, "position": pos, "roster_ids": [1] if mine else [2],
+                "engine": {"status": "research", "ros_points": ros, "ros_games": 10}}
+    # 2 teams x 1 WR slot: WR1-WR2 are core.
+    players = [q("wr_a", "WR", 90), q("wr_b", "WR", 80, mine=False), q("wr_c", "WR", 70), q("wr_d", "WR", 60),
+               q("wr_e", "WR", 50), {"player_id": "k", "position": "K", "roster_ids": [1]}]
+    out = drop_protection(players, ["wr_a", "wr_c", "wr_d", "wr_e", "k"], ["WR", "K", "BN"], 2, {"wr_d"}, {"wr_e"})
+    assert out["wr_a"] == {"reason": "core_rank", "rank": "WR1", "starter_spots": 2}
+    assert out["wr_d"]["reason"] == "starter" and out["wr_e"]["reason"] == "never_drop"
+    assert "wr_c" not in out and "k" not in out  # WR3 is outside the starting spots; K is unranked
+    # Ranked per remaining game: fewer counted games is not a lower rank.
+    players[2]["engine"] = {"status": "research", "ros_points": 70, "ros_games": 5}
+    assert drop_protection(players, ["wr_c"], ["WR", "BN"], 2, set(), set())["wr_c"]["rank"] == "WR1"

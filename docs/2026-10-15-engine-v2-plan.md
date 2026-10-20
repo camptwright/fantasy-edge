@@ -431,3 +431,24 @@ changes before week 11.
 - **New identity.** Changing the drop logic made a new decision cohort:
   `19386ef16f58` (prediction `d30eec0e2a1a`), replacing `8b422d0cdd6d`.
   Editing the list itself is data and never changes it.
+
+## Automatic drop protection (2026-10-19)
+
+- **Owner rule.** Starters and core offensive players are never the drop.
+- **Who is protected** (`fantasy_decision_models.drop_protection`), on the
+  whole roster including IR/taxi, in this order:
+  1. the never-drop list;
+  2. the platform's set starters and this week's best lock-preserving lineup;
+  3. QB/RB/WR/TE ranked within the league's starting spots at the position
+     by engine rest-of-season points per remaining game, among rostered and
+     replacement-pool players. Starting spots = teams x slots, with flex
+     spots split evenly over their positions and superflex counted as QB
+     (`starter_demand`; 2016 Warriors: QB12, RB28, WR28, TE16).
+- **Per game, not total.** Ranking by the total first left Egbuka (8 counted
+  games) at WR44; per game he is WR29.
+- **Applies to** `waiver_guidance` (all horizons) and `fantasy_locks.waivers`.
+  The roster table's KEEP tag and the player page show the reason.
+- **Players without engine research** (K, DEF, unprojected) are protected
+  only as starters or by the never-drop list.
+- **New identity.** `fantasy_decisions_v6`; decision cohort `e1a434dcb529`
+  (prediction `1261a61f0605`), replacing `19386ef16f58`.

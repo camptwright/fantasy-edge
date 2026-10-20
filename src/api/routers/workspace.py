@@ -704,6 +704,11 @@ class PlayerDetail(BaseModel):
     projection_source: str = 'provider'
     # Owner's never-drop list (src/services/never_drop): never offered as a drop.
     never_drop: bool = False
+    # Why this rostered player is never the drop: 'never_drop', 'starter' or 'core_rank'
+    # (fantasy_decision_models.drop_protection); `drop_rank` is e.g. 'RB14'.
+    drop_protection: str | None = None
+    drop_rank: str | None = None
+    drop_starter_spots: int | None = None
     game_log: list[GameLogWeek] = Field(default_factory=list)
 
 
@@ -937,6 +942,9 @@ def player_detail(player: dict) -> PlayerDetail:
         engine_v2_week_points=finite_points((player.get('engine_v2') or {}).get('week_points'))
         if (player.get('engine_v2') or {}).get('status') in ('research', 'research_partial_scoring') else None,
         projection_source=player.get('projection_source', 'provider'), never_drop=player.get('never_drop') is True,
+        drop_protection=(player.get('drop_protection') or {}).get('reason'),
+        drop_rank=(player.get('drop_protection') or {}).get('rank'),
+        drop_starter_spots=(player.get('drop_protection') or {}).get('starter_spots'),
         sos_ros_stars=(player.get('_sos') or {}).get('ros_stars'), sos_next4_stars=(player.get('_sos') or {}).get('next4_stars'),
         reserve_slot=player.get('_reserve_slot'),
         play_probability=(player.get('_play') or {}).get('probability'), play_basis=(player.get('_play') or {}).get('basis'),

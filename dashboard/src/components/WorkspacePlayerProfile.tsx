@@ -1,4 +1,4 @@
-import { environmentLabel, fantasyToolHref, pct, playerResearchHref, pts, type Overview } from "@/lib/workspace";
+import { KEEP_REASON, environmentLabel, fantasyToolHref, pct, playerResearchHref, pts, type Overview } from "@/lib/workspace";
 import { DistributionCurve, Meter } from "./OutcomeCharts";
 import { BOOM_BUST } from "./WorkspaceStartSit";
 import { WorkspaceRoleChanges } from './WorkspaceRoleChanges';
@@ -40,6 +40,7 @@ export function WorkspacePlayerProfile({ overview, playerId }: { overview: Overv
           <span className="rounded-full bg-slate-800 px-2.5 py-1 text-slate-300">{OWNERSHIP[player.ownership] ?? player.ownership}{player.roster_names.length ? ` · ${player.roster_names.join(", ")}` : ""}</span>
           {player.injury_status && <span className="rounded-full bg-amber-400/15 px-2.5 py-1 text-amber-200">{player.injury_status}</span>}
           {player.locked && <span className="rounded-full bg-slate-800 px-2.5 py-1 text-slate-400">Locked / game binding unknown</span>}
+          {player.drop_protection && <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-emerald-200">Never the drop · {KEEP_REASON[player.drop_protection]?.(player) ?? player.drop_protection}</span>}
         </p>
       </div>
       <NeverDropToggle leagueId={overview.league_id} playerId={player.player_id} initial={player.never_drop} />

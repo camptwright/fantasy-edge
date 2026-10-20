@@ -169,3 +169,10 @@ export function environmentLabel(environment: string): string {
   return environment === 'market_line' ? 'market line'
     : environment === 'team_model_no_line' ? 'team-model projection (no line yet)' : 'team-average environment (no line yet)';
 }
+
+/** Why a rostered player is never offered as a drop (fantasy_decision_models.drop_protection). */
+export const KEEP_REASON: Record<string, (p: { drop_rank?: string | null; drop_starter_spots?: number | null }) => string> = {
+  never_drop: () => "On your never-drop list",
+  starter: () => "Starter this week",
+  core_rank: p => `Core player: ranked ${p.drop_rank} in rest-of-season points per game, inside the league's ${p.drop_starter_spots} starting spots`,
+};

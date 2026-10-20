@@ -233,6 +233,49 @@ def blend_engine_v2(players):
             p['projection_source']='blend_provider_engine_v2'
 
 
+def starter_demand(roster_positions, teams):
+    """League-wide starting spots per position; flex spots split evenly, superflex counts as QB."""
+    demand=Counter()
+    for s in roster_positions:
+        if s in RESERVE:continue
+        if s=='SUPER_FLEX':demand['QB']+=teams
+        elif s in FLEX:
+            for pos in FLEX[s]:demand[pos]+=teams/len(FLEX[s])
+        elif s in ('QB','RB','WR','TE'):demand[s]+=teams
+    return {pos:int(-(-n//1)) for pos,n in demand.items()}
+
+
+def drop_protection(players, mine, roster_positions, teams, starters, never_drop):
+    """Owner rule 2026-10-19: starters and starter-level players are never the drop.
+
+    Protected, in order: the owner's never-drop list; the platform's set
+    starters and this week's best lineup; QB/RB/WR/TE whose rest-of-season
+    engine points per remaining game rank (among rostered and replacement-pool
+    players) is within the league's starting spots at the position. Per game,
+    not the total: totals punish players with fewer counted games left.
+    Unranked players are not core by rank. Returns {player_id: {reason, rank}}.
+    """
+    demand=starter_demand(roster_positions,teams)
+    def per_game(p):
+        e=p.get('engine') or {}
+        return e['ros_points']/e['ros_games'] if e.get('status')=='research' and finite(e.get('ros_points')) and (e.get('ros_games') or 0)>0 else None
+    ranks={}
+    for pos in demand:
+        pool=sorted((p for p in players if p.get('position')==pos and (p.get('roster_ids') or p.get('replacement_pool_member'))
+                     and per_game(p) is not None),key=lambda p:(-per_game(p),str(p['player_id'])))
+        ranks.update({str(p['player_id']):(pos,i) for i,p in enumerate(pool,1)})
+    out={}
+    for pid in map(str,mine):
+        rank=ranks.get(pid)
+        label=f'{rank[0]}{rank[1]}' if rank else None
+        if pid in never_drop:reason='never_drop'
+        elif pid in starters:reason='starter'
+        elif rank and rank[1]<=demand[rank[0]]:reason='core_rank'
+        else:continue
+        out[pid]={'reason':reason,'rank':label,'starter_spots':demand.get(rank[0]) if rank else None}
+    return out
+
+
 async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catalog_limit=50,
                 selected_player_ids=()):
     if catalog_offset < 0 or not 1 <= catalog_limit <= 100:
@@ -417,9 +460,6 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
     for p in players:p['never_drop']=p['player_id'] in never_drop
     mine_players=[by_id[str(pid)] for pid in mine.players]
     planning_roster=[str(pid) for pid in mine.players if str(pid) not in protected]
-    from src.services.waiver_guidance import guidance as waiver_guidance
-    waiver_plans={str(h):waiver_guidance(players,planning_roster,owned,league.roster_positions,
-        start_week=week,horizon_weeks=h,keep=never_drop) for h in (2,3,4)}
     matchrows=matchup.payload if isinstance(matchup.payload,list) else []
     mymatch=next((r for r in matchrows if r.get('roster_id')==mine.roster_id),{})
     opponent=next((r for r in matchrows if mymatch.get('matchup_id') is not None and r.get('matchup_id')==mymatch['matchup_id'] and r.get('roster_id')!=mine.roster_id),None)
@@ -447,6 +487,11 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
     decisions_fresh=not stale and proj.week==week
     lineup_decision=locked_lineup(mine_players,league.roster_positions,starters) if decisions_fresh else {
         'status':'stale_inputs','lineup':[],'total':None,'unlocked_points':None}
+    best=[str(r['player_id']) for r in lineup_decision.get('lineup',[]) if r.get('player_id') is not None]
+    keep=drop_protection(players,list(map(str,mine.players)),league.roster_positions,len(rosters),set(starters)|set(best),never_drop)
+    for p in players:p['drop_protection']=keep.get(p['player_id'])
+    waiver_plans={str(h):waiver_guidance(players,planning_roster,owned,league.roster_positions,
+        start_week=week,horizon_weeks=h,keep=set(keep)) for h in (2,3,4)}
     from src.services.fantasy_prospective import version as prospective_version
     return {'status':'candidate','league_id':league_id,'league_name':league.name,'season':int(league.season),'week':week,'generated_at':now.isoformat(),
         'input_valid_until':None if stale else deadline.isoformat(),
@@ -471,9 +516,9 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
         'waiver_settings':{'platform':league.platform,'waiver_type':(league.settings or {}).get('waiver_type'),
                            'waiver_clear_days':(league.settings or {}).get('waiver_clear_days')},
         'input_timestamps':{kind:row.synced_at.isoformat() for kind,row in latest.items() if kind in ('player_metadata','projections','matchups')},
-        'model_version':'fantasy_decisions_v5','recipe_version':prospective_version(),
+        'model_version':'fantasy_decisions_v6','recipe_version':prospective_version(),
         'serving_replaced':False,'scoring_settings':league.scoring_settings,
-        'never_drop':sorted(never_drop),
+        'never_drop':sorted(never_drop),'drop_protection':keep,
         'projection_blend':{'engine_v2_weight':V2_WEIGHT,'engine_v2_version':(v2_checkpoint or {}).get('engine_version'),
             'engine_v2_generated_at':(v2_checkpoint or {}).get('generated_at'),
             'blended_players':sum(p['projection_source']=='blend_provider_engine_v2' for p in players)},
@@ -486,7 +531,7 @@ async def build(db, league_id, *, include_catalog=False, catalog_offset=0, catal
                    'projected_margin':round(a-b,2) if not stale and proj.week==week and matchup_bound and a is not None and b is not None else None,
                    'win_probability':None,'reason':'Pregame only; no calibrated win probability or remaining-points model. Started games, stale inputs and missing projections block decisions.'},
         'waivers':locked_waivers(mine_players,[by_id[p] for p in free],league.roster_positions,starters,
-            keep=protected|never_drop) if decisions_fresh else {'status':'withheld_stale_inputs','moves':[]},
+            keep=protected|set(keep)) if decisions_fresh else {'status':'withheld_stale_inputs','moves':[]},
         'validation_lineups':{'your_starters':mymatch.get('starters',[]),'opponent_starters':opponent.get('starters',[]) if opponent else [],
             'games':[{'id':str(g.id),'kickoff':g.game_time.isoformat() if g.game_time else None} for g in week_games]},
         'players':players,'notes':['Read-only candidates; no lineup, waiver claim or trade is submitted.',
