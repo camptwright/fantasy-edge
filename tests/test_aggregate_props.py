@@ -150,3 +150,19 @@ async def test_paid_payload_is_ingested_even_when_the_raw_archive_fails(db, monk
     monkeypatch.setattr(calibration, 'archive', full_disk)
     result = await ap.ingest_then_archive(db, 'parlay', 'nfl', [])
     assert calls == ['nfl'] and result['written'] == 1 and result['archive_error'].startswith('OSError')
+
+
+def test_sgo_nba_captures_each_tip_slot_early_then_late():
+    from src.ingest.aggregate_props import sgo_slot
+
+    def t(h, m=0):
+        return datetime(2026, 10, 23, h, m, tzinfo=timezone.utc)
+    times = [t(23)] * 5 + [t(23, 30)]
+    assert sgo_slot(times, t(19), {}) is None  # nothing within three hours yet
+    assert sgo_slot(times, t(20, 30), {}) == (t(23), 5)
+    early = {t(23).isoformat(): 1}
+    assert sgo_slot(times, t(21), early) == (t(23, 30), 1)  # the next slot's early capture
+    both = {**early, t(23, 30).isoformat(): 1}
+    assert sgo_slot(times, t(21), both) is None  # second captures wait for the last 75 minutes
+    assert sgo_slot(times, t(22), both) == (t(23), 5)
+    assert sgo_slot(times, t(22, 30), {t(23).isoformat(): 2, t(23, 30).isoformat(): 2}) is None

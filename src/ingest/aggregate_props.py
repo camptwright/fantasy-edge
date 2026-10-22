@@ -63,6 +63,11 @@ PROVIDER_SPORTS = {'sgo': tuple(SPORT_STATS), 'parlay': ('nfl', 'ncaaf', 'mlb')}
 PARLAY_WINDOW = timedelta(hours=2)
 SLOT_GAP = timedelta(minutes=45)   # kickoffs this close share one capture
 SLOT_CALLS = 3                     # calls per NFL slot while later slots still need one
+# SGO NBA: capture each tip-off slot (all its games in one request) once inside
+# SGO_EARLY of tip and again inside SGO_LATE, instead of re-buying the day's
+# first game every 25 minutes from the morning on (2026-10-22: 20 calls, one game).
+SGO_EARLY = timedelta(hours=3)
+SGO_LATE = timedelta(minutes=75)
 
 
 def kickoff_slots(times):
@@ -91,6 +96,18 @@ def parlay_allowed(sport, now, slots, slot_calls, calls_left):
         return calls_left - 1 >= len(later) and (used < SLOT_CALLS or not later)
     pending = later + [s for s in current if slot_calls.get(s.isoformat(), 0) == 0]
     return calls_left - 1 >= len(pending)
+
+
+def sgo_slot(times, now, captures):
+    """(tip time, games) of the next SGO NBA capture, or None.
+
+    `captures` maps a slot's isoformat to how many times it was captured."""
+    slots = Counter(t for t in times if now < t <= now + SGO_EARLY)
+    for tip in sorted(slots):
+        done = captures.get(tip.isoformat(), 0)
+        if done == 0 or (done == 1 and tip - now <= SGO_LATE):
+            return tip, slots[tip]
+    return None
 
 
 def stamp(value):
@@ -186,35 +203,48 @@ def parse_parlay(payload, sport, now):
     return rows
 
 
-async def reserve(redis, provider, sport, cost, daily_limit, now):
+async def reserve(redis, provider, sport, cost, daily_limit, now, reserved=None):
     # One atomic reservation protects concurrent workers and failed attempts.
     # Rolling account limits remain provider-enforced; no auto-upgrades.
+    # `reserved` {sport: calls}: the unspent part of other sports' shares is
+    # off limits to this sport (per-sport spend is counted beside the total).
+    others = [(s, n) for s, n in (reserved or {}).items() if s != sport]
+    day = f'aggregate:{provider}:spent:{now:%Y-%m-%d}'
     return bool(await redis.eval('''
         if redis.call('exists', KEYS[1]) == 1 then return 0 end
         local used = tonumber(redis.call('get', KEYS[2]) or '0')
-        if used + tonumber(ARGV[1]) > tonumber(ARGV[2]) then return 0 end
+        local held = 0
+        for i = 4, #KEYS do
+            held = held + math.max(0, tonumber(ARGV[i - 1]) - tonumber(redis.call('get', KEYS[i]) or '0'))
+        end
+        if used + held + tonumber(ARGV[1]) > tonumber(ARGV[2]) then return 0 end
         redis.call('set', KEYS[1], '1', 'EX', 1500)
         redis.call('incrby', KEYS[2], ARGV[1])
         redis.call('expire', KEYS[2], 172800)
-        return 1''', 2, f'aggregate:{provider}:pace:{sport}',
-        f'aggregate:{provider}:spent:{now:%Y-%m-%d}', cost, daily_limit))
+        redis.call('incrby', KEYS[3], ARGV[1])
+        redis.call('expire', KEYS[3], 172800)
+        return 1''', 3 + len(others), f'aggregate:{provider}:pace:{sport}', day, f'{day}:{sport}',
+        *[f'{day}:{s}' for s, _ in others], cost, daily_limit, *[n for _, n in others]))
 
 
-async def fetch(redis, settings, provider, sport, now):
+async def fetch(redis, settings, provider, sport, now, slot=None):
     key = settings.sportsgameodds_api_key if provider == 'sgo' else settings.parlay_api_key
     if not key:
         return None
     if await redis.exists(f'aggregate:{provider}:blocked'):
         return None
-    cost = 1 if provider == 'sgo' else 3
+    # SGO bills per event object; a slot request asks for every game at that tip.
+    cost = (slot[1] if slot else 1) if provider == 'sgo' else 3
     ceiling = settings.sportsgameodds_daily_objects if provider == 'sgo' else settings.parlay_daily_credits
-    if not await reserve(redis, provider, sport, cost, ceiling, now):
+    reserved = settings.sportsgameodds_reserved if provider == 'sgo' else None
+    if not await reserve(redis, provider, sport, cost, ceiling, now, reserved):
         return None
     if provider == 'sgo':
         url = 'https://api.sportsgameodds.com/v2/events'
+        after, before = (slot[0] - timedelta(minutes=5), slot[0] + timedelta(minutes=5)) if slot else (now, now + timedelta(hours=24))
         params = {'leagueID': sport.upper(), 'oddsAvailable': 'true', 'started': 'false',
-                  'limit': 1, 'includeAltLines': 'false',
-                  'startsAfter': now.isoformat(), 'startsBefore': (now+timedelta(hours=24)).isoformat(),
+                  'limit': cost, 'includeAltLines': 'false',
+                  'startsAfter': max(after, now).isoformat(), 'startsBefore': before.isoformat(),
                   'bookmakerID': ','.join(sorted(BOOKS[provider]))}
     else:
         url = f'https://parlay-api.com/v1/sports/{settings.odds_api_sport_keys[sport]}/props'
@@ -344,7 +374,16 @@ async def collect():
                                 hours=2 if provider == 'parlay' else 12)).limit(1))
                         if not upcoming:
                             continue
-                        slot = None
+                        slot = sgo = None
+                        if provider == 'sgo' and sport == 'nba':
+                            times = (await db.scalars(select(Game.game_time).where(Game.sport == sport,
+                                Game.status == 'scheduled', Game.game_time > now,
+                                Game.game_time <= now + SGO_EARLY))).all()
+                            keys = sorted({t.isoformat() for t in times})
+                            counts = await redis.mget([f'aggregate:sgo:slot:nba:{k}' for k in keys]) if keys else []
+                            sgo = sgo_slot(times, now, {k: int(c or 0) for k, c in zip(keys, counts)})
+                            if sgo is None:
+                                continue
                         if provider == 'parlay':
                             slots, slot_calls, calls_left = await parlay_budget(db, redis, settings, now)
                             if not parlay_allowed(sport, now, slots, slot_calls, calls_left):
@@ -354,10 +393,14 @@ async def collect():
                             slot = next((s for s in slots if now < s <= now + PARLAY_WINDOW), None) if sport == 'nfl' else None
                         try:
                             async with record_run(db, f'{provider}_{sport}_props') as run:
-                                payload = await fetch(redis, settings, provider, sport, now)
+                                payload = await fetch(redis, settings, provider, sport, now, sgo)
                                 if payload is None:
                                     run.detail = 'Skipped: key, quota, or pacing guard'
                                     continue
+                                if sgo is not None:
+                                    key = f'aggregate:sgo:slot:nba:{sgo[0].isoformat()}'
+                                    await redis.incr(key)
+                                    await redis.expire(key, 172800)
                                 if slot is not None:
                                     key = f'aggregate:parlay:slot:{slot.isoformat()}'
                                     await redis.incr(key)

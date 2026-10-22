@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     # Conservative free-tier ceilings, independent of The Odds API quota.
     parlay_daily_credits: int = 24
     sportsgameodds_daily_objects: int = 60
+    # Owner decision 2026-10-22: NBA keeps a fixed share of the SGO day that
+    # other sports cannot spend; NBA may still use the shared remainder.
+    sportsgameodds_reserved: dict[str, int] = {"nba": 24}
     odds_api_base_url: str = "https://api.the-odds-api.com/v4"
     # nba/mlb/nhl keys are The Odds API's documented sport keys, not
     # independently verified live like the scraped sources below (no
