@@ -1,0 +1,40 @@
+# Reekserver-2 additions (moved off the Mac mini 2026-10-26; see
+# docs/2026-10-13-reekserver-2-migration.md). Loaded after the base file and
+# docker-compose.override.yml through COMPOSE_FILE in the server's .env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:docker-compose.reekserver-2.yml
+
+networks:
+  # The server's shared AI network: chisel-server forwards the Mac's Ollama
+  # on 11434, and the local ollama container is on it too.
+  ai-net:
+    external: true
+
+services:
+  postgres:
+    # 762 MiB of the 1 GiB cap was in use on the Mac; this host has room.
+    mem_limit: 2048m
+
+  beat:
+    # Same bind mount as the other app services, so the schedule file and
+    # models live in one place on this host.
+    volumes:
+      - /home/reek/apps/fantasy-edge/models:/mnt/data/fantasy-edge/models
+
+  litellm:
+    # OLLAMA_BASE_URL=http://chisel-server:11434 in .env.
+    networks: [fantasy, ai-net]
+
+  # On the Mac this was a hand-run container with the token on its command
+  # line. Here compose owns it and the token comes from .env.
+  cloudflared:
+    image: cloudflare/cloudflared@sha256:0aa26e284f05e6c77ae375b8c9c11d9eb6a448fb7bcd8d40f31cb6176189eb38
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env}"
+    # ai-net carries the ollama-mac.camptwright.com route
+    # (origin http://chisel-server:11434).
+    networks: [fantasy, ai-net]
+    depends_on: [api, dashboard]
+    restart: unless-stopped
+    mem_limit: 256m
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}
