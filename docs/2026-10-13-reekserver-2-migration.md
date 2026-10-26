@@ -167,3 +167,44 @@ removed afterwards; the server was left as found.
   `~/.local/chisel/run-client.sh` together.
 - **Owner decisions still open.** Only the date now. Recommended: Wednesday
   2026-10-28, after week 7's grading and before Thursday's captures.
+
+## Status check (2026-10-26)
+
+Read-only again; the one temporary image pulled on Reekserver-2 for a curl
+check was removed.
+
+- **The Mac stack is healthy.** It restarted on its own after the Mac
+  rebooted (about 11 hours earlier). In the last 12 hours there were 1,581
+  job runs, all succeeded or deferred, none failed. The database is now
+  3.7 GB and the raw archive 19.9 GB.
+- **Reekserver-2 is still the right host.**
+  - Free disk is 358 GB, down from 463 GB on 10-18 (media growth), with
+    26 GB RAM available and load 0.3.
+  - Ports, Docker 29.8 and Compose 5.5 are unchanged.
+  - `/home/reek/apps/fantasy-edge` does not exist yet.
+- **Reekserver-1 is not a fit for the main stack.** It has an Intel N95
+  (4 cores) with 7.6 GB RAM, about 4 GB of it available, and already runs
+  21 containers (monitoring, ntfy, adjutant, marketdesk). The app's memory
+  caps total about 7 GB, and its real use is about 2.5 GB. Reekserver-1
+  keeps its current role: ntfy, uptime monitoring and Grafana for this app.
+- **The LiteLLM digest is multi-arch.** The pinned index includes
+  linux/amd64 (checked against the ghcr registry), so the 10-18 open item is
+  closed.
+- **The tunnel to the Mac's models still works.** On `ai-net`,
+  `chisel-server:11434` lists the Mac's `qwen3.5:9b` and `llama3.2:3b`.
+  Reekserver-2 → Mac is still blocked directly, as expected.
+- **ntfy stays reachable.** Reekserver-2 can reach `192.168.20.10:8095`,
+  so `NTFY_BASE_URL` needs no change.
+- **New catch 1: Reekserver-2 cannot pull the repo from GitHub.** It has no
+  GitHub host key and no deploy key. Instead, copy the code from the Mac
+  (`git bundle create` then `scp`, or rsync of a `git archive` with
+  `COPYFILE_DISABLE=1`, constraint #15). No new credential is needed.
+- **New catch 2: the tunnel also carries `ollama-mac.camptwright.com`.**
+  Per DEPLOYMENT.md, the same Cloudflare tunnel routes that hostname to the
+  Mac's native Ollama. Moving the app's `cloudflared` to Reekserver-2 would
+  break that route, and running a connector on both hosts would split
+  traffic. Before cutover, the owner picks one:
+  1. In Zero Trust, repoint `ollama-mac` to `http://chisel-server:11434`
+     and join the new `cloudflared` to `ai-net`. One tunnel, but it depends
+     on the chisel client on the Mac.
+  2. Move `ollama-mac` to a separate small tunnel that stays on the Mac.
