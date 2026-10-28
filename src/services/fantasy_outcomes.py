@@ -176,6 +176,25 @@ def best_lineup(fixed: dict[int, str], open_slots: list[tuple[int, str]], pool: 
 UNAVAILABLE = ABSENT
 
 
+def lineup_changes(slots: list[str], current: list[str], best: list[str]) -> list[dict]:
+    """Players the best lineup brings in, each paired with a starter it drops.
+
+    Starters that only trade slots (RB <-> FLEX) are not a change, so a slot
+    whose new player was already starting is skipped rather than reported as
+    "start A over B; start B over A".
+    """
+    kept, starting = set(best), set(current)
+    leaving = [pid for pid in current if pid not in kept]
+    changes = []
+    for i, pid in enumerate(best):
+        if pid in starting:
+            continue
+        out = current[i] if current[i] in leaving else leaving[0]
+        leaving.remove(out)
+        changes.append({"slot": slots[i], "start": pid, "replaces": out})
+    return changes
+
+
 def _entry(p: dict, recorded: dict, now) -> tuple[dict | None, str | None]:
     """One player's simulation input, or a blocker. Never infers remaining points."""
     from datetime import datetime
@@ -251,8 +270,7 @@ def research(by_id: dict, mine: list[str], theirs: list[str], roster: list[str],
     pool = [entries[pid] for i, pid in enumerate(mine) if i not in fixed] + bench
     best = best_lineup(fixed, open_slots, pool, theirs, players, model, draws=draws) if open_slots else None
     if best and all(entries[p]["position"] in FLEX.get(slots[i], {slots[i]}) for i, p in enumerate(best["player_ids"])):
-        best["changes"] = [{"slot": slots[i], "start": p, "replaces": mine[i]}
-                           for i, p in enumerate(best["player_ids"]) if p != mine[i]]
+        best["changes"] = lineup_changes(slots, mine, best["player_ids"])
     ranges = {}
     for pid, entry in entries.items():
         boom, bust = BOOM_BUST.get(entry["position"] or "", (20.0, 5.0))

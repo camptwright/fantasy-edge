@@ -75,6 +75,19 @@ def test_research_reports_win_probability_and_a_better_lineup():
     assert out["player_ranges"]["q1"]["p10"] < out["player_ranges"]["q1"]["p90"]
 
 
+def test_lineup_changes_ignore_starters_that_only_swap_slots():
+    slots = ["QB", "RB", "FLEX", "TE"]
+    current = ["q1", "rb_a", "rb_b", "te1"]
+    # rb_a and rb_b trade RB/FLEX and te2 replaces te1: one real change.
+    assert fo.lineup_changes(slots, current, ["q1", "rb_b", "rb_a", "te2"]) == [
+        {"slot": "TE", "start": "te2", "replaces": "te1"}]
+    # A bench back takes RB while the old RB slides to FLEX: it replaces the
+    # starter who actually leaves, not the one who moved.
+    assert fo.lineup_changes(slots, current, ["q1", "bench", "rb_a", "te1"]) == [
+        {"slot": "RB", "start": "bench", "replaces": "rb_b"}]
+    assert fo.lineup_changes(slots, current, ["q1", "rb_b", "rb_a", "te1"]) == []
+
+
 def test_in_progress_games_withhold_and_finished_games_use_recorded_points():
     by_id, slots = league()
     by_id["r2"] = player("r2", "RB", "D", "C", kickoff=NOW - timedelta(hours=1), locked=True)
