@@ -21,8 +21,12 @@ services:
       - /home/reek/apps/fantasy-edge/models:/mnt/data/fantasy-edge/models
 
   litellm:
-    # OLLAMA_BASE_URL=http://chisel-server:11434 in .env.
+    # OLLAMA_BASE_URL=http://mac-ollama.internal:11434 in .env. The alias
+    # matters: when the Mac's Ollama listens on loopback only, it answers 403
+    # to any Host header that doesn't look local (localhost, *.local,
+    # *.internal), and "chisel-server" doesn't (found 2026-10-27).
     networks: [fantasy, ai-net]
+    external_links: ["chisel-server:mac-ollama.internal"]
 
   # On the Mac this was a hand-run container with the token on its command
   # line. Here compose owns it and the token comes from .env.

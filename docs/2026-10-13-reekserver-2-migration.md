@@ -208,3 +208,55 @@ check was removed.
      and join the new `cloudflared` to `ai-net`. One tunnel, but it depends
      on the chisel client on the Mac.
   2. Move `ollama-mac` to a separate small tunnel that stays on the Mac.
+
+## Cutover done (2026-10-27)
+
+The app now runs on Reekserver-2 from `~/apps/fantasy-edge-src`. The
+server's `.env` sets `COMPOSE_FILE` to load `docker-compose.reekserver-2.yml`
+after the base and override files, so plain `docker compose up -d` works
+there. Downtime ran from 21:14 to 21:25 CDT, about 11 minutes, much shorter
+than the 45-minute estimate.
+
+- **Data.**
+  - `pg_dump -Fc` came to 1.1 GB and was piped straight to the server in
+    2 minutes.
+  - `pg_restore -j 4` took 4.5 minutes. It has to read from a file inside the
+    container, because parallel restore can't read stdin.
+  - Exact counts matched for games, players, prop lines, ingestion runs,
+    recommendation snapshots and leagues. Alembic is at `0031_never_drop`.
+  - Redis was copied as files (22 keys, including the Odds API quota and SGO
+    spend counters), so paid budgets carried over.
+  - The raw archive was pre-seeded on 10-26, then topped up with files changed
+    since. Files the Mac's retention job deleted after the pre-seed (1,721)
+    are still on the server until retention reaches them there.
+- **Tunnel.** compose now runs `cloudflared` with the token from `.env`
+  (`CLOUDFLARE_TUNNEL_TOKEN`), so it is no longer on a command line. The
+  Mac's hand-run connector is stopped.
+- **Two catches.**
+  1. **Bind-mount ownership (#18) again.** Extracting a tar of the Mac's
+     models directory reset the target directory to root, and beat died with
+     `Permission denied: .../celerybeat-schedule`. The fix was
+     `chown -R 1001:1001` after the copy. Beat now uses the models bind
+     mount like the other services; on the Mac it used the `modeldata`
+     volume.
+  2. **The Mac's Ollama 403s non-local Host headers.** After the Mac
+     rebooted, Ollama listened on 127.0.0.1 only, and in that mode it
+     rejects `Host: chisel-server:11434`; it accepts localhost, `*.local` and
+     `*.internal`. LiteLLM therefore reaches it as `mac-ollama.internal`, an
+     `external_links` alias for `chisel-server`.
+     - For the same reason, the `ollama-mac.camptwright.com` route needs
+       its HTTP Host Header set to `localhost:11434` in Zero Trust.
+- **Verified:**
+  - `/health`, and the NFL and NBA prop boards (200).
+  - 168 job runs succeeded in the first 20 minutes, none failed.
+  - The tunnel registered four connections.
+  - `sports.camptwright.com` redirects to the Access login.
+  - `sports-api.camptwright.com/health` returns 200.
+  - A `fast` model call through LiteLLM to the Mac took 2.9 s.
+  - An ntfy alert was delivered.
+  - The workspace preview answers on the server's `127.0.0.1:13001`.
+- **Not moved.** The Mac-only grading preview (`127.0.0.1:13000`) is
+  stopped.
+- **Rollback until 2026-11-03.** The Mac stack is stopped, not removed. To go
+  back, stop the server's stack and `cloudflared`, then start the Mac's
+  containers. After that date, `colima delete` frees the Mac's RAM and disk.

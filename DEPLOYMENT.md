@@ -1,4 +1,9 @@
-# Mac mini deployment
+# Deployment
+
+**As of 2026-10-27 the app runs on Reekserver-2** (`~/apps/fantasy-edge-src`,
+plain `docker compose up -d` there; see
+`docs/2026-10-13-reekserver-2-migration.md`). The Mac mini notes below are
+kept for the rollback week and history.
 
 Supersedes `PROXMOX.md` (CT100/Proxmox is retired as this app's deployment
 target; that doc is kept only as historical record of its RAM-budget and
