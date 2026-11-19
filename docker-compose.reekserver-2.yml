@@ -28,17 +28,7 @@ services:
     networks: [fantasy, ai-net]
     external_links: ["chisel-server:mac-ollama.internal"]
 
-  # On the Mac this was a hand-run container with the token on its command
-  # line. Here compose owns it and the token comes from .env.
-  cloudflared:
-    image: cloudflare/cloudflared@sha256:0aa26e284f05e6c77ae375b8c9c11d9eb6a448fb7bcd8d40f31cb6176189eb38
-    command: ["tunnel", "--no-autoupdate", "run"]
-    environment:
-      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env}"
-    # ai-net carries the ollama-mac.camptwright.com route
-    # (origin http://chisel-server:11434).
-    networks: [fantasy, ai-net]
-    depends_on: [api, dashboard]
-    restart: unless-stopped
-    mem_limit: 256m
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}
+  # No cloudflared service here. Since 2026-11-19 the media stack's tunnel
+  # (~/apps/media-stack, container `cloudflared`) joins fantasy-edge_fantasy
+  # and serves sports -> fantasy-edge-dashboard-1:3000 and sports-api ->
+  # fantasy-edge-api-1:8000. This app's own tunnel was deleted in Cloudflare.
