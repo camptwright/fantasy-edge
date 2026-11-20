@@ -3,7 +3,17 @@
 **As of 2026-10-27 the app runs on Reekserver-2** (`~/apps/fantasy-edge-src`,
 plain `docker compose up -d` there; see
 `docs/2026-10-13-reekserver-2-migration.md`). The Mac mini notes below are
-kept for the rollback week and history.
+history; the rollback window closed 2026-11-03.
+
+**As of 2026-11-19 the app has no tunnel of its own.** Reekserver-2's
+media-stack tunnel (`~/apps/media-stack`, container `cloudflared`) joins the
+`fantasy-edge_fantasy` network and serves `sports.camptwright.com` →
+`fantasy-edge-dashboard-1:3000` and `sports-api.camptwright.com` →
+`fantasy-edge-api-1:8000`. Manage those two public hostnames under the media
+tunnel in Zero Trust. Use the full container names as origins: the
+workspace preview's containers share the network and also answer to
+`dashboard`/`api`. The app's own tunnel was deleted in Cloudflare, and
+`ollama-mac.camptwright.com` was removed. Item 1 below is history.
 
 Supersedes `PROXMOX.md` (CT100/Proxmox is retired as this app's deployment
 target; that doc is kept only as historical record of its RAM-budget and
@@ -23,7 +33,7 @@ key, and model routing, and — unlike the original reekserver-1 plan — runs
 its **own dedicated** `cloudflared` container rather than joining a shared
 tunnel:
 
-1. The `cloudflared` service in `docker-compose.yml` runs its own
+1. *(Retired 2026-11-19, see above.)* The `cloudflared` service in `docker-compose.yml` ran its own
    token-authenticated tunnel (not the reekserver-1 shared one). Its live
    ingress rules route `sports.camptwright.com` → `dashboard:3000`,
    `sports-api.camptwright.com` → `api:8000`, and (unrelated to this app,

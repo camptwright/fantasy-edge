@@ -260,3 +260,22 @@ than the 45-minute estimate.
 - **Rollback until 2026-11-03.** The Mac stack is stopped, not removed. To go
   back, stop the server's stack and `cloudflared`, then start the Mac's
   containers. After that date, `colima delete` frees the Mac's RAM and disk.
+
+## 2026-11-19: tunnel moved to the media stack
+
+- **Why.** The app's own tunnel had been deleted in Cloudflare (its
+  connector logged `Unauthorized: Tunnel not found` from at least 11-14), so
+  `sports` and `sports-api` were down.
+- **Change.** The media stack's `cloudflared` on Reekserver-2 now also joins
+  `fantasy-edge_fantasy`. In Zero Trust its tunnel routes `sports` →
+  `http://fantasy-edge-dashboard-1:3000` and `sports-api` →
+  `http://fantasy-edge-api-1:8000`. Full container names matter: the
+  workspace preview's `dashboard`/`api` containers are on the same network.
+- **Removed.** The `cloudflared` service from
+  `docker-compose.reekserver-2.yml` (and its `CLOUDFLARE_TUNNEL_TOKEN`
+  requirement), the stopped `fantasy-edge-cloudflared-1` container, and the
+  `ollama-mac.camptwright.com` route. The Mac's Homebrew connector is gone.
+  Adjutant on Reekserver-1 reaches the Mac's Ollama on the LAN instead.
+- **Verified.** `sports-api.camptwright.com/health` returns 200,
+  `sports.camptwright.com` redirects to the Access login, and the media
+  tunnel loaded both routes with no errors.
